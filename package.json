@@ -1,0 +1,42 @@
+{
+  "name": "token-tithe",
+  "version": "0.1.0",
+  "description": "Local-first Claude Code hook collector and terminal token audit CLI.",
+  "type": "module",
+  "bin": {
+    "token-tithe": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "tokenTithe": {
+    "ai": {
+      "enabled": false,
+      "model": "claude-haiku-4-5",
+      "redaction": true
+    }
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "commander": "^12.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
