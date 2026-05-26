@@ -1,10 +1,13 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { runAuditRules, type AuditFinding } from '../audit/rules.js';
+import { initializeProject, type InitProjectResult } from '../core/init.js';
 import { openDatabase } from '../db/client.js';
 import { getSummary, listEvents } from '../db/events.js';
+import { generateDoctorPatches } from '../doctor/patches.js';
+import { hasTokenTitheHooks } from '../hooks/install.js';
 import type { StoredEvent } from '../schemas/events.js';
-import { defaultDataDir, defaultDbPath } from '../utils/paths.js';
+import { defaultClaudeSettingsPath, defaultDataDir, defaultDbPath, defaultEventsPath } from '../utils/paths.js';
 
 export type UiSummary = {
   totalEstimatedTokens: number;
@@ -35,15 +38,42 @@ export type UiEvent = {
 
 export type UiDoctorLatest = {
   patchDir: string;
+  summaryPath: string;
+  diffPath: string;
   summary: string;
   diff: string;
 } | null;
+
+export type UiSetupStatus = {
+  projectRoot: string;
+  dbPath: string;
+  databaseExists: boolean;
+  eventsPath: string;
+  eventsJsonlExists: boolean;
+  settingsPath: string;
+  claudeSettingsExists: boolean;
+  hooksInstalled: boolean;
+};
+
+export type UiDoctorRunResult = {
+  patchDir: string;
+  summaryPath: string;
+  diffPath: string;
+  files: Array<{
+    targetPath: string;
+    patchPath: string;
+    status: string;
+    summary: string;
+  }>;
+  latest: UiDoctorLatest;
+};
 
 export type UiData = {
   summary: UiSummary;
   findings: UiFinding[];
   events: UiEvent[];
   doctorLatest: UiDoctorLatest;
+  setup: UiSetupStatus;
 };
 
 export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoot)): UiData {
@@ -58,7 +88,8 @@ export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoo
     summary: toUiSummary(summary, findings),
     findings: findings.map(toUiFinding),
     events: events.map(toUiEvent).reverse(),
-    doctorLatest: getLatestDoctorPatch(projectRoot)
+    doctorLatest: getLatestDoctorPatch(projectRoot),
+    setup: getSetupStatus(projectRoot, dbPath)
   };
 }
 
@@ -91,9 +122,87 @@ export function getLatestDoctorPatch(projectRoot: string): UiDoctorLatest {
 
   return {
     patchDir: latest,
+    summaryPath,
+    diffPath,
     summary: existsSync(summaryPath) ? readFileSync(summaryPath, 'utf8') : '',
     diff: existsSync(diffPath) ? readFileSync(diffPath, 'utf8') : ''
   };
+}
+
+export function getSetupStatus(projectRoot: string, dbPath = defaultDbPath(projectRoot)): UiSetupStatus {
+  const eventsPath = defaultEventsPath(projectRoot);
+  const settingsPath = defaultClaudeSettingsPath(projectRoot);
+  const claudeSettingsExists = existsSync(settingsPath);
+
+  return {
+    projectRoot,
+    dbPath,
+    databaseExists: existsSync(dbPath),
+    eventsPath,
+    eventsJsonlExists: existsSync(eventsPath),
+    settingsPath,
+    claudeSettingsExists,
+    hooksInstalled: claudeSettingsExists ? hasTokenTitheHooks(settingsPath, dbPath, eventsPath) : false
+  };
+}
+
+export function runUiInit(projectRoot: string, dbPath = defaultDbPath(projectRoot)): InitProjectResult {
+  return initializeProject({ projectRoot, dbPath });
+}
+
+export function runUiDoctor(projectRoot: string, dbPath = defaultDbPath(projectRoot)): UiDoctorRunResult {
+  const result = generateDoctorPatches(projectRoot, new Date(), { dbPath });
+
+  return {
+    patchDir: result.patchDir,
+    summaryPath: result.summaryPath,
+    diffPath: result.diffPath,
+    files: result.files,
+    latest: getLatestDoctorPatch(projectRoot)
+  };
+}
+
+export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath(projectRoot)): string {
+  const data = getUiData(projectRoot, dbPath);
+  const lines = [
+    '# Mr Token Audit Report',
+    '',
+    `Project root: ${projectRoot}`,
+    `Database: ${data.setup.dbPath}`,
+    '',
+    '## Summary',
+    '',
+    `- Total estimated tokens: ${data.summary.totalEstimatedTokens.toLocaleString()}`,
+    `- Sessions: ${data.summary.sessions.toLocaleString()}`,
+    `- Prompts: ${data.summary.prompts.toLocaleString()}`,
+    `- Tool calls: ${data.summary.toolCalls.toLocaleString()}`,
+    `- Estimated savings: ${data.summary.estimatedSavingsRange[0].toLocaleString()}-${data.summary.estimatedSavingsRange[1].toLocaleString()} tokens`,
+    '',
+    '## Findings',
+    '',
+    ...(data.findings.length === 0
+      ? ['No deterministic waste patterns detected.']
+      : data.findings.flatMap((finding) => [
+          `### ${finding.category}`,
+          '',
+          `- Confidence: ${finding.confidence}`,
+          `- Estimated waste: ${finding.estimatedWasteTokens.toLocaleString()} tokens`,
+          `- Estimated savings: ${finding.savingsRange[0].toLocaleString()}-${finding.savingsRange[1].toLocaleString()} tokens`,
+          '- Recommended fixes:',
+          ...finding.recommendedFixes.map((fix) => `  - ${fix}`),
+          ''
+        ])),
+    '',
+    '## Doctor',
+    '',
+    data.doctorLatest
+      ? `Latest patch bundle: ${data.doctorLatest.patchDir}`
+      : 'No patch bundle generated yet.',
+    '',
+    'Patches are proposals only and are never applied automatically.'
+  ];
+
+  return `${lines.join('\n')}\n`;
 }
 
 function toUiSummary(

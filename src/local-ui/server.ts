@@ -1,9 +1,19 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createReadStream, existsSync } from 'node:fs';
-import { join, normalize } from 'node:path';
+import { join, normalize, relative } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { getLatestDoctorPatch, getUiData, getUiEvents, getUiFindings, getUiSummary } from './api.js';
+import {
+  exportMarkdownReport,
+  getLatestDoctorPatch,
+  getSetupStatus,
+  getUiData,
+  getUiEvents,
+  getUiFindings,
+  getUiSummary,
+  runUiDoctor,
+  runUiInit
+} from './api.js';
 import { defaultDbPath, findProjectRoot } from '../utils/paths.js';
 
 export type UiServerOptions = {
@@ -15,6 +25,7 @@ export type UiServerOptions = {
 export async function startUiServer(options: UiServerOptions): Promise<void> {
   const projectRoot = findProjectRoot();
   const dbPath = options.db ?? defaultDbPath(projectRoot);
+  assertInsideProject(projectRoot, dbPath);
   const staticRoot = resolveStaticRoot();
   const server = createServer((request, response) => {
     void handleRequest({ request, response, projectRoot, dbPath, staticRoot });
@@ -49,6 +60,35 @@ async function handleRequest({
 }): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://localhost');
 
+  try {
+    if (url.pathname === '/api/init') {
+      requireMethod(request, 'POST');
+      sendJson(response, { ok: true, result: runUiInit(projectRoot, dbPath), setup: getSetupStatus(projectRoot, dbPath) });
+      return;
+    }
+
+    if (url.pathname === '/api/audit/run') {
+      requireMethod(request, 'POST');
+      sendJson(response, { ok: true, data: getUiData(projectRoot, dbPath) });
+      return;
+    }
+
+    if (url.pathname === '/api/doctor/run') {
+      requireMethod(request, 'POST');
+      sendJson(response, { ok: true, result: runUiDoctor(projectRoot, dbPath) });
+      return;
+    }
+
+    if (url.pathname === '/api/export/report.md') {
+      requireMethod(request, 'GET');
+      sendMarkdown(response, exportMarkdownReport(projectRoot, dbPath), 'mr-token-report.md');
+      return;
+    }
+  } catch (error) {
+    sendError(response, error);
+    return;
+  }
+
   if (url.pathname === '/api/summary') {
     sendJson(response, getUiSummary(projectRoot, dbPath));
     return;
@@ -69,6 +109,11 @@ async function handleRequest({
     return;
   }
 
+  if (url.pathname === '/api/setup') {
+    sendJson(response, getSetupStatus(projectRoot, dbPath));
+    return;
+  }
+
   if (url.pathname === '/api/all') {
     sendJson(response, getUiData(projectRoot, dbPath));
     return;
@@ -83,6 +128,30 @@ function sendJson(response: ServerResponse, value: unknown): void {
     'cache-control': 'no-store'
   });
   response.end(JSON.stringify(value));
+}
+
+function sendMarkdown(response: ServerResponse, value: string, filename: string): void {
+  response.writeHead(200, {
+    'content-type': 'text/markdown; charset=utf-8',
+    'content-disposition': `attachment; filename="${filename}"`,
+    'cache-control': 'no-store'
+  });
+  response.end(value);
+}
+
+function sendError(response: ServerResponse, error: unknown): void {
+  const message = error instanceof Error ? error.message : 'Request failed.';
+  response.writeHead(message === 'Method not allowed' ? 405 : 500, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store'
+  });
+  response.end(JSON.stringify({ ok: false, error: message }));
+}
+
+function requireMethod(request: IncomingMessage, method: string): void {
+  if (request.method !== method) {
+    throw new Error('Method not allowed');
+  }
 }
 
 function serveStatic(response: ServerResponse, staticRoot: string, pathname: string): void {
@@ -119,4 +188,11 @@ function openBrowser(url: string): void {
   const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
   const child = spawn(command, args, { detached: true, stdio: 'ignore' });
   child.unref();
+}
+
+function assertInsideProject(projectRoot: string, path: string): void {
+  const rel = relative(projectRoot, path);
+  if (rel.startsWith('..') || rel === '..') {
+    throw new Error('Mr Token UI refuses to access a database outside the current project root.');
+  }
 }

@@ -97,7 +97,7 @@ When `tokenTithe.ai.enabled` is `true`, `token-tithe audit` uses `ANTHROPIC_API_
 
 ## Mr Token Local UI
 
-Start the local frontend:
+Start the local control panel:
 
 ```bash
 token-tithe ui
@@ -112,6 +112,22 @@ token-tithe ui --no-open
 
 The UI binds to `127.0.0.1` only and serves `http://localhost:4317`. It reads the existing `.token-tithe/token-tithe.db` through the local CLI server. There is no auth, telemetry, source upload, cloud backend, or hosted deployment.
 
+Workflow:
+
+1. Open a project folder in terminal.
+2. Run `token-tithe ui`.
+3. Click **Initialize Project** if hooks are not installed.
+4. Use Claude Code normally.
+5. Click **Refresh Audit** or run `token-tithe audit`.
+6. Click **Run Doctor** to generate safe patches.
+
+Control panel pages:
+
+- Dashboard: token summary, estimated savings, top finding, findings table, report export.
+- Events: filter by event type and tool name.
+- Doctor: generate a safe patch bundle and view `SUMMARY.md` / `patch.diff`.
+- Setup: project root, database status, events JSONL status, Claude settings status, hook status.
+
 Local API endpoints:
 
 ```text
@@ -119,7 +135,14 @@ GET /api/summary
 GET /api/findings
 GET /api/events
 GET /api/doctor/latest
+GET /api/setup
+GET /api/export/report.md
+POST /api/init
+POST /api/audit/run
+POST /api/doctor/run
 ```
+
+The UI does not include patch application or arbitrary shell command execution.
 
 ## Doctor Patches
 

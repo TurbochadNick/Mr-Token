@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db/client.js';
 import { insertNormalizedEvent } from '../src/db/events.js';
-import { getUiData } from '../src/local-ui/api.js';
+import { exportMarkdownReport, getSetupStatus, getUiData, runUiDoctor, runUiInit } from '../src/local-ui/api.js';
 
 describe('Mr Token UI API', () => {
   it('returns dashboard, findings, events, and latest doctor patch data', () => {
@@ -58,5 +58,38 @@ describe('Mr Token UI API', () => {
     });
     expect(data.doctorLatest?.summary).toContain('# summary');
     expect(data.doctorLatest?.diff).toContain('diff --git');
+  });
+
+  it('supports setup, init, doctor, and report API helpers', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-ui-actions-'));
+    const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
+
+    expect(getSetupStatus(projectRoot, dbPath)).toMatchObject({
+      projectRoot,
+      databaseExists: false,
+      eventsJsonlExists: false,
+      claudeSettingsExists: false,
+      hooksInstalled: false
+    });
+
+    const init = runUiInit(projectRoot, dbPath);
+    expect(init.dbPath).toBe(dbPath);
+    expect(getSetupStatus(projectRoot, dbPath)).toMatchObject({
+      databaseExists: true,
+      eventsJsonlExists: true,
+      claudeSettingsExists: true,
+      hooksInstalled: true
+    });
+
+    const doctor = runUiDoctor(projectRoot, dbPath);
+    expect(doctor.patchDir).toContain('.token-tithe');
+    expect(doctor.summaryPath.endsWith('SUMMARY.md')).toBe(true);
+    expect(doctor.diffPath.endsWith('patch.diff')).toBe(true);
+    expect(doctor.latest?.summary).toContain('token-tithe doctor patch bundle');
+
+    const report = exportMarkdownReport(projectRoot, dbPath);
+    expect(report).toContain('# Mr Token Audit Report');
+    expect(report).toContain('## Summary');
+    expect(report).toContain('## Doctor');
   });
 });
