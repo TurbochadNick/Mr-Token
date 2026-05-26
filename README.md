@@ -3,6 +3,7 @@
 `token-tithe` is a local-first TypeScript CLI for Claude Code users. It installs Claude Code hooks, collects local session/tool/prompt events, stores them in SQLite, and prints a terminal audit report.
 
 No backend. No auth. No web dashboard.
+The local web UI is called Mr Token; the CLI/package remains `token-tithe`.
 
 ## Requirements
 
@@ -29,9 +30,10 @@ pnpm dev -- --help
 npx token-tithe init
 npx token-tithe audit
 npx token-tithe doctor
+npx token-tithe ui
 ```
 
-That is the MVP boundary. `watch` exists only as the internal Claude Code hook handler installed by `init`.
+That is the local MVP boundary. `watch` exists only as the internal Claude Code hook handler installed by `init`.
 
 ## What `init` Does
 
@@ -93,6 +95,32 @@ Configure optional AI review in your project `package.json`:
 
 When `tokenTithe.ai.enabled` is `true`, `token-tithe audit` uses `ANTHROPIC_API_KEY` from the environment. It sends only a redacted structured audit summary by default. It must not send raw source files or full transcripts unless full-context mode is explicitly enabled.
 
+## Mr Token Local UI
+
+Start the local frontend:
+
+```bash
+token-tithe ui
+```
+
+Options:
+
+```bash
+token-tithe ui --port 4317
+token-tithe ui --no-open
+```
+
+The UI binds to `127.0.0.1` only and serves `http://localhost:4317`. It reads the existing `.token-tithe/token-tithe.db` through the local CLI server. There is no auth, telemetry, source upload, cloud backend, or hosted deployment.
+
+Local API endpoints:
+
+```text
+GET /api/summary
+GET /api/findings
+GET /api/events
+GET /api/doctor/latest
+```
+
 ## Doctor Patches
 
 `token-tithe doctor` generates safe patch proposals only. It does not apply them.
@@ -110,6 +138,7 @@ Each bundle includes proposed files, `patch.diff`, and `SUMMARY.md` for manual r
 - Browser extension
 - ChatGPT integration
 - SaaS dashboard
+- Hosted deployment
 - Team billing
 - Complex auth
 - Slack bot

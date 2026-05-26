@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { runAudit } from './commands/audit.js';
 import { runDoctor } from './commands/doctor.js';
 import { runInit } from './commands/init.js';
+import { runUi } from './commands/ui.js';
 import { runWatch } from './commands/watch.js';
 
 const program = new Command();
@@ -41,5 +42,13 @@ program
   .option('--settings <path>', 'Claude settings file to inspect')
   .option('--db <path>', 'SQLite database path')
   .action(runDoctor);
+
+program
+  .command('ui')
+  .description('Start the local Mr Token web UI.')
+  .option('--port <number>', 'Localhost port', '4317')
+  .option('--no-open', 'Do not open a browser')
+  .option('--db <path>', 'SQLite database path')
+  .action(runUi);
 
 await program.parseAsync();
