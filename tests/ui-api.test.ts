@@ -88,7 +88,7 @@ describe('Mr Token UI API', () => {
     expect(doctor.latest?.summary).toContain('token-tithe doctor patch bundle');
 
     const report = exportMarkdownReport(projectRoot, dbPath);
-    expect(report).toContain('# Mr Token Audit Report');
+    expect(report).toContain('# Mr Token AI Fuel Report');
     expect(report).toContain('## Summary');
     expect(report).toContain('## Doctor');
   });

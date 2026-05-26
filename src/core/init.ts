@@ -1,6 +1,6 @@
 import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { openDatabase } from '../db/client.js';
-import { installClaudeHooks } from '../hooks/install.js';
+import { installClaudeHooks } from '../adapters/claude-code/install.js';
 import {
   defaultClaudeSettingsPath,
   defaultDataDir,

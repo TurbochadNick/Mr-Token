@@ -194,7 +194,7 @@ code {
 .metrics {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin-top: 22px;
 }
 
@@ -257,6 +257,28 @@ code {
 .panel ul {
   margin-bottom: 0;
   padding-left: 20px;
+}
+
+.burnGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 14px 0;
+}
+
+.burnGrid span {
+  background: #eef2eb;
+  border-radius: 7px;
+  color: #34443b;
+  font-size: 0.88rem;
+  padding: 10px;
+}
+
+.diagnosisCards {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
 }
 
 .tableWrap {
@@ -434,7 +456,9 @@ pre.commands {
 
   .metrics,
   .codeGrid,
-  .statusGrid {
+  .statusGrid,
+  .burnGrid,
+  .diagnosisCards {
     grid-template-columns: 1fr;
   }
 }

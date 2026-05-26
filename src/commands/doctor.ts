@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { openDatabase } from '../db/client.js';
 import { getSummary } from '../db/events.js';
 import { generateDoctorPatches } from '../doctor/patches.js';
-import { hasTokenTitheHooks } from '../hooks/install.js';
+import { hasTokenTitheHooks } from '../adapters/claude-code/install.js';
 import { defaultClaudeSettingsPath, defaultDbPath, defaultEventsPath, findProjectRoot } from '../utils/paths.js';
 
 type DoctorOptions = {

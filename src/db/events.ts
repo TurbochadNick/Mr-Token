@@ -1,6 +1,7 @@
 import type { DbClient } from './client.js';
-import type { ClaudeHookEvent, NormalizedHookEvent, StoredEvent } from '../schemas/events.js';
-import { normalizeHookEvent } from '../hooks/normalize.js';
+import type { ClaudeHookEvent } from '../adapters/claude-code/events.js';
+import { normalizeHookEvent } from '../adapters/claude-code/normalize.js';
+import type { NormalizedHookEvent, StoredEvent } from '../schemas/events.js';
 
 type EventRow = {
   id: number;
@@ -60,14 +61,14 @@ export function insertNormalizedEvent(db: DbClient, event: NormalizedHookEvent):
       event.toolName,
       event.filePath,
       event.command,
-      event.rawEvent.prompt ?? null,
+      typeof event.rawEvent.prompt === 'string' ? event.rawEvent.prompt : null,
       event.promptLength,
       event.stdoutLength,
       event.stderrLength,
       event.resultLength,
       event.estimatedTokens,
       event.projectPath,
-      event.rawEvent.transcript_path ?? null,
+      typeof event.rawEvent.transcript_path === 'string' ? event.rawEvent.transcript_path : null,
       JSON.stringify(event.rawEvent)
     );
 

@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildHookCommand, hasTokenTitheHooks, installClaudeHooks } from '../src/hooks/install.js';
+import { buildHookCommand, hasTokenTitheHooks, installClaudeHooks } from '../src/adapters/claude-code/install.js';
 
 describe('Claude hook installer', () => {
   it('installs token-tithe command hooks', () => {

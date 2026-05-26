@@ -48,12 +48,56 @@ type SetupStatus = {
   hooksInstalled: boolean;
 };
 
+type DiagnosisFinding = {
+  category: string;
+  severity: string;
+  confidence: string;
+  estimatedWasteTokens: number;
+  savingsRange: [number, number];
+  evidence: string[];
+  whyThisMatters: string;
+  recommendedFixes: string[];
+  patchableAction?: string;
+};
+
+const DIAGNOSIS_LABELS: Record<string, string> = {
+  'Huge Tool Output': 'Exhaust Flood',
+  'Repeated Instructions': 'Idle Repetition',
+  'Bloated Project Context': 'Heavy Chassis',
+  'Broad Prompt': 'Wide Throttle',
+  'Unnecessary Full File Reads': 'Full-Tank File Reads',
+  'Re-read Loop': 'Context Reburn',
+  'Multi-Deliverable Prompt': 'Multi-Load Turn',
+  'Late Compaction / Long Session Drift': 'Stale Load',
+  'Subagent Overkill': 'Parallel Burn',
+  'Style/Boilerplate Overhead': 'Cabin Noise',
+  'Missing Acceptance Criteria': 'No Stop Line',
+  'Premature Architecture Debate': 'Bench Racing'
+};
+
+type Diagnosis = {
+  generatedAt: string;
+  fuelScore: number;
+  fuelRating: string;
+  burnProfile: {
+    usefulEstimatedTokens: number;
+    suspectedWasteTokens: number;
+    wastePercentage: number;
+    topBurnCauses: string[];
+    confidence: string;
+  };
+  generalDiagnosis: string;
+  findings: DiagnosisFinding[];
+  whatToChangeNext: string[];
+};
+
 type ApiData = {
   summary: Summary;
   findings: Finding[];
   events: EventRow[];
   doctorLatest: DoctorLatest;
   setup: SetupStatus;
+  diagnosis: Diagnosis;
 };
 
 type View = 'dashboard' | 'events' | 'doctor' | 'setup';
@@ -201,11 +245,36 @@ function Dashboard({ data, topFinding }: { data: ApiData; topFinding: Finding | 
       </section>
 
       <section className="metrics" aria-label="Audit summary">
+        <Metric label="Fuel score" value={`${data.diagnosis.fuelScore}/100`} />
         <Metric label="Total tokens" value={formatNumber(data.summary.totalEstimatedTokens)} />
         <Metric label="Sessions" value={formatNumber(data.summary.sessions)} />
         <Metric label="Prompts" value={formatNumber(data.summary.prompts)} />
         <Metric label="Tool calls" value={formatNumber(data.summary.toolCalls)} />
         <Metric label="Estimated savings" value={formatRange(data.summary.estimatedSavingsRange)} />
+      </section>
+
+      <section className="section">
+        <div className="sectionHeader">
+          <h3>Fuel Diagnosis</h3>
+          <span>{data.diagnosis.fuelRating}</span>
+        </div>
+        <article className="panel">
+          <p>{data.diagnosis.generalDiagnosis}</p>
+          <div className="burnGrid">
+            <span>Useful: {formatNumber(data.diagnosis.burnProfile.usefulEstimatedTokens)}</span>
+            <span>Waste: {formatNumber(data.diagnosis.burnProfile.suspectedWasteTokens)}</span>
+            <span>Waste %: {data.diagnosis.burnProfile.wastePercentage}%</span>
+            <span>Confidence: {data.diagnosis.burnProfile.confidence}</span>
+          </div>
+          <h4>Top Causes</h4>
+          <ul>
+            {data.diagnosis.burnProfile.topBurnCauses.length === 0 ? (
+              <li>No major burn causes detected.</li>
+            ) : (
+              data.diagnosis.burnProfile.topBurnCauses.map((cause) => <li key={cause}>{diagnosisLabel(cause)}</li>)
+            )}
+          </ul>
+        </article>
       </section>
 
       <section className="section">
@@ -231,8 +300,40 @@ function Dashboard({ data, topFinding }: { data: ApiData; topFinding: Finding | 
       </section>
 
       <Findings findings={data.findings} />
+      <DiagnosisCards findings={data.diagnosis.findings} next={data.diagnosis.whatToChangeNext} />
       <CommandCard />
     </>
+  );
+}
+
+function DiagnosisCards({ findings, next }: { findings: DiagnosisFinding[]; next: string[] }) {
+  return (
+    <section className="section">
+      <div className="sectionHeader">
+        <h3>What To Change Next</h3>
+      </div>
+      <article className="panel">
+        <ol>
+          {next.length === 0 ? <li>No immediate changes recommended.</li> : next.map((item) => <li key={item}>{item}</li>)}
+        </ol>
+      </article>
+      <div className="diagnosisCards">
+        {findings.map((finding) => (
+          <article className="panel" key={finding.category}>
+            <div className="findingHero">
+              <strong>{diagnosisLabel(finding.category)}</strong>
+              <span>{finding.severity} / {finding.confidence}</span>
+            </div>
+            <p className="path">Technical category: {finding.category}</p>
+            <p>{finding.whyThisMatters}</p>
+            <p>{formatNumber(finding.estimatedWasteTokens)} suspected waste tokens, {formatRange(finding.savingsRange)} likely savings.</p>
+            {finding.patchableAction ? <p>Patch suggestion: {finding.patchableAction}</p> : null}
+            <h4>Fixes</h4>
+            <ul>{finding.recommendedFixes.map((fix) => <li key={fix}>{fix}</li>)}</ul>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -361,6 +462,10 @@ function Doctor({ latest, onRun }: { latest: DoctorLatest; onRun: () => void }) 
             <p className="path">Summary: {latest.summaryPath}</p>
             <p className="path">Diff: {latest.diffPath}</p>
           </article>
+          <article className="panel">
+            <strong>Patch suggestions are diagnosis-driven</strong>
+            <p>Doctor proposals target project context, repeated workflows, broad prompts, tool-output caps, and acceptance-criteria templates when those burn patterns are detected.</p>
+          </article>
           <div className="codeGrid">
             <div>
               <h4>SUMMARY.md</h4>
@@ -457,6 +562,10 @@ function formatRange(range: [number, number]): string {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)].sort();
+}
+
+function diagnosisLabel(category: string): string {
+  return DIAGNOSIS_LABELS[category] ?? category;
 }
 
 createRoot(document.getElementById('root')!).render(

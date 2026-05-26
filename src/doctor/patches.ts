@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { mergeTokenTitheHooks, type ClaudeSettings } from '../hooks/install.js';
+import { mergeTokenTitheHooks, type ClaudeSettings } from '../adapters/claude-code/install.js';
 import { defaultClaudeSettingsPath, defaultDataDir, defaultDbPath, defaultEventsPath } from '../utils/paths.js';
 
 export type DoctorPatchFile = {

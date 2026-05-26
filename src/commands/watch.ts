@@ -1,4 +1,4 @@
-import { handleHookEvent } from '../hooks/handler.js';
+import { handleHookEvent } from '../adapters/claude-code/handler.js';
 import { defaultDbPath, defaultEventsPath } from '../utils/paths.js';
 
 type WatchOptions = {

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db/client.js';
 import { listRecentEvents } from '../src/db/events.js';
-import { handleHookEvent } from '../src/hooks/handler.js';
-import { normalizeHookEvent } from '../src/hooks/normalize.js';
+import { handleHookEvent } from '../src/adapters/claude-code/handler.js';
+import { normalizeHookEvent } from '../src/adapters/claude-code/normalize.js';
 
 describe('hook handler', () => {
   it('normalizes prompt events into JSONL and SQLite', () => {

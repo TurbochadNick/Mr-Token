@@ -5,7 +5,10 @@ import { initializeProject, type InitProjectResult } from '../core/init.js';
 import { openDatabase } from '../db/client.js';
 import { getSummary, listEvents } from '../db/events.js';
 import { generateDoctorPatches } from '../doctor/patches.js';
-import { hasTokenTitheHooks } from '../hooks/install.js';
+import { hasTokenTitheHooks } from '../adapters/claude-code/install.js';
+import { diagnoseFuel } from '../diagnosis/diagnose.js';
+import { formatDiagnosisMarkdown } from '../diagnosis/report.js';
+import type { DiagnosisReport } from '../diagnosis/categories.js';
 import type { StoredEvent } from '../schemas/events.js';
 import { defaultClaudeSettingsPath, defaultDataDir, defaultDbPath, defaultEventsPath } from '../utils/paths.js';
 
@@ -74,6 +77,7 @@ export type UiData = {
   events: UiEvent[];
   doctorLatest: UiDoctorLatest;
   setup: UiSetupStatus;
+  diagnosis: DiagnosisReport;
 };
 
 export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoot)): UiData {
@@ -83,13 +87,15 @@ export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoo
   db.close();
 
   const findings = runAuditRules({ events, projectRoot });
+  const diagnosis = diagnoseFuel({ events, projectRoot, totalTokens: summary.totalTokens });
 
   return {
     summary: toUiSummary(summary, findings),
     findings: findings.map(toUiFinding),
     events: events.map(toUiEvent).reverse(),
     doctorLatest: getLatestDoctorPatch(projectRoot),
-    setup: getSetupStatus(projectRoot, dbPath)
+    setup: getSetupStatus(projectRoot, dbPath),
+    diagnosis
   };
 }
 
@@ -103,6 +109,10 @@ export function getUiFindings(projectRoot: string, dbPath = defaultDbPath(projec
 
 export function getUiEvents(projectRoot: string, dbPath = defaultDbPath(projectRoot)): UiEvent[] {
   return getUiData(projectRoot, dbPath).events;
+}
+
+export function getUiDiagnosis(projectRoot: string, dbPath = defaultDbPath(projectRoot)): DiagnosisReport {
+  return getUiData(projectRoot, dbPath).diagnosis;
 }
 
 export function getLatestDoctorPatch(projectRoot: string): UiDoctorLatest {
@@ -165,10 +175,13 @@ export function runUiDoctor(projectRoot: string, dbPath = defaultDbPath(projectR
 export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath(projectRoot)): string {
   const data = getUiData(projectRoot, dbPath);
   const lines = [
-    '# Mr Token Audit Report',
+    '# Mr Token AI Fuel Report',
     '',
     `Project root: ${projectRoot}`,
+    `Time generated: ${data.diagnosis.generatedAt}`,
     `Database: ${data.setup.dbPath}`,
+    '',
+    formatDiagnosisMarkdown(data.diagnosis),
     '',
     '## Summary',
     '',
@@ -178,7 +191,7 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
     `- Tool calls: ${data.summary.toolCalls.toLocaleString()}`,
     `- Estimated savings: ${data.summary.estimatedSavingsRange[0].toLocaleString()}-${data.summary.estimatedSavingsRange[1].toLocaleString()} tokens`,
     '',
-    '## Findings',
+    '## Deterministic Audit Findings',
     '',
     ...(data.findings.length === 0
       ? ['No deterministic waste patterns detected.']
@@ -200,6 +213,11 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
       : 'No patch bundle generated yet.',
     '',
     'Patches are proposals only and are never applied automatically.'
+    ,
+    '',
+    '## Privacy Note',
+    '',
+    'This report was generated locally from `.token-tithe/token-tithe.db`. No source upload, cloud backend, telemetry, auth, or external AI call is required by default.'
   ];
 
   return `${lines.join('\n')}\n`;

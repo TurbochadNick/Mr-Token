@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   exportMarkdownReport,
   getLatestDoctorPatch,
+  getUiDiagnosis,
   getSetupStatus,
   getUiData,
   getUiEvents,
@@ -106,6 +107,11 @@ async function handleRequest({
 
   if (url.pathname === '/api/doctor/latest') {
     sendJson(response, getLatestDoctorPatch(projectRoot));
+    return;
+  }
+
+  if (url.pathname === '/api/diagnosis') {
+    sendJson(response, getUiDiagnosis(projectRoot, dbPath));
     return;
   }
 
