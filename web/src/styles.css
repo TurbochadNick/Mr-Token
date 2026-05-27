@@ -157,6 +157,11 @@ h1 {
   color: #8a352d;
 }
 
+.notice.warning {
+  border-color: #d8c77c;
+  color: #6b5318;
+}
+
 .gettingStarted,
 .panel {
   background: #ffffff;

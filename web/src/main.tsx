@@ -492,6 +492,7 @@ function Setup({ setup, onInit }: { setup: SetupStatus; onInit: () => void }) {
           <h3>Setup</h3>
           <button onClick={onInit}>Initialize Project</button>
         </div>
+        <div className="notice warning">Mr Token is local-only. It may record Claude Code hook payloads that include file paths, commands, and tool output snippets. Use only where you are authorized.</div>
         <div className="statusGrid">
           <Status label="Project root" value={setup.projectRoot} />
           <Status label="Database" value={setup.dbPath} ok={setup.databaseExists} />
@@ -499,6 +500,28 @@ function Setup({ setup, onInit }: { setup: SetupStatus; onInit: () => void }) {
           <Status label="Claude settings" value={setup.settingsPath} ok={setup.claudeSettingsExists} />
           <Status label="Hooks installed" value={setup.hooksInstalled ? 'yes' : 'no'} ok={setup.hooksInstalled} />
         </div>
+      </section>
+      <section className="section">
+        <div className="sectionHeader">
+          <h3>Privacy / Data Captured</h3>
+        </div>
+        <article className="panel">
+          <p>Data stays in this project by default. Events are written to <code>.token-tithe/token-tithe.db</code> and <code>.token-tithe/events.jsonl</code>. Claude hooks are written to <code>.claude/settings.local.json</code>.</p>
+          <p>Captured data can include hook metadata, tool names, commands, file paths, estimated token counts, and raw Claude Code hook payloads. AI review is disabled by default.</p>
+        </article>
+      </section>
+      <section className="section">
+        <div className="sectionHeader">
+          <h3>Uninstall Instructions</h3>
+        </div>
+        <article className="panel">
+          <ol>
+            <li>Remove <code>.token-tithe/</code>.</li>
+            <li>Remove <code>token-tithe watch --stdin</code> hooks from <code>.claude/settings.local.json</code>.</li>
+            <li>Run <code>npm unlink -g token-tithe</code>.</li>
+            <li>Restore any <code>settings.local.json.*.bak</code> file if needed.</li>
+          </ol>
+        </article>
       </section>
       <CommandCard />
     </>

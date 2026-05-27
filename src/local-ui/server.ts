@@ -15,7 +15,7 @@ import {
   runUiDoctor,
   runUiInit
 } from './api.js';
-import { defaultDbPath, findProjectRoot } from '../utils/paths.js';
+import { defaultDataDir, defaultDbPath, findProjectRoot } from '../utils/paths.js';
 
 export type UiServerOptions = {
   port: number;
@@ -26,6 +26,7 @@ export type UiServerOptions = {
 export async function startUiServer(options: UiServerOptions): Promise<void> {
   const projectRoot = findProjectRoot();
   const dbPath = options.db ?? defaultDbPath(projectRoot);
+  const dataDir = defaultDataDir(projectRoot);
   assertInsideProject(projectRoot, dbPath);
   const staticRoot = resolveStaticRoot();
   const server = createServer((request, response) => {
@@ -39,7 +40,10 @@ export async function startUiServer(options: UiServerOptions): Promise<void> {
 
   const url = `http://localhost:${options.port}`;
   console.log(`Mr Token is running at ${url}`);
+  console.log(`Project root: ${projectRoot}`);
+  console.log(`Data directory: ${dataDir}`);
   console.log('Local only: bound to 127.0.0.1. No telemetry, upload, or cloud backend.');
+  console.log('Press Ctrl+C to stop.');
 
   if (options.open) {
     openBrowser(url);
