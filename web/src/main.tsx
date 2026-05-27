@@ -104,6 +104,21 @@ type View = 'dashboard' | 'events' | 'doctor' | 'setup';
 
 const COMMANDS = ['token-tithe init', 'token-tithe audit', 'token-tithe doctor', 'token-tithe ui'];
 
+type TokenFlowSegment = {
+  key: 'prompts' | 'tools' | 'outputs' | 'stops';
+  label: string;
+  tokens: number;
+  percent: number;
+};
+
+type DashboardInsights = {
+  eventCount: number;
+  lastEventTime: string | null;
+  mostCommonTool: string | null;
+  sessionCount: number;
+  tokenFlow: TokenFlowSegment[];
+};
+
 function App() {
   const [data, setData] = useState<ApiData | null>(null);
   const [view, setView] = useState<View>('dashboard');
@@ -153,10 +168,7 @@ function App() {
   return (
     <main className="appFrame">
       <aside className="sidebar">
-        <div>
-          <p className="eyebrow">Local control panel</p>
-          <h1>Mr Token</h1>
-        </div>
+        <BrandLockup />
         <nav className="nav" aria-label="Views">
           {(['dashboard', 'events', 'doctor', 'setup'] as View[]).map((item) => (
             <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>
@@ -164,17 +176,21 @@ function App() {
             </button>
           ))}
         </nav>
-        <p className="localOnly">Bound to localhost. Reads `.token-tithe/token-tithe.db`. No telemetry, upload, auth, or cloud backend.</p>
+        <div className="sidebarFooter">
+          <span className="localBadge">Localhost only</span>
+          <p className="localOnly">Reads `.token-tithe/token-tithe.db`. No telemetry, upload, auth, or cloud backend.</p>
+        </div>
       </aside>
 
       <section className="content">
         <header className="contentHeader">
           <div>
             <h2>{labelView(view)}</h2>
-            <p>{data?.setup.projectRoot ?? 'Loading project...'}</p>
+            <p className="projectRoot">{data?.setup.projectRoot ?? 'Loading project...'}</p>
           </div>
           <div className="actions">
             <button
+              className="primaryAction"
               onClick={() =>
                 void postAction<{ data: ApiData }>('/api/audit/run', (value) => {
                   setData(value.data);
@@ -184,7 +200,7 @@ function App() {
             >
               Refresh Audit
             </button>
-            <a className="buttonLink" href="/api/export/report.md">Export Report</a>
+            <a className="buttonLink secondaryAction" href="/api/export/report.md">Export Report</a>
           </div>
         </header>
 
@@ -192,7 +208,24 @@ function App() {
         {error ? <div className="notice error">Error: {error}</div> : null}
         {!data && !error ? <div className="notice">Loading local audit data...</div> : null}
 
-        {data && view === 'dashboard' ? <Dashboard data={data} topFinding={topFinding} /> : null}
+        {data && view === 'dashboard' ? (
+          <Dashboard
+            data={data}
+            topFinding={topFinding}
+            onRunAudit={() =>
+              void postAction<{ data: ApiData }>('/api/audit/run', (value) => {
+                setData(value.data);
+                return 'Audit recomputed from local database.';
+              })
+            }
+            onRunDoctor={() =>
+              void postAction<{ result: { patchDir: string } }>('/api/doctor/run', (value) =>
+                `Generated safe patch bundle: ${value.result.patchDir}`
+              )
+            }
+            onViewEvents={() => setView('events')}
+          />
+        ) : null}
         {data && view === 'events' ? (
           <Events
             events={filteredEvents}
@@ -229,80 +262,285 @@ function App() {
   );
 }
 
-function Dashboard({ data, topFinding }: { data: ApiData; topFinding: Finding | null }) {
+function BrandLockup() {
   return (
-    <>
-      <section className="gettingStarted">
-        <h3>Getting Started</h3>
-        <ol>
-          <li>Open a project folder in terminal.</li>
-          <li>Run <code>token-tithe ui</code>.</li>
-          <li>Click Initialize Project if hooks are not installed.</li>
-          <li>Use Claude Code normally.</li>
-          <li>Refresh dashboard or Run Audit.</li>
-          <li>Run Doctor to generate safe patches.</li>
-        </ol>
-      </section>
+    <div className="brandLockup" aria-label="Mr Token">
+      <div className="logoMark" aria-hidden="true">
+        <span>MT</span>
+      </div>
+      <div>
+        <p className="eyebrow">Local fuel regulator</p>
+        <h1>Mr Token</h1>
+      </div>
+    </div>
+  );
+}
 
-      <section className="metrics" aria-label="Audit summary">
-        <Metric label="Fuel score" value={`${data.diagnosis.fuelScore}/100`} />
-        <Metric label="Total tokens" value={formatNumber(data.summary.totalEstimatedTokens)} />
-        <Metric label="Sessions" value={formatNumber(data.summary.sessions)} />
-        <Metric label="Prompts" value={formatNumber(data.summary.prompts)} />
-        <Metric label="Tool calls" value={formatNumber(data.summary.toolCalls)} />
-        <Metric label="Estimated savings" value={formatRange(data.summary.estimatedSavingsRange)} />
-      </section>
+function Dashboard({
+  data,
+  topFinding,
+  onRunAudit,
+  onRunDoctor,
+  onViewEvents
+}: {
+  data: ApiData;
+  topFinding: Finding | null;
+  onRunAudit: () => void;
+  onRunDoctor: () => void;
+  onViewEvents: () => void;
+}) {
+  const dashboard = getDashboardInsights(data);
 
-      <section className="section">
-        <div className="sectionHeader">
-          <h3>Fuel Diagnosis</h3>
-          <span>{data.diagnosis.fuelRating}</span>
-        </div>
-        <article className="panel">
-          <p>{data.diagnosis.generalDiagnosis}</p>
-          <div className="burnGrid">
-            <span>Useful: {formatNumber(data.diagnosis.burnProfile.usefulEstimatedTokens)}</span>
-            <span>Waste: {formatNumber(data.diagnosis.burnProfile.suspectedWasteTokens)}</span>
-            <span>Waste %: {data.diagnosis.burnProfile.wastePercentage}%</span>
-            <span>Confidence: {data.diagnosis.burnProfile.confidence}</span>
+  return (
+    <div className="dashboard">
+      <section className="missionHero">
+        <div className="heroCopy">
+          <div className="heroBadges">
+            <StatusBadge label="Local-only" tone="success" />
+            <StatusBadge label="Claude Code" />
           </div>
-          <h4>Top Causes</h4>
-          <ul>
-            {data.diagnosis.burnProfile.topBurnCauses.length === 0 ? (
-              <li>No major burn causes detected.</li>
-            ) : (
-              data.diagnosis.burnProfile.topBurnCauses.map((cause) => <li key={cause}>{diagnosisLabel(cause)}</li>)
-            )}
-          </ul>
-        </article>
+          <p className="eyebrow">Session intelligence</p>
+          <h2>Mission Brief</h2>
+          <p>Local Claude Code usage intelligence for this project.</p>
+          <span className="projectPill mono">{data.setup.projectRoot}</span>
+        </div>
+        <div className="heroPanel">
+          <span className="heroPanelLabel">Fuel Score</span>
+          <strong>{data.diagnosis.fuelScore}</strong>
+          <span>{data.diagnosis.fuelRating}</span>
+          <div className="heroActions">
+            <button className="primaryAction" onClick={onRunAudit}>Run Audit</button>
+            <button className="secondaryAction" onClick={onRunDoctor}>Run Doctor</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboardMetrics" aria-label="Audit summary">
+        <MetricCard icon="TK" label="Total Estimated Tokens" value={formatNumber(data.summary.totalEstimatedTokens)} helper="Captured local burn across prompts, tools, and outputs." />
+        <MetricCard icon="SS" label="Sessions" value={formatNumber(data.summary.sessions)} helper="Distinct Claude Code sessions in the ledger." />
+        <MetricCard icon="PR" label="Prompts" value={formatNumber(data.summary.prompts)} helper="User prompt submissions available for inspection." />
+        <MetricCard icon="TL" label="Tool Calls" value={formatNumber(data.summary.toolCalls)} helper="Observed tool activity and command execution." />
+        <MetricCard icon="SV" label="Estimated Savings" value={hasSavings(data.summary.estimatedSavingsRange) ? formatRange(data.summary.estimatedSavingsRange) : 'None yet'} helper="Likely recoverable burn from deterministic findings." />
+      </section>
+
+      <section className="dashboardGrid">
+        <TopTokenLeak finding={topFinding} />
+        <ActivityStrip insights={dashboard} setup={data.setup} />
       </section>
 
       <section className="section">
-        <div className="sectionHeader">
-          <h3>Top Finding</h3>
+        <div className="sectionHeader dashboardSectionHeader">
+          <div>
+            <h3>Token Flow</h3>
+            <p>Where the local ledger saw burn in this project.</p>
+          </div>
+          <span className="ratingPill">{data.diagnosis.burnProfile.confidence} confidence</span>
         </div>
-        {topFinding ? (
-          <article className="panel">
-            <div className="findingHero">
-              <strong>{topFinding.category}</strong>
-              <span>{topFinding.confidence} confidence</span>
-            </div>
-            <p>{formatNumber(topFinding.estimatedWasteTokens)} estimated waste tokens</p>
-            <ul>
-              {topFinding.recommendedFixes.map((fix) => (
-                <li key={fix}>{fix}</li>
-              ))}
-            </ul>
-          </article>
-        ) : (
-          <div className="notice">No deterministic waste patterns detected yet.</div>
-        )}
+        <TokenFlowBar segments={dashboard.tokenFlow} />
       </section>
 
-      <Findings findings={data.findings} />
-      <DiagnosisCards findings={data.diagnosis.findings} next={data.diagnosis.whatToChangeNext} />
-      <CommandCard />
-    </>
+      <section className="dashboardTwoColumn">
+        <FindingsPreview findings={data.findings} onViewEvents={onViewEvents} />
+        <FuelDiagnosisPanel data={data} />
+      </section>
+    </div>
+  );
+}
+
+function MetricCard({ icon, label, value, helper }: { icon: string; label: string; value: string; helper: string }) {
+  return (
+    <article className="dashboardMetric" tabIndex={0}>
+      <div className="metricTopline">
+        <span className="metricIcon">{icon}</span>
+        <span>{label}</span>
+      </div>
+      <strong>{value}</strong>
+      <p>{helper}</p>
+    </article>
+  );
+}
+
+function StatusBadge({ label, tone }: { label: string; tone?: 'success' }) {
+  return <span className={`statusBadge ${tone === 'success' ? 'statusBadgeSuccess' : ''}`}>{label}</span>;
+}
+
+function TopTokenLeak({ finding }: { finding: Finding | null }) {
+  return (
+    <article className="tokenLeakCard">
+      <div className="sectionHeader dashboardSectionHeader">
+        <div>
+          <p className="eyebrow">Top Waste</p>
+          <h3>Top Token Leak</h3>
+        </div>
+        {finding ? <span className="chip">{finding.confidence} confidence</span> : null}
+      </div>
+      {finding ? (
+        <>
+          <strong className="leakCategory">{finding.category}</strong>
+          <div className="leakStats">
+            <span><b>{formatNumber(finding.estimatedWasteTokens)}</b> waste tokens</span>
+            <span><b>{formatRange(finding.savingsRange)}</b> savings range</span>
+          </div>
+          <ul className="fixList">
+            {finding.recommendedFixes.slice(0, 3).map((fix) => <li key={fix}>{fix}</li>)}
+          </ul>
+        </>
+      ) : (
+        <EmptyState
+          title="No major leaks detected yet."
+          body="Run a longer Claude Code session to build a richer profile, then run audit again."
+          steps={['Initialize project', 'Use Claude Code normally', 'Run Audit']}
+        />
+      )}
+    </article>
+  );
+}
+
+function ActivityStrip({ insights, setup }: { insights: DashboardInsights; setup: SetupStatus }) {
+  return (
+    <article className="activityCard">
+      <div className="sectionHeader dashboardSectionHeader">
+        <div>
+          <p className="eyebrow">Local audit</p>
+          <h3>Activity Strip</h3>
+        </div>
+      </div>
+      <div className="activityGrid">
+        <ActivityItem label="Recent events" value={formatNumber(insights.eventCount)} />
+        <ActivityItem label="Last capture" value={insights.lastEventTime ?? 'No events yet'} />
+        <ActivityItem label="Common tool" value={insights.mostCommonTool ?? 'No tool data'} />
+        <ActivityItem label="Sessions" value={formatNumber(insights.sessionCount)} />
+        <ActivityItem label="Database" value={setup.databaseExists ? 'Ready' : 'Missing'} ok={setup.databaseExists} />
+      </div>
+    </article>
+  );
+}
+
+function ActivityItem({ label, value, ok }: { label: string; value: string; ok?: boolean }) {
+  return (
+    <div className="activityItem">
+      <span>{label}</span>
+      <strong className={ok === undefined ? '' : ok ? 'okText' : 'badText'}>{value}</strong>
+    </div>
+  );
+}
+
+function TokenFlowBar({ segments }: { segments: TokenFlowSegment[] }) {
+  const total = segments.reduce((sum, segment) => sum + segment.tokens, 0);
+
+  return (
+    <article className="tokenFlowCard">
+      {total === 0 ? (
+        <EmptyState
+          title="No token flow yet."
+          body="Initialize the project, use Claude Code normally, then run audit to populate the ledger."
+          steps={['Initialize project', 'Use Claude Code', 'Run Audit']}
+        />
+      ) : (
+        <>
+          <div className="flowBar" aria-label="Token flow by event type">
+            {segments.map((segment) => (
+              <span
+                key={segment.label}
+                className={`flowSegment flow-${segment.key}`}
+                style={{ width: `${Math.max(segment.percent, 2)}%` }}
+                title={`${segment.label}: ${formatNumber(segment.tokens)} tokens`}
+              />
+            ))}
+          </div>
+          <div className="flowLegend">
+            {segments.map((segment) => (
+              <div key={segment.label}>
+                <span className={`legendDot flow-${segment.key}`} />
+                <div>
+                  <strong>{segment.label}</strong>
+                  <p>{formatNumber(segment.tokens)} tokens · {segment.percent}%</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </article>
+  );
+}
+
+function FindingsPreview({ findings, onViewEvents }: { findings: Finding[]; onViewEvents: () => void }) {
+  return (
+    <section className="previewPanel">
+      <div className="sectionHeader dashboardSectionHeader">
+        <div>
+          <p className="eyebrow">Context hygiene</p>
+          <h3>Findings Preview</h3>
+        </div>
+        <button className="secondaryAction compactButton" onClick={onViewEvents}>View Events</button>
+      </div>
+      {findings.length === 0 ? (
+        <EmptyState
+          title="No findings yet."
+          body="Mr Token needs captured Claude Code activity before it can identify token leaks."
+          steps={['Initialize project', 'Use Claude Code normally', 'Run Audit']}
+        />
+      ) : (
+        <div className="findingPreviewList">
+          {findings.slice(0, 3).map((finding) => (
+            <article className="findingPreviewCard" key={finding.category}>
+              <div>
+                <strong>{finding.category}</strong>
+                <p>{finding.recommendedFixes[0] ?? 'Tighten the prompt and rerun the audit.'}</p>
+              </div>
+              <div className="findingPreviewMeta">
+                <span className="chip subtle">{finding.confidence}</span>
+                <b>{formatNumber(finding.estimatedWasteTokens)}</b>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FuelDiagnosisPanel({ data }: { data: ApiData }) {
+  return (
+    <section className="previewPanel">
+      <div className="sectionHeader dashboardSectionHeader">
+        <div>
+          <p className="eyebrow">Safe patch suggestions</p>
+          <h3>What To Change Next</h3>
+        </div>
+        <span className="ratingPill">{data.doctorLatest ? 'Patch bundle ready' : 'No patch yet'}</span>
+      </div>
+      <p className="diagnosisLead">{data.diagnosis.generalDiagnosis}</p>
+      <div className="burnGrid dashboardBurnGrid">
+        <span>Useful: {formatNumber(data.diagnosis.burnProfile.usefulEstimatedTokens)}</span>
+        <span>Waste: {formatNumber(data.diagnosis.burnProfile.suspectedWasteTokens)}</span>
+        <span>Waste: {data.diagnosis.burnProfile.wastePercentage}%</span>
+      </div>
+      {data.diagnosis.whatToChangeNext.length === 0 ? (
+        <EmptyState
+          title="No immediate tune-up."
+          body="Run Doctor after more session activity to generate safe patch suggestions."
+          steps={['Use Claude Code', 'Run Audit', 'Run Doctor']}
+        />
+      ) : (
+        <ol className="nextList">
+          {data.diagnosis.whatToChangeNext.slice(0, 4).map((item) => <li key={item}>{item}</li>)}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function EmptyState({ title, body, steps }: { title: string; body: string; steps: string[] }) {
+  return (
+    <div className="dashboardEmpty">
+      <strong>{title}</strong>
+      <p>{body}</p>
+      <div>
+        {steps.map((step) => <span key={step}>{step}</span>)}
+      </div>
+    </div>
   );
 }
 
@@ -322,7 +560,7 @@ function DiagnosisCards({ findings, next }: { findings: DiagnosisFinding[]; next
           <article className="panel" key={finding.category}>
             <div className="findingHero">
               <strong>{diagnosisLabel(finding.category)}</strong>
-              <span>{finding.severity} / {finding.confidence}</span>
+              <span className={`severity severity-${finding.severity}`}>{finding.severity} / {finding.confidence}</span>
             </div>
             <p className="path">Technical category: {finding.category}</p>
             <p>{finding.whyThisMatters}</p>
@@ -356,12 +594,12 @@ function Findings({ findings }: { findings: Finding[] }) {
           </thead>
           <tbody>
             {findings.length === 0 ? (
-              <tr><td colSpan={4}>No findings yet.</td></tr>
+              <tr><td colSpan={4}><span className="emptyInline">No findings yet.</span></td></tr>
             ) : (
               findings.map((finding) => (
                 <tr key={finding.category}>
                   <td>{finding.category}</td>
-                  <td>{finding.confidence}</td>
+                  <td><span className="chip subtle">{finding.confidence}</span></td>
                   <td>{formatNumber(finding.estimatedWasteTokens)} tokens</td>
                   <td>{finding.recommendedFixes.join(' ')}</td>
                 </tr>
@@ -422,12 +660,12 @@ function Events({
           </thead>
           <tbody>
             {events.length === 0 ? (
-              <tr><td colSpan={5}>No events match the selected filters.</td></tr>
+              <tr><td colSpan={5}><span className="emptyInline">No events match the selected filters.</span></td></tr>
             ) : (
               events.map((event) => (
                 <tr key={event.id}>
-                  <td>{event.eventType}</td>
-                  <td>{event.toolName ?? '-'}</td>
+                  <td><span className="chip">{event.eventType}</span></td>
+                  <td>{event.toolName ? <span className="chip subtle">{event.toolName}</span> : '-'}</td>
                   <td>{formatNumber(event.estimatedTokens)}</td>
                   <td className="mono">{event.filePath ?? event.command ?? '-'}</td>
                   <td>{event.timestamp}</td>
@@ -450,8 +688,8 @@ function Doctor({ latest, onRun }: { latest: DoctorLatest; onRun: () => void }) 
           <p>Generates safe patch proposals only. Nothing is applied automatically.</p>
         </div>
         <div className="actions">
-          <button onClick={onRun}>Run Doctor</button>
-          <button onClick={() => window.location.reload()}>View Latest Patch</button>
+          <button className="primaryAction" onClick={onRun}>Run Doctor</button>
+          <button className="secondaryAction" onClick={() => window.location.reload()}>View Latest Patch</button>
         </div>
       </div>
       {latest ? (
@@ -462,7 +700,7 @@ function Doctor({ latest, onRun }: { latest: DoctorLatest; onRun: () => void }) 
             <p className="path">Summary: {latest.summaryPath}</p>
             <p className="path">Diff: {latest.diffPath}</p>
           </article>
-          <article className="panel">
+          <article className="panel safetyPanel">
             <strong>Patch suggestions are diagnosis-driven</strong>
             <p>Doctor proposals target project context, repeated workflows, broad prompts, tool-output caps, and acceptance-criteria templates when those burn patterns are detected.</p>
           </article>
@@ -478,7 +716,7 @@ function Doctor({ latest, onRun }: { latest: DoctorLatest; onRun: () => void }) 
           </div>
         </>
       ) : (
-        <div className="notice">No patch bundle found. Run Doctor to generate proposals.</div>
+        <div className="emptyState">No patch bundle found. Run Doctor to generate manual-review proposals.</div>
       )}
     </section>
   );
@@ -490,9 +728,73 @@ function Setup({ setup, onInit }: { setup: SetupStatus; onInit: () => void }) {
       <section className="section flush">
         <div className="sectionHeader">
           <h3>Setup</h3>
-          <button onClick={onInit}>Initialize Project</button>
+          <button className="primaryAction" onClick={onInit}>Initialize Project</button>
         </div>
         <div className="notice warning">Mr Token is local-only. It may record Claude Code hook payloads that include file paths, commands, and tool output snippets. Use only where you are authorized.</div>
+        <article className="panel setupFlow">
+          <h4>Operating Sequence</h4>
+          <ol>
+            <li>Initialize this project.</li>
+            <li>Use Claude Code normally.</li>
+            <li>Run audit to inspect token burn.</li>
+            <li>Run Doctor for safe patch proposals.</li>
+          </ol>
+        </article>
+        <div className="clientGuideGrid">
+          <article className="panel clientGuide">
+            <h4>Connect a Claude Code Project</h4>
+            <pre className="inlineCommands">{`cd /path/to/client-project
+token-tithe ui
+
+# In the browser:
+# Setup -> Initialize Project
+
+# Then use Claude Code in this same folder.
+token-tithe audit`}</pre>
+            <ol>
+              <li>Open a terminal in the exact project folder the client wants analyzed.</li>
+              <li>Run <code>token-tithe ui</code> from that folder.</li>
+              <li>On this Setup page, confirm Project root matches the client project.</li>
+              <li>Click <strong>Initialize Project</strong> to install project-local Claude Code hooks.</li>
+              <li>Have the client use Claude Code in that same project folder.</li>
+              <li>Return to Mr Token and click <strong>Refresh Audit</strong>.</li>
+            </ol>
+            <p>Full Claude Code analysis depends on hooks being installed in each specific project that needs measurement.</p>
+          </article>
+          <article className="panel clientGuide">
+            <h4>Codex Threads / Projects</h4>
+            <p>Codex automatic thread capture is not enabled in this MVP. Do not promise full Codex token-use analysis to clients yet.</p>
+            <pre className="inlineCommands">{`cd /path/to/codex-workspace
+token-tithe ui
+
+# Use this as the local project audit surface.
+# Full automatic session capture currently requires Claude Code hooks.`}</pre>
+            <ol>
+              <li>For now, run Mr Token from the same local repo or workspace used by the Codex thread.</li>
+              <li>Use the dashboard as the project audit surface for local files, patches, and Doctor recommendations.</li>
+              <li>Use Claude Code hook capture for full session/tool/prompt token analysis.</li>
+            </ol>
+            <p>The codebase is prepared for adapters, but Codex needs its own event adapter before thread-level capture is complete.</p>
+          </article>
+        </div>
+        <article className="panel clientGuide">
+          <h4>Client 1 / Client 2 Handoff Checklist</h4>
+          <pre className="inlineCommands">{`node --version
+token-tithe ui
+
+# Optional terminal equivalents:
+token-tithe init
+token-tithe audit
+token-tithe doctor`}</pre>
+          <ol>
+            <li>Install Mr Token on the client machine or inside the client-approved development environment.</li>
+            <li>Start from a test repository first if the project is sensitive.</li>
+            <li>Confirm the localhost URL, project root, database path, and hooks-installed status on Setup.</li>
+            <li>Explain that data stays local, but hook payloads may include prompts, paths, commands, and tool output snippets.</li>
+            <li>Have the client run one normal Claude Code session, then click Refresh Audit.</li>
+            <li>Run Doctor only after reviewing the audit. Doctor writes patch proposals only; it does not apply them.</li>
+          </ol>
+        </article>
         <div className="statusGrid">
           <Status label="Project root" value={setup.projectRoot} />
           <Status label="Database" value={setup.dbPath} ok={setup.databaseExists} />
@@ -539,7 +841,7 @@ function CommandCard() {
     <section className="section">
       <div className="sectionHeader">
         <h3>Copy Commands</h3>
-        <button onClick={() => void copyCommands()}>Copy</button>
+        <button className="secondaryAction" onClick={() => void copyCommands()}>Copy</button>
       </div>
       <pre className="commands">{commandText}</pre>
     </section>
@@ -563,6 +865,66 @@ function Status({ label, value, ok }: { label: string; value: string; ok?: boole
       <p>{value}</p>
     </article>
   );
+}
+
+function getDashboardInsights(data: ApiData): DashboardInsights {
+  const eventCount = data.events.length;
+  const lastEvent = [...data.events].sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+  const toolCounts = new Map<string, number>();
+  const flowTotals: Record<TokenFlowSegment['key'], number> = {
+    prompts: 0,
+    tools: 0,
+    outputs: 0,
+    stops: 0
+  };
+
+  for (const event of data.events) {
+    if (event.toolName) toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
+    flowTotals[classifyEventForFlow(event.eventType)] += event.estimatedTokens;
+  }
+
+  const flowTotal = Object.values(flowTotals).reduce((sum, tokens) => sum + tokens, 0);
+  const tokenFlow = [
+    { key: 'prompts' as const, label: 'Prompts', tokens: flowTotals.prompts },
+    { key: 'tools' as const, label: 'Tool calls', tokens: flowTotals.tools },
+    { key: 'outputs' as const, label: 'Outputs/results', tokens: flowTotals.outputs },
+    { key: 'stops' as const, label: 'Stop/final events', tokens: flowTotals.stops }
+  ].map((segment) => ({
+    ...segment,
+    percent: flowTotal === 0 ? 0 : Math.round((segment.tokens / flowTotal) * 100)
+  }));
+
+  const mostCommonTool = [...toolCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+  return {
+    eventCount,
+    lastEventTime: lastEvent ? formatTimestamp(lastEvent.timestamp) : null,
+    mostCommonTool,
+    sessionCount: data.summary.sessions,
+    tokenFlow
+  };
+}
+
+function classifyEventForFlow(eventType: string): TokenFlowSegment['key'] {
+  if (eventType === 'UserPromptSubmit') return 'prompts';
+  if (eventType === 'PostToolUse') return 'outputs';
+  if (eventType === 'PreToolUse') return 'tools';
+  return 'stops';
+}
+
+function formatTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+}
+
+function hasSavings(range: [number, number]): boolean {
+  return range[0] > 0 || range[1] > 0;
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
