@@ -1,5 +1,22 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+.DS_Store
+
+# Local token-tithe runtime data
+.token-tithe/
 *.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Python backend
 *.egg-info/
 __pycache__/
 *.pyc
-.DS_Store

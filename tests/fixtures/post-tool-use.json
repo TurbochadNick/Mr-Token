@@ -1,0 +1,17 @@
+{
+  "session_id": "session-123",
+  "hook_event_name": "PostToolUse",
+  "cwd": "/tmp/example-project",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "src/index.ts"
+  },
+  "tool_response": {
+    "stdout": "line one\nline two",
+    "stderr": "",
+    "result": "read completed"
+  },
+  "unknown_future_field": {
+    "kept": true
+  }
+}

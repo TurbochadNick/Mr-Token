@@ -1,0 +1,6 @@
+{
+  "session_id": "session-123",
+  "hook_event_name": "UserPromptSubmit",
+  "cwd": "/tmp/example-project",
+  "prompt": "Refactor this function and explain the tradeoffs."
+}
