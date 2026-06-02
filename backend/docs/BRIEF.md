@@ -24,7 +24,7 @@ Agents quietly waste tokens: stale history, repeated system prompts, huge tool/l
 
 ## MVP scope (proves the concept)
 - **Source:** Claude Code only, via **transcript JSONL** (`~/.claude/projects/<path>/<session>.jsonl`) — verified to contain full token usage, cache stats, model, tools, retries (`requestId`/`parentUuid`), and subagents (`isSidechain`). No OTEL/hooks required for v1.
-- **Stack:** Python, SQLite ledger, pure-function rule engine, CLI report (`mrtoken report <session>`). No dashboard yet.
+- **Stack:** Python, SQLite ledger, pure-function rule engine, CLI report (`mrtoken-transcript report <session>`). No dashboard yet.
 - **Rules (3 high-signal):** repeated-context (block hashing), huge-tool-output, retry-loop.
 - **One trusted recommendation:** "fresh handoff recommended" with a token-based justification.
 - **Validation:** dogfood on Zach's own real sessions (ground truth known) for ~2 weeks before adding a 2nd integration or any dashboard.

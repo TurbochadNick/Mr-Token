@@ -4,6 +4,7 @@
   "description": "Local-first Claude Code hook collector and terminal token audit CLI.",
   "type": "module",
   "bin": {
+    "mrtoken": "./dist/cli.js",
     "token-tithe": "./dist/cli.js"
   },
   "files": [

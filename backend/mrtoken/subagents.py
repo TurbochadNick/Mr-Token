@@ -151,7 +151,7 @@ def subagent_report(conn: sqlite3.Connection, prefix: str):
         print(f"  {'─'*8}  {'─'*4}  {'─'*12}  {'─'*28}")
         for sid, title, n, toks in parents:
             print(f"  {sid[:8]}  {n:>4}  {fmt(toks):>12}  {title or ''}")
-        print(f"\n  run: mrtoken subagents <session-prefix>  for per-subagent detail\n")
+        print(f"\n  run: mrtoken-transcript subagents <session-prefix>  for per-subagent detail\n")
         return
 
     subs = get_subagent_data(conn, prefix)

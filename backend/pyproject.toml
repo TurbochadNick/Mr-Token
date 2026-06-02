@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-mrtoken = "mrtoken.cli:main"
+mrtoken-transcript = "mrtoken.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -23,30 +23,32 @@ cd backend
 pip install -e .
 ```
 
-This installs the `mrtoken` shell command.
+This installs the `mrtoken-transcript` shell command. The repo-root TypeScript CLI owns the customer-facing `mrtoken` command.
 
 ## Quick start
 
 ```bash
 # Ingest all past Claude Code sessions + run rules
-mrtoken ingest --all --rules
+mrtoken-transcript ingest --all --rules
 
 # Fleet summary
-mrtoken fleet
+mrtoken-transcript fleet
 
 # Session report
-mrtoken report <session-id-prefix>
+mrtoken-transcript report <session-id-prefix>
 
 # Subagent ROI breakdown
-mrtoken subagents <session-id-prefix>
+mrtoken-transcript subagents <session-id-prefix>
 
 # List all sessions
-mrtoken list
+mrtoken-transcript list
 ```
 
 ## Auto-update via hook
 
 `backend/hooks/on_stop.py` is wired as a Claude Code `Stop` hook — it runs automatically when any session ends, ingests the transcript, runs the rule engine, and prints a one-line summary.
+
+By default, transcript data is reconciled into the current project's `.token-tithe/token-tithe.db`, alongside the TypeScript CLI/UI data. Set `MRTOKEN_DB=/path/to/db` in the hook command to override this.
 
 To enable, add to `~/.claude/settings.json`:
 
@@ -59,7 +61,7 @@ To enable, add to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "/path/to/python3 /path/to/mr_token/backend/hooks/on_stop.py"
+            "command": "/path/to/python3 /path/to/Mr-Token/backend/hooks/on_stop.py"
           }
         ]
       }
@@ -91,4 +93,4 @@ To enable, add to `~/.claude/settings.json`:
 6 tables: `trace`, `model_call`, `tool_call`, `context_block`, `event`, `recommendation`.  
 See `docs/DATA_MODEL.md` for full schema and source mapping.
 
-Default DB: `~/mr_token/mrtoken.db`
+Default DB: `.token-tithe/token-tithe.db` in the detected project root.

@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""mrtoken — unified CLI entry point.
+"""mrtoken-transcript — transcript backend CLI entry point.
 
 Commands:
-  mrtoken ingest [file.jsonl | --all]   ingest transcript(s)
-  mrtoken report [session-prefix]        show report for a session
-  mrtoken list                           list all sessions
-  mrtoken subagents [session-prefix]     show subagent breakdown for a session
-  mrtoken fleet                          cross-session summary
+  mrtoken-transcript ingest [file.jsonl | --all]   ingest transcript(s)
+  mrtoken-transcript report [session-prefix]        show report for a session
+  mrtoken-transcript list                           list all sessions
+  mrtoken-transcript subagents [session-prefix]     show subagent breakdown for a session
+  mrtoken-transcript fleet                          cross-session summary
 
 Options shared by most commands:
-  --db PATH    SQLite database path (default: ~/mrtoken.db)
+  --db PATH    SQLite database path (default: .token-tithe/token-tithe.db)
   --rules      also run rule engine after ingest
 """
-import argparse, os, sys
+import argparse, sys
 
+from mrtoken.ingest import default_db_path
 
-DEFAULT_DB = os.path.expanduser("~/mr_token/mrtoken.db")
+DEFAULT_DB = default_db_path()
 
 
 def cmd_ingest(args):
@@ -26,7 +27,7 @@ def cmd_ingest(args):
     elif args.file:
         argv += [args.file]
     else:
-        print("mrtoken ingest: give a file or --all"); sys.exit(1)
+        print("mrtoken-transcript ingest: give a file or --all"); sys.exit(1)
     argv += ["--db", args.db]
     if args.rules:
         argv += ["--rules"]
@@ -62,9 +63,9 @@ def cmd_fleet(args):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="mrtoken",
+    ap = argparse.ArgumentParser(prog="mrtoken-transcript",
         description="Local-first token observability for AI agent workflows")
-    ap.add_argument("--db", default=DEFAULT_DB, help="SQLite database (default: ~/mrtoken.db)")
+    ap.add_argument("--db", default=DEFAULT_DB, help="SQLite database (default: .token-tithe/token-tithe.db)")
     sub = ap.add_subparsers(dest="cmd")
 
     p_ingest = sub.add_parser("ingest", help="ingest Claude Code transcript(s)")

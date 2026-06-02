@@ -17,6 +17,25 @@ SCHEMA = os.path.join(HERE, "schema.sql")
 PRICES = os.path.join(HERE, "prices.json")
 
 
+def find_project_root(start: str | None = None) -> str:
+    current = os.path.abspath(start or os.getcwd())
+    while True:
+        if (
+            os.path.exists(os.path.join(current, ".git"))
+            or os.path.exists(os.path.join(current, "package.json"))
+            or os.path.exists(os.path.join(current, "pyproject.toml"))
+        ):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return os.path.abspath(start or os.getcwd())
+        current = parent
+
+
+def default_db_path(project_root: str | None = None) -> str:
+    return os.path.join(find_project_root(project_root), ".token-tithe", "token-tithe.db")
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -52,6 +71,9 @@ def est_cost(prices, model, usage) -> float:
 
 
 def connect(db_path: str) -> sqlite3.Connection:
+    db_dir = os.path.dirname(os.path.abspath(db_path))
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(db_path)
     with open(SCHEMA) as f:
         conn.executescript(f.read())
@@ -244,7 +266,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("path", nargs="?", help="transcript .jsonl")
     ap.add_argument("--all", action="store_true", help="ingest all ~/.claude/projects/**.jsonl")
-    ap.add_argument("--db", default="mrtoken.db")
+    ap.add_argument("--db", default=default_db_path())
     ap.add_argument("--rules", action="store_true", help="run rule engine after ingestion")
     a = ap.parse_args(argv)
     prices = load_prices()

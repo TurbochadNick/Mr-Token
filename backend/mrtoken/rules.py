@@ -121,7 +121,7 @@ def rule_retry_loop(conn, tid: int) -> list:
                        "reduce context before retrying.")
             recs.append(_rec("retry_loop", "high", msg,
                              {"error_count": len(errors), "distinct_calls": distinct_calls,
-                              "tools": tools, "first_mc_id": key}))
+                              "tools": tools, "first_mc_id": errors[0][1] if errors else window[0]}))
     return recs
 
 
@@ -179,12 +179,12 @@ def rule_fresh_handoff(conn, tid: int) -> list:
     if ratio_first - ratio_last >= HANDOFF_CACHE_DECAY:
         signals.append(f"cache hit fell {ratio_first:.0%} → {ratio_last:.0%} (context churning)")
     # 3. retry errors in the second half
+    late_cutoff = mc_rows[n // 2][6]
     errs_late = conn.execute("""
         SELECT COUNT(*) FROM tool_call tc
         LEFT JOIN model_call mc ON mc.id=tc.model_call_id
-        WHERE tc.trace_id=? AND tc.is_error=1
-          AND mc.timestamp >= (SELECT AVG(timestamp) FROM model_call WHERE trace_id=?)
-    """, (tid, tid)).fetchone()[0] or 0
+        WHERE tc.trace_id=? AND tc.is_error=1 AND mc.timestamp >= ?
+    """, (tid, late_cutoff)).fetchone()[0] or 0
     if errs_late >= 3:
         signals.append(f"{errs_late} tool errors in second half — stale context may be compounding")
     # 4. raw conversation depth

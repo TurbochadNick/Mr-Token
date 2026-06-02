@@ -83,6 +83,6 @@ def fleet_summary(conn: sqlite3.Connection):
             WHERE t.source='claude_code_subagent'
         """).fetchone()[0] or 0
         print(f"\n  subagent sessions: {sub_count}  •  {fmt(sub_tok)} tokens total")
-        print(f"  run: mrtoken subagents  for per-parent breakdown")
+        print(f"  run: mrtoken-transcript subagents  for per-parent breakdown")
 
     print(f"{'─'*54}\n")

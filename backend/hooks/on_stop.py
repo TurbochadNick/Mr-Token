@@ -2,16 +2,18 @@
 """MR Token — Claude Code Stop hook.
 
 Fires when a session ends. Ingests the just-finished session transcript
-(+ any subagent transcripts) into ~/mrtoken.db and runs the rule engine.
+(+ any subagent transcripts) into the project-local .token-tithe DB and runs the rule engine.
 Prints a one-line summary visible in Claude Code output.
 
 Receives on stdin:
   { "session_id": "<uuid>", "hook_event_name": "Stop", ... }
 """
 import glob, json, os, sys
-sys.path.insert(0, os.path.expanduser("~/mr_token/backend"))
 
-DB = os.path.expanduser("~/mr_token/mrtoken.db")
+BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, BACKEND_ROOT)
+
 PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
@@ -45,11 +47,11 @@ def main():
         sys.exit(0)
 
     try:
-        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.ingest import connect, default_db_path, ingest_file, load_prices
         from mrtoken.rules import analyse
 
         prices = load_prices()
-        conn = connect(DB)
+        conn = connect(os.environ.get("MRTOKEN_DB") or default_db_path(payload.get("cwd")))
         totals = {"model_calls": 0, "tool_calls": 0, "recs": 0, "high": 0}
 
         for path in paths:
@@ -69,7 +71,7 @@ def main():
         print(
             f"mrtoken ✓  {totals['model_calls']} calls · "
             f"{totals['recs']} recommendations{high_str}"
-            f"  →  mrtoken report {session_id[:8]}"
+            f"  →  mrtoken-transcript report {session_id[:8]}"
         )
 
         # if high-priority recommendations exist, surface the first message
