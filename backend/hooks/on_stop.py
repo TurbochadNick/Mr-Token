@@ -9,7 +9,7 @@ Receives on stdin:
   { "session_id": "<uuid>", "hook_event_name": "Stop", ... }
 """
 import glob, json, os, sys
-sys.path.insert(0, os.path.expanduser("~/mr_token"))
+sys.path.insert(0, os.path.expanduser("~/mr_token/backend"))
 
 DB = os.path.expanduser("~/mr_token/mrtoken.db")
 PROJECTS = os.path.expanduser("~/.claude/projects")
