@@ -68,6 +68,16 @@ def cmd_export(args):
     print(export_report(sqlite3.connect(args.db), args.session))
 
 
+def cmd_validate(args):
+    from mrtoken.validate import validate_db, print_report
+    import json, sqlite3
+    report = validate_db(sqlite3.connect(args.db))
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2))
+    else:
+        print_report(report)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mrtoken-transcript",
         description="Local-first token observability for AI agent workflows")
@@ -99,6 +109,11 @@ def main(argv=None):
     p_export.add_argument("session", nargs="?", help="session ID prefix")
     p_export.add_argument("--db", dest="db_sub")
 
+    p_validate = sub.add_parser("validate",
+        help="corroborate fired recommendations (precision proxy, not labels)")
+    p_validate.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    p_validate.add_argument("--db", dest="db_sub")
+
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help(); return
@@ -108,7 +123,7 @@ def main(argv=None):
 
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
-                "export": cmd_export}
+                "export": cmd_export, "validate": cmd_validate}
     dispatch[a.cmd](a)
 
 

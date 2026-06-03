@@ -82,10 +82,29 @@ To enable, add to `~/.claude/settings.json`:
 
 | Rule | Severity | Signal |
 |---|---|---|
-| `repeated_context` | high/warn | Duplicate context blocks re-sent across calls |
-| `huge_tool_output` | warn | Single tool result > ~10k tokens |
-| `retry_loop` | high | Clustered tool errors within a window of calls |
-| `low_cache` | info | Cache hit ratio < 40% after 5+ calls |
+| `repeated_context` | high/warn | Duplicate context blocks re-sent — **cache-aware** (discounts the cached fraction; only uncached re-sends count) |
+| `huge_tool_output` | warn | Single tool result over the profile threshold (research 80k / code-agent 40k / benchmark 24k chars) |
+| `retry_loop` | high | Clustered tool errors across consecutive calls (distinguishes a real loop from single-call mass failure) |
+| `low_cache` | info | Cache hit ratio below the profile floor after 10+ calls |
+
+Thresholds are **profile-aware** (see Session profiles above).
+
+## Validating the rules
+
+There is no human-labeled ground truth, so `validate` does **not** claim "% correct".
+It corroborates each fired recommendation against independent evidence in the
+trace and reports a **precision proxy** (strong / weak / moot), pointing at which
+rules need tuning:
+
+```bash
+mrtoken-transcript validate            # table
+mrtoken-transcript validate --json     # machine-readable
+```
+
+Across a 55-session real fleet: huge_tool_output 91%, retry_loop 100%,
+fresh_handoff 94%, low_cache 100% strong-corroboration. (The harness is what
+surfaced that `repeated_context` was double-counting cache-served re-sends,
+which led to the cache-aware fix above.)
 | `fresh_handoff` | high | Growing input + cache decay + depth — start a fresh session |
 
 ## Session profiles (TTO Eco Mode methodology)

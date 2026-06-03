@@ -20,7 +20,7 @@ HUGE_TOOL_CHARS = 40_000      # ~10k tokens at 4 chars/tok (default / NULL profi
 REPEATED_WASTE_WARN = 2_000   # tokens wasted by duplicate blocks → warn
 REPEATED_WASTE_HIGH = 20_000  # → high
 LOW_CACHE_RATIO = 0.40        # below this after N calls → flag
-LOW_CACHE_MIN_CALLS = 5       # need at least this many calls before flagging
+LOW_CACHE_MIN_CALLS = 10      # need a sustained sample (early-session ratios are noisy)
 RETRY_CLUSTER_ERRORS = 3      # ≥ this many errors within window → retry_loop
 RETRY_CLUSTER_WINDOW = 8      # consecutive model_calls in which errors cluster
 HANDOFF_INPUT_GROWTH = 1.5    # final-quarter avg input_tokens vs first-quarter → signal
@@ -69,17 +69,34 @@ def rule_repeated_context(conn, tid: int) -> list:
     """, (tid,)).fetchall()
     if not rows:
         return []
-    waste = sum((r - 1) * (t or 0) for _, r, t in rows)
-    if waste < REPEATED_WASTE_WARN:
+    raw_waste = sum((r - 1) * (t or 0) for _, r, t in rows)
+
+    # Cache-aware: prompt caching serves re-sent identical blocks at ~cache_read
+    # cost (~10% of input), so most repeated context is NOT real waste on a
+    # well-cached session. Discount by the session cache-hit ratio — only the
+    # UNCACHED fraction is genuinely re-paid.
+    mc = conn.execute("""
+        SELECT SUM(input_tokens), SUM(cache_read_input_tokens),
+               SUM(cache_creation_input_tokens) FROM model_call WHERE trace_id=?
+    """, (tid,)).fetchone()
+    inp, cr, cw = (x or 0 for x in mc)
+    total_in = inp + cr + cw
+    cache_ratio = (cr / total_in) if total_in else 0.0
+    effective_waste = int(raw_waste * (1 - cache_ratio))
+
+    if effective_waste < REPEATED_WASTE_WARN:
         return []
-    sev = "high" if waste >= REPEATED_WASTE_HIGH else "warn"
-    ev = {"wasted_tokens_est": waste, "duplicate_blocks": len(rows),
+    sev = "high" if effective_waste >= REPEATED_WASTE_HIGH else "warn"
+    ev = {"wasted_tokens_est": effective_waste, "raw_repeated_tokens": raw_waste,
+          "cache_hit_ratio": round(cache_ratio, 3), "duplicate_blocks": len(rows),
           "worst": [{"type": bt, "repeat": r, "tok": t}
                     for bt, r, t in sorted(rows, key=lambda x: -(x[1]-1)*(x[2] or 0))[:3]]}
+    cache_note = (f" (after {cache_ratio:.0%} cache discount; {raw_waste:,} raw)"
+                  if cache_ratio > 0.05 else "")
     return [_rec("repeated_context", sev,
-                 f"~{waste:,} tokens re-sent in duplicate context blocks. "
-                 "Consider compacting or summarising repeated sections before each call.",
-                 ev, waste)]
+                 f"~{effective_waste:,} uncached tokens re-sent in duplicate context "
+                 f"blocks{cache_note}. Consider compacting or summarising repeated sections.",
+                 ev, effective_waste)]
 
 
 def rule_huge_tool_output(conn, tid: int) -> list:

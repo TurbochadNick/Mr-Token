@@ -146,6 +146,39 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rows[0]["cache_hit_ratio"], 0.9)
 
 
+    def test_repeated_context_is_cache_aware(self):
+        from mrtoken.rules import rule_repeated_context
+        conn, tid = make_trace()
+        # a 10k-token block re-sent 4 times = 30k raw repeated tokens
+        conn.execute(
+            "INSERT INTO context_block(trace_id, block_type, hash, token_count, repeat_count) "
+            "VALUES(?,?,?,?,?)", (tid, "system", "h1", 10_000, 4))
+        # but the session is 95% cached → effective uncached waste ≈ 1.5k < floor
+        conn.execute(
+            "INSERT INTO model_call(trace_id, input_tokens, cache_read_input_tokens) "
+            "VALUES(?,?,?)", (tid, 5_000, 95_000))
+        conn.commit()
+        self.assertEqual(rule_repeated_context(conn, tid), [],
+                         "cached re-sends should not fire repeated_context")
+
+    def test_validate_harness_corroborates(self):
+        from mrtoken.validate import validate_db
+        conn, tid = make_trace()
+        # a genuine multi-call retry loop
+        for i in range(3):
+            cur = conn.execute(
+                "INSERT INTO model_call(trace_id, timestamp) VALUES(?,?)",
+                (tid, f"2026-06-01T00:00:0{i}Z"))
+            conn.execute("INSERT INTO tool_call(trace_id, model_call_id, tool_name, is_error) "
+                         "VALUES(?,?,?,1)", (tid, cur.lastrowid, "Bash"))
+        from mrtoken.rules import analyse
+        analyse(conn, tid)
+        report = validate_db(conn)
+        rl = report["rules"].get("retry_loop")
+        self.assertIsNotNone(rl)
+        self.assertEqual(rl["strong"], rl["fired"])  # genuine loop → strong
+
+
 def make_trace() -> tuple[sqlite3.Connection, int]:
     conn = connect(":memory:")
     cur = conn.execute(
