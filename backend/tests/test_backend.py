@@ -114,6 +114,38 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(evidence["first_mc_id"], model_call_ids[0])
 
 
+    def test_profile_classifier_and_thresholds(self):
+        from mrtoken.profile import classify_profile
+        from mrtoken.rules import _thresholds
+        conn, tid = make_trace()
+        # research-shaped: reads/searches only
+        for name in ["Read", "Read", "Grep", "WebFetch"]:
+            conn.execute("INSERT INTO tool_call(trace_id, tool_name, output_chars) VALUES(?,?,?)",
+                         (tid, name, 1000))
+        profile, conf, _ = classify_profile(conn, tid)
+        self.assertEqual(profile, "research")
+        conn.execute("UPDATE trace SET profile=? WHERE id=?", (profile, tid))
+        thresholds, resolved = _thresholds(conn, tid)
+        # research tolerates much larger tool outputs than the default
+        self.assertEqual(resolved, "research")
+        self.assertEqual(thresholds["huge_tool_chars"], 80_000)
+
+    def test_session_summary_view_exposes_real_tokens(self):
+        from mrtoken.export import session_summaries
+        conn, tid = make_trace()
+        conn.execute(
+            "INSERT INTO model_call(trace_id, input_tokens, output_tokens, "
+            "cache_read_input_tokens, est_cost_usd) VALUES(?,?,?,?,?)",
+            (tid, 100, 50, 900, 1.25),
+        )
+        conn.commit()
+        rows = session_summaries(conn, "session-1")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["total_tokens"], 150)
+        self.assertEqual(rows[0]["cache_read_tokens"], 900)
+        self.assertEqual(rows[0]["cache_hit_ratio"], 0.9)
+
+
 def make_trace() -> tuple[sqlite3.Connection, int]:
     conn = connect(":memory:")
     cur = conn.execute(

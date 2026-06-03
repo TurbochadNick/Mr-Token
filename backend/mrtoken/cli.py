@@ -62,6 +62,12 @@ def cmd_fleet(args):
     fleet_summary(sqlite3.connect(args.db))
 
 
+def cmd_export(args):
+    from mrtoken.export import export_report
+    import sqlite3
+    print(export_report(sqlite3.connect(args.db), args.session))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mrtoken-transcript",
         description="Local-first token observability for AI agent workflows")
@@ -88,6 +94,11 @@ def main(argv=None):
     p_fleet = sub.add_parser("fleet", help="cross-session summary")
     p_fleet.add_argument("--db", dest="db_sub")
 
+    p_export = sub.add_parser("export",
+        help="emit accurate per-session metrics as JSON (integration surface for the UI)")
+    p_export.add_argument("session", nargs="?", help="session ID prefix")
+    p_export.add_argument("--db", dest="db_sub")
+
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help(); return
@@ -96,7 +107,8 @@ def main(argv=None):
         a.db = a.db_sub
 
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
-                "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet}
+                "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
+                "export": cmd_export}
     dispatch[a.cmd](a)
 
 

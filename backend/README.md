@@ -88,9 +88,38 @@ To enable, add to `~/.claude/settings.json`:
 | `low_cache` | info | Cache hit ratio < 40% after 5+ calls |
 | `fresh_handoff` | high | Growing input + cache decay + depth — start a fresh session |
 
+## Session profiles (TTO Eco Mode methodology)
+
+Each session is classified into a work profile — `code`, `research`, `agent`,
+`benchmark` — deterministically from its tool-call distribution (no AI, no
+prompt text needed). Rule thresholds are then **profile-aware**: a 20k-token
+Read is normal in `research` but flagged in `benchmark`. Stored on `trace.profile`.
+
+## Integration surface for the UI
+
+The `session_summary` SQL **view** (in the shared `.token-tithe/token-tithe.db`)
+exposes accurate per-session metrics keyed on `session_id`:
+
+```
+trace_id, session_id, parent_session_id, source, profile, profile_confidence,
+project_path, title, started_at, ended_at, model_calls, input_tokens,
+output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+est_cost_usd, cache_hit_ratio, tool_calls, tool_errors,
+recommendation_count, high_recommendations
+```
+
+The TypeScript `events` table is keyed on the same `session_id`, so the UI can
+join **estimated (events) ↔ actual (session_summary)** per session. Two ways to consume:
+
+1. **Direct SQL** — `SELECT * FROM session_summary` from the shared DB.
+2. **JSON export** — `mrtoken-transcript export [session-prefix]` emits
+   `{schema: "mrtoken.session_summary.v1", sessions: [...]}` with each session's
+   recommendations attached.
+
 ## Data model
 
-6 tables: `trace`, `model_call`, `tool_call`, `context_block`, `event`, `recommendation`.  
+6 tables: `trace`, `model_call`, `tool_call`, `context_block`, `event`, `recommendation`,
+plus the `session_summary` view.  
 See `docs/DATA_MODEL.md` for full schema and source mapping.
 
 Default DB: `.token-tithe/token-tithe.db` in the detected project root.

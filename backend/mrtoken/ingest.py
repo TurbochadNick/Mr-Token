@@ -70,13 +70,68 @@ def est_cost(prices, model, usage) -> float:
     )
 
 
+_MIGRATIONS = [
+    ("trace", "profile", "TEXT"),
+    ("trace", "profile_confidence", "REAL"),
+]
+
+_SESSION_SUMMARY_VIEW = """
+DROP VIEW IF EXISTS session_summary;
+CREATE VIEW session_summary AS
+SELECT
+  t.id                          AS trace_id,
+  t.session_id                  AS session_id,
+  t.parent_session_id           AS parent_session_id,
+  t.source                      AS source,
+  t.profile                     AS profile,
+  t.profile_confidence          AS profile_confidence,
+  t.project_path                AS project_path,
+  t.title                       AS title,
+  t.started_at                  AS started_at,
+  t.ended_at                    AS ended_at,
+  COUNT(mc.id)                                          AS model_calls,
+  COALESCE(SUM(mc.input_tokens), 0)                     AS input_tokens,
+  COALESCE(SUM(mc.output_tokens), 0)                    AS output_tokens,
+  COALESCE(SUM(mc.cache_read_input_tokens), 0)          AS cache_read_tokens,
+  COALESCE(SUM(mc.cache_creation_input_tokens), 0)      AS cache_write_tokens,
+  COALESCE(SUM(mc.input_tokens + mc.output_tokens), 0)  AS total_tokens,
+  ROUND(COALESCE(SUM(mc.est_cost_usd), 0), 6)           AS est_cost_usd,
+  CASE
+    WHEN COALESCE(SUM(mc.input_tokens + mc.cache_read_input_tokens
+                      + mc.cache_creation_input_tokens), 0) = 0 THEN NULL
+    ELSE ROUND(
+      CAST(COALESCE(SUM(mc.cache_read_input_tokens), 0) AS REAL) /
+      SUM(mc.input_tokens + mc.cache_read_input_tokens + mc.cache_creation_input_tokens), 4)
+  END                                                   AS cache_hit_ratio,
+  (SELECT COUNT(*) FROM tool_call tc WHERE tc.trace_id = t.id)                       AS tool_calls,
+  (SELECT COUNT(*) FROM tool_call tc WHERE tc.trace_id = t.id AND tc.is_error = 1)   AS tool_errors,
+  (SELECT COUNT(*) FROM recommendation r WHERE r.trace_id = t.id)                    AS recommendation_count,
+  (SELECT COUNT(*) FROM recommendation r WHERE r.trace_id = t.id AND r.severity='high') AS high_recommendations
+FROM trace t
+LEFT JOIN model_call mc ON mc.trace_id = t.id
+GROUP BY t.id;
+"""
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotently add columns to existing DBs (CREATE TABLE IF NOT EXISTS won't)."""
+    for table, col, decl in _MIGRATIONS:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+
 def connect(db_path: str) -> sqlite3.Connection:
     db_dir = os.path.dirname(os.path.abspath(db_path))
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(db_path)
     with open(SCHEMA) as f:
-        conn.executescript(f.read())
+        conn.executescript(f.read())   # tables + indexes
+    _migrate(conn)                     # add columns to pre-existing tables
+    conn.executescript(_SESSION_SUMMARY_VIEW)  # view references migrated columns
+    conn.commit()
     return conn
 
 
@@ -257,6 +312,14 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
             char_count,repeat_count,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?)""",
             (tid, b["block_type"], b["hash"], b["token_count"], b["char_count"],
              b["repeat_count"], b["first_seen"], b["last_seen"]))
+    # classify session profile (Eco-Mode-derived; deterministic, no AI)
+    try:
+        from mrtoken.profile import classify_profile
+        prof, conf, _sig = classify_profile(conn, tid)
+        cur.execute("UPDATE trace SET profile=?, profile_confidence=? WHERE id=?",
+                    (prof, round(conf, 3), tid))
+    except Exception:
+        pass  # profile is advisory; never block ingestion
     conn.commit()
     return {"session_id": sid, "lines": n_lines, "model_calls": len(model_calls),
             "tool_calls": len(tool_calls), "context_blocks": len(blocks)}

@@ -16,7 +16,7 @@ import json, sqlite3
 from datetime import datetime, timezone
 
 
-HUGE_TOOL_CHARS = 40_000      # ~10k tokens at 4 chars/tok
+HUGE_TOOL_CHARS = 40_000      # ~10k tokens at 4 chars/tok (default / NULL profile)
 REPEATED_WASTE_WARN = 2_000   # tokens wasted by duplicate blocks → warn
 REPEATED_WASTE_HIGH = 20_000  # → high
 LOW_CACHE_RATIO = 0.40        # below this after N calls → flag
@@ -25,6 +25,28 @@ RETRY_CLUSTER_ERRORS = 3      # ≥ this many errors within window → retry_loo
 RETRY_CLUSTER_WINDOW = 8      # consecutive model_calls in which errors cluster
 HANDOFF_INPUT_GROWTH = 1.5    # final-quarter avg input_tokens vs first-quarter → signal
 HANDOFF_MIN_CALLS = 8         # don't recommend handoff on tiny sessions
+
+# Profile-aware thresholds (TTO Eco Mode methodology): a 20k-token Read is
+# normal in `research` but wasteful in `benchmark`. NULL/unknown profile → default.
+PROFILE_THRESHOLDS = {
+    "research":  {"huge_tool_chars": 80_000, "low_cache_ratio": 0.25},
+    "code":      {"huge_tool_chars": 40_000, "low_cache_ratio": 0.40},
+    "agent":     {"huge_tool_chars": 40_000, "low_cache_ratio": 0.35},
+    "benchmark": {"huge_tool_chars": 24_000, "low_cache_ratio": 0.40},
+}
+DEFAULT_THRESHOLDS = {"huge_tool_chars": HUGE_TOOL_CHARS, "low_cache_ratio": LOW_CACHE_RATIO}
+
+
+def _thresholds(conn, tid: int) -> tuple[dict, "str | None"]:
+    """Return (thresholds, profile) for a trace. NULL profile → defaults."""
+    try:
+        row = conn.execute("SELECT profile FROM trace WHERE id=?", (tid,)).fetchone()
+        profile = row[0] if row else None
+    except sqlite3.OperationalError:
+        profile = None  # pre-migration DB without profile column
+    t = dict(DEFAULT_THRESHOLDS)
+    t.update(PROFILE_THRESHOLDS.get(profile, {}))
+    return t, profile
 HANDOFF_CACHE_DECAY = 0.20    # cache_ratio drop across halves → signal
 
 
@@ -61,19 +83,23 @@ def rule_repeated_context(conn, tid: int) -> list:
 
 
 def rule_huge_tool_output(conn, tid: int) -> list:
+    thresholds, profile = _thresholds(conn, tid)
+    limit = thresholds["huge_tool_chars"]
     rows = conn.execute("""
         SELECT tool_name, output_chars, tool_use_id FROM tool_call
         WHERE trace_id=? AND output_chars>? ORDER BY output_chars DESC
-    """, (tid, HUGE_TOOL_CHARS)).fetchall()
+    """, (tid, limit)).fetchall()
     if not rows:
         return []
+    prof_note = f" (threshold for '{profile}' profile)" if profile else ""
     recs = []
     for name, oc, tuid in rows:
         tok = oc // 4
         recs.append(_rec("huge_tool_output", "warn",
-                         f"Tool '{name}' returned ~{tok:,} tok. "
+                         f"Tool '{name}' returned ~{tok:,} tok{prof_note}. "
                          "Write large outputs to disk and pass only a compact summary to the model.",
-                         {"tool_use_id": tuid, "output_chars": oc, "output_tokens_est": tok},
+                         {"tool_use_id": tuid, "output_chars": oc, "output_tokens_est": tok,
+                          "profile": profile, "threshold_chars": limit},
                          max(0, tok - 2000)))
     return recs
 
@@ -137,15 +163,18 @@ def rule_low_cache(conn, tid: int) -> list:
     total_in = (inp or 0) + (cw or 0) + (cr or 0)
     if not total_in:
         return []
+    thresholds, profile = _thresholds(conn, tid)
+    floor = thresholds["low_cache_ratio"]
     ratio = (cr or 0) / total_in
-    if ratio >= LOW_CACHE_RATIO:
+    if ratio >= floor:
         return []
+    prof_note = f" (expected ≥{floor:.0%} for '{profile}' profile)" if profile else ""
     return [_rec("low_cache", "info",
-                 f"Cache hit ratio is {ratio:.0%} across {calls} calls. "
+                 f"Cache hit ratio is {ratio:.0%} across {calls} calls{prof_note}. "
                  "Ensure large, stable context (system prompt, tool schemas, retrieved docs) "
                  "is in cache-eligible positions.",
                  {"cache_hit_ratio": round(ratio, 3), "calls": calls, "cache_read": cr,
-                  "total_input_side": total_in})]
+                  "total_input_side": total_in, "profile": profile})]
 
 
 def rule_fresh_handoff(conn, tid: int) -> list:
