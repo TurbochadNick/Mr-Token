@@ -14,9 +14,18 @@ Options shared by most commands:
 """
 import argparse, sys
 
-from mrtoken.ingest import default_db_path
+from mrtoken.ingest import connect, default_db_path
 
 DEFAULT_DB = default_db_path()
+
+
+def _open(db_path):
+    """Open a DB ensuring our tables, migrations, and views exist (idempotent).
+
+    Read commands use this so they never crash on a DB that hasn't been through
+    ingest — e.g. a pilot DB created by the TypeScript `init` (events table only).
+    """
+    return connect(db_path)
 
 
 def cmd_ingest(args):
@@ -36,8 +45,7 @@ def cmd_ingest(args):
 
 def cmd_report(args):
     from mrtoken.report import report, list_traces
-    import sqlite3
-    conn = sqlite3.connect(args.db)
+    conn = _open(args.db)
     if args.session:
         report(conn, args.session)
     else:
@@ -46,32 +54,28 @@ def cmd_report(args):
 
 def cmd_list(args):
     from mrtoken.report import list_traces
-    import sqlite3
-    list_traces(sqlite3.connect(args.db))
+    list_traces(_open(args.db))
 
 
 def cmd_subagents(args):
     from mrtoken.subagents import subagent_report
-    import sqlite3
-    subagent_report(sqlite3.connect(args.db), args.session or "")
+    subagent_report(_open(args.db), args.session or "")
 
 
 def cmd_fleet(args):
     from mrtoken.fleet import fleet_summary
-    import sqlite3
-    fleet_summary(sqlite3.connect(args.db))
+    fleet_summary(_open(args.db))
 
 
 def cmd_export(args):
     from mrtoken.export import export_report
-    import sqlite3
-    print(export_report(sqlite3.connect(args.db), args.session))
+    print(export_report(_open(args.db), args.session))
 
 
 def cmd_validate(args):
     from mrtoken.validate import validate_db, print_report
-    import json, sqlite3
-    report = validate_db(sqlite3.connect(args.db))
+    import json
+    report = validate_db(_open(args.db))
     if getattr(args, "json", False):
         print(json.dumps(report, indent=2))
     else:
