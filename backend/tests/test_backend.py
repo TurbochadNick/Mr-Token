@@ -179,6 +179,24 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rl["strong"], rl["fired"])  # genuine loop → strong
 
 
+    def test_live_monitor_fires_signals(self):
+        from mrtoken.watch import LiveMonitor
+        out = []
+        mon = LiveMonitor(emit=out.append)
+        # an assistant turn with a huge context window
+        mon.feed({"type": "assistant", "message": {
+            "model": "claude-sonnet-4",
+            "usage": {"input_tokens": 5, "cache_read_input_tokens": 200_000,
+                      "output_tokens": 50},
+            "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}})
+        # the tool returns a huge result
+        mon.feed({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "x" * 60_000}]}})
+        joined = "\n".join(out)
+        self.assertIn("context window", joined)
+        self.assertIn("Read returned", joined)
+
+
 def make_trace() -> tuple[sqlite3.Connection, int]:
     conn = connect(":memory:")
     cur = conn.execute(

@@ -72,6 +72,11 @@ def cmd_export(args):
     print(export_report(_open(args.db), args.session))
 
 
+def cmd_watch(args):
+    from mrtoken.watch import watch
+    sys.exit(watch(args.session, interval=args.interval, once=args.once))
+
+
 def cmd_validate(args):
     from mrtoken.validate import validate_db, print_report
     import json
@@ -118,6 +123,11 @@ def main(argv=None):
     p_validate.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_validate.add_argument("--db", dest="db_sub")
 
+    p_watch = sub.add_parser("watch", help="live in-session advice (tails the transcript)")
+    p_watch.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
+    p_watch.add_argument("--interval", type=float, default=2.0, help="poll seconds (default 2)")
+    p_watch.add_argument("--once", action="store_true", help="replay current transcript and exit")
+
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help(); return
@@ -127,7 +137,7 @@ def main(argv=None):
 
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
-                "export": cmd_export, "validate": cmd_validate}
+                "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch}
     dispatch[a.cmd](a)
 
 

@@ -42,7 +42,24 @@ mrtoken-transcript subagents <session-id-prefix>
 
 # List all sessions
 mrtoken-transcript list
+
+# Live in-session advice (tails the current transcript)
+mrtoken-transcript watch
+mrtoken-transcript watch <session-id> --once   # replay & exit (testing)
 ```
+
+## Live advisor (`watch`)
+
+`watch` follows the active transcript and prints advice MID-session instead of
+only after it ends — no AI, no DB writes, just incremental analysis. Signals:
+
+- huge tool output just landed → offload to a file
+- tool errors clustering → likely retry loop, stop and re-plan
+- context window getting large (~150k tok) → `/compact` or fresh handoff
+- cost crossing escalating thresholds ($5/$25/$100/…) → informational
+
+Each signal is debounced so a long session stays readable. `--once` replays the
+existing transcript and exits, useful for a quick "where am I" check or testing.
 
 ## Auto-update via hook
 
