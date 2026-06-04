@@ -197,6 +197,48 @@ class BackendTest(unittest.TestCase):
         self.assertIn("Read returned", joined)
 
 
+    def test_init_installs_hook_preserves_and_is_idempotent(self):
+        from mrtoken.install import init, _load_settings, _already_installed
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            settings_dir = os.path.join(tmp, ".claude")
+            os.makedirs(settings_dir)
+            settings_path = os.path.join(settings_dir, "settings.local.json")
+            with open(settings_path, "w") as h:
+                json.dump({"permissions": {"allow": ["Bash(ls *)"]},
+                           "hooks": {"Stop": [{"matcher": "", "hooks": [
+                               {"type": "command", "command": "echo existing"}]}]}}, h)
+
+            init(project_root=tmp, emit=lambda *_: None)
+            s = _load_settings(settings_path)
+            # existing setting + existing hook preserved, ours added
+            self.assertEqual(s["permissions"]["allow"], ["Bash(ls *)"])
+            cmds = [hh["command"] for e in s["hooks"]["Stop"] for hh in e["hooks"]]
+            self.assertIn("echo existing", cmds)
+            self.assertTrue(any("on_stop.py" in c for c in cmds))
+            self.assertTrue(os.path.exists(os.path.join(tmp, ".token-tithe", "token-tithe.db")))
+
+            # idempotent: second run adds nothing
+            init(project_root=tmp, emit=lambda *_: None)
+            s2 = _load_settings(settings_path)
+            cmds2 = [hh["command"] for e in s2["hooks"]["Stop"] for hh in e["hooks"]]
+            self.assertEqual(len(cmds2), len(cmds))
+            self.assertTrue(_already_installed(s2))
+
+    def test_watch_is_profile_aware(self):
+        from mrtoken.watch import LiveMonitor
+        out = []
+        mon = LiveMonitor(emit=out.append)
+        # feed several read/search tool_use blocks → should classify research
+        for i in range(5):
+            mon.feed({"type": "assistant", "message": {
+                "model": "claude-sonnet-4", "usage": {"input_tokens": 1, "output_tokens": 1},
+                "content": [{"type": "tool_use", "id": f"t{i}", "name": "Read", "input": {}}]}})
+        self.assertEqual(mon.profile, "research")
+        self.assertEqual(mon.huge_threshold, 80_000)  # research tolerates big reads
+
+
 def make_trace() -> tuple[sqlite3.Connection, int]:
     conn = connect(":memory:")
     cur = conn.execute(

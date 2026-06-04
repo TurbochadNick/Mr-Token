@@ -74,6 +74,27 @@ class LiveMonitor:
         self.last_emit: dict[str, float] = {}
         self.last_cost_milestone = 0.0
         self.pending_tools: dict[str, str] = {}  # tool_use_id -> tool_name
+        # profile-aware live thresholds (Eco Mode): classified incrementally
+        self.tool_counts: dict[str, int] = {}
+        self.bash_out_total = 0
+        self.bash_out_n = 0
+        self.profile: str | None = None
+        self.huge_threshold = HUGE_TOOL_CHARS
+
+    def _reclassify(self) -> None:
+        if sum(self.tool_counts.values()) < 4:
+            return  # too little signal yet — keep defaults
+        from mrtoken.profile import classify_from_counts
+        from mrtoken.rules import PROFILE_THRESHOLDS, DEFAULT_THRESHOLDS
+        avg = {"bash": (self.bash_out_total / self.bash_out_n) if self.bash_out_n else 0}
+        profile, _conf, _sig = classify_from_counts(self.tool_counts, avg)
+        prev = self.profile
+        self.profile = profile
+        self.huge_threshold = PROFILE_THRESHOLDS.get(
+            profile, DEFAULT_THRESHOLDS)["huge_tool_chars"]
+        if profile != prev:
+            self.emit(f"  · profile: {profile} — thresholds calibrated "
+                      f"(huge-output ≥ {self.huge_threshold//1000}k tok)")
 
     def _debounce(self, key: str) -> bool:
         now = time.time()
@@ -107,10 +128,13 @@ class LiveMonitor:
                           f"(~${self.cum_cost:,.2f} API-equivalent, not a subscription bill)")
 
             # register requested tools; record one error slot per call
-            had_error = False
             for b in (msg.get("content") or []):
                 if isinstance(b, dict) and b.get("type") == "tool_use":
-                    self.pending_tools[b.get("id")] = b.get("name")
+                    name = b.get("name")
+                    self.pending_tools[b.get("id")] = name
+                    key = (name or "").lower()
+                    self.tool_counts[key] = self.tool_counts.get(key, 0) + 1
+            self._reclassify()
             self.errors_recent.append(0)  # placeholder, may flip on tool_result
             if len(self.errors_recent) > RECENT_ERROR_WINDOW:
                 self.errors_recent.pop(0)
@@ -125,10 +149,14 @@ class LiveMonitor:
                     name = self.pending_tools.pop(tuid, "tool")
                     text = b.get("content", "")
                     chars = len(text) if isinstance(text, str) else len(json.dumps(text))
-                    # huge output just landed
-                    if chars >= HUGE_TOOL_CHARS and self._debounce("huge_tool_output"):
-                        self.emit(f"  ⚠ {name} returned ~{chars//4:,} tok — write large outputs "
-                                  "to a file and pass only a compact summary")
+                    if (name or "").lower() == "bash":
+                        self.bash_out_total += chars
+                        self.bash_out_n += 1
+                    # huge output just landed (profile-aware threshold)
+                    if chars >= self.huge_threshold and self._debounce("huge_tool_output"):
+                        prof = f" for {self.profile} profile" if self.profile else ""
+                        self.emit(f"  ⚠ {name} returned ~{chars//4:,} tok ({self.huge_threshold//1000}k "
+                                  f"threshold{prof}) — write large outputs to a file, pass a summary")
                     # error tracking
                     if b.get("is_error"):
                         if self.errors_recent:

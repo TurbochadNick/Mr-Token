@@ -33,13 +33,19 @@ def classify_profile(conn: sqlite3.Connection, tid: int) -> tuple[str, float, li
         "       AVG(COALESCE(output_chars,0)) avg_out "
         "FROM tool_call WHERE trace_id=? GROUP BY name", (tid,)
     ).fetchall()
-
-    total = sum(n for _, n, _ in rows)
-    if total == 0:
-        return ("code", 0.2, ["no tool calls — default"])
-
     counts = {name: n for name, n, _ in rows}
     avg_out = {name: a for name, _, a in rows}
+    return classify_from_counts(counts, avg_out)
+
+
+def classify_from_counts(counts: dict[str, int],
+                         avg_out: dict[str, float] | None = None) -> tuple[str, float, list[str]]:
+    """Pure classifier over a tool-name distribution. Shared by the DB path
+    (classify_profile) and the live advisor (watch), so both agree."""
+    avg_out = avg_out or {}
+    total = sum(counts.values())
+    if total == 0:
+        return ("code", 0.2, ["no tool calls — default"])
 
     def frac(group) -> float:
         return sum(n for name, n in counts.items()

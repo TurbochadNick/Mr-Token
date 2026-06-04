@@ -28,6 +28,9 @@ This installs the `mrtoken-transcript` shell command. The repo-root TypeScript C
 ## Quick start
 
 ```bash
+# One-time setup in a project: creates the DB + installs the Stop hook
+mrtoken-transcript init            # add --print for a dry run
+
 # Ingest all past Claude Code sessions + run rules
 mrtoken-transcript ingest --all --rules
 
@@ -58,16 +61,29 @@ only after it ends — no AI, no DB writes, just incremental analysis. Signals:
 - context window getting large (~150k tok) → `/compact` or fresh handoff
 - cost crossing escalating thresholds ($5/$25/$100/…) → informational
 
-Each signal is debounced so a long session stays readable. `--once` replays the
+Each signal is debounced so a long session stays readable. Thresholds are
+**profile-aware** — `watch` classifies the session live and calibrates (e.g. a
+big Read is fine in `research`, flagged in `benchmark`). `--once` replays the
 existing transcript and exits, useful for a quick "where am I" check or testing.
 
-## Auto-update via hook
+## Setup (`init`)
 
-`backend/hooks/on_stop.py` is wired as a Claude Code `Stop` hook — it runs automatically when any session ends, ingests the transcript, runs the rule engine, and prints a one-line summary.
+`mrtoken-transcript init` is the zero-config path for a pilot evaluator: it
+resolves the project root, creates `.token-tithe/token-tithe.db` (the same DB the
+TS CLI uses), and installs a **project-local** Stop hook into
+`.claude/settings.local.json`. It backs up any existing settings, preserves all
+existing settings and hooks (it adds ours alongside the TS hook), and is
+idempotent. `--print` shows a dry run.
 
-By default, transcript data is reconciled into the current project's `.token-tithe/token-tithe.db`, alongside the TypeScript CLI/UI data. Set `MRTOKEN_DB=/path/to/db` in the hook command to override this.
+## Auto-update via hook (manual alternative to `init`)
 
-To enable, add to `~/.claude/settings.json`:
+`backend/hooks/on_stop.py` runs on Claude Code `Stop` — it ingests the transcript,
+runs the rule engine, and prints a one-line summary. `init` installs this for you;
+to wire it by hand instead, add it to `~/.claude/settings.json`. Transcript data
+is reconciled into the project's `.token-tithe/token-tithe.db`; set
+`MRTOKEN_DB=/path/to/db` to override.
+
+Manual config example:
 
 ```json
 {

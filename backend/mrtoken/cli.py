@@ -72,6 +72,12 @@ def cmd_export(args):
     print(export_report(_open(args.db), args.session))
 
 
+def cmd_init(args):
+    from mrtoken.install import init
+    sys.exit(init(project_root=args.project_root, settings_path=args.settings,
+                  dry_run=args.print))
+
+
 def cmd_watch(args):
     from mrtoken.watch import watch
     sys.exit(watch(args.session, interval=args.interval, once=args.once))
@@ -123,6 +129,12 @@ def main(argv=None):
     p_validate.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_validate.add_argument("--db", dest="db_sub")
 
+    p_init = sub.add_parser("init",
+        help="set up the backend in this project (DB + project-local Stop hook)")
+    p_init.add_argument("--project-root", help="project root (default: auto-detect)")
+    p_init.add_argument("--settings", help="settings file (default: <root>/.claude/settings.local.json)")
+    p_init.add_argument("--print", action="store_true", help="dry run — show what would happen")
+
     p_watch = sub.add_parser("watch", help="live in-session advice (tails the transcript)")
     p_watch.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
     p_watch.add_argument("--interval", type=float, default=2.0, help="poll seconds (default 2)")
@@ -137,7 +149,8 @@ def main(argv=None):
 
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
-                "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch}
+                "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch,
+                "init": cmd_init}
     dispatch[a.cmd](a)
 
 
