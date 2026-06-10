@@ -10,6 +10,20 @@ type Summary = {
   estimatedSavingsRange: [number, number];
 };
 
+type Accurate = {
+  available: boolean;
+  sessions: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  estCostUsd: number;
+  cacheHitRatio: number | null;
+  highRecommendations: number;
+  profiles: string[];
+};
+
 type Finding = {
   category: string;
   confidence: string;
@@ -93,6 +107,7 @@ type Diagnosis = {
 
 type ApiData = {
   summary: Summary;
+  accurate: Accurate;
   findings: Finding[];
   events: EventRow[];
   doctorLatest: DoctorLatest;
@@ -323,6 +338,8 @@ function Dashboard({
         <MetricCard icon="SV" label="Estimated Savings" value={hasSavings(data.summary.estimatedSavingsRange) ? formatRange(data.summary.estimatedSavingsRange) : 'None yet'} helper="Likely recoverable burn from deterministic findings." />
       </section>
 
+      <AccurateUsage accurate={data.accurate} estimatedTokens={data.summary.totalEstimatedTokens} />
+
       <section className="dashboardGrid">
         <TopTokenLeak finding={topFinding} />
         <ActivityStrip insights={dashboard} setup={data.setup} />
@@ -344,6 +361,35 @@ function Dashboard({
         <FuelDiagnosisPanel data={data} />
       </section>
     </div>
+  );
+}
+
+function AccurateUsage({ accurate, estimatedTokens }: { accurate: Accurate; estimatedTokens: number }) {
+  return (
+    <section className="section">
+      <div className="sectionHeader dashboardSectionHeader">
+        <div>
+          <p className="eyebrow">From transcripts</p>
+          <h3>Actual Usage</h3>
+        </div>
+        <span className="ratingPill">{accurate.available ? 'real token counts' : 'backend not run'}</span>
+      </div>
+      {accurate.available ? (
+        <div className="dashboardMetrics" aria-label="Actual usage from transcripts">
+          <MetricCard icon="AT" label="Actual Tokens" value={formatNumber(accurate.totalTokens)} helper={`Real input + output from transcripts (estimated ${formatNumber(estimatedTokens)}).`} />
+          <MetricCard icon="$$" label="Est. Cost" value={`$${accurate.estCostUsd.toFixed(2)}`} helper="API-equivalent estimate, not a subscription bill." />
+          <MetricCard icon="CH" label="Cache Hit" value={accurate.cacheHitRatio === null ? 'n/a' : `${Math.round(accurate.cacheHitRatio * 100)}%`} helper="Share of input-side tokens served from cache." />
+          <MetricCard icon="PF" label="Profile" value={accurate.profiles.join(', ') || 'n/a'} helper="Session type(s) detected by the backend." />
+          <MetricCard icon="HR" label="High Recs" value={formatNumber(accurate.highRecommendations)} helper="High-priority recommendations across sessions." />
+        </div>
+      ) : (
+        <EmptyState
+          title="Accurate token data not available yet."
+          body="The mrtoken-transcript backend (or its Stop hook) has not populated this database, so the numbers above are estimates. Once it runs, real token counts, cost, and cache hit rate appear here."
+          steps={['Install the backend', 'Use Claude Code', 'Data appears here']}
+        />
+      )}
+    </section>
   );
 }
 

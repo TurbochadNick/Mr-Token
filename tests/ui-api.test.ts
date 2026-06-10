@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db/client.js';
 import { insertNormalizedEvent } from '../src/db/events.js';
-import { exportMarkdownReport, getSetupStatus, getUiData, runUiDoctor, runUiInit } from '../src/local-ui/api.js';
+import { exportMarkdownReport, getSetupStatus, getUiData, readAccurateUsage, runUiDoctor, runUiInit } from '../src/local-ui/api.js';
 
 describe('Mr Token UI API', () => {
   it('returns dashboard, findings, events, and latest doctor patch data', () => {
@@ -93,5 +93,36 @@ describe('Mr Token UI API', () => {
     expect(report).toContain('# Mr Token AI Fuel Report');
     expect(report).toContain('## Summary');
     expect(report).toContain('## Doctor');
+  });
+
+  it('reports accurate usage as unavailable on a TS-only database', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-acc-none-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8');
+    const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
+    openDatabase(dbPath).close(); // events table only, no session_summary
+    const data = getUiData(projectRoot, dbPath);
+    expect(data.accurate.available).toBe(false);
+    expect(data.accurate.totalTokens).toBe(0);
+  });
+
+  it('reads accurate usage from the session_summary contract when present', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-acc-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8');
+    const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
+    const db = openDatabase(dbPath);
+    // mimic the Python backend's session_summary columns (the shared contract)
+    db.exec(`create table session_summary (
+      profile text, input_tokens integer, output_tokens integer,
+      cache_read_tokens integer, cache_write_tokens integer, total_tokens integer,
+      est_cost_usd real, high_recommendations integer
+    );
+    insert into session_summary values ('code', 100, 50, 850, 0, 150, 1.25, 2);`);
+    const accurate = readAccurateUsage(db);
+    db.close();
+    expect(accurate.available).toBe(true);
+    expect(accurate.totalTokens).toBe(150);
+    expect(accurate.estCostUsd).toBeCloseTo(1.25);
+    expect(accurate.cacheHitRatio).toBeCloseTo(850 / (100 + 850 + 0));
+    expect(accurate.profiles).toContain('code');
   });
 });

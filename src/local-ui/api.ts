@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { runAuditRules, type AuditFinding } from '../audit/rules.js';
 import { initializeProject, type InitProjectResult } from '../core/init.js';
-import { openDatabase } from '../db/client.js';
+import { openDatabase, type DbClient } from '../db/client.js';
 import { getSummary, listEvents } from '../db/events.js';
 import { generateDoctorPatches } from '../doctor/patches.js';
 import { hasTokenTitheHooks } from '../adapters/claude-code/install.js';
@@ -18,6 +18,23 @@ export type UiSummary = {
   prompts: number;
   toolCalls: number;
   estimatedSavingsRange: [number, number];
+};
+
+// Accurate, transcript-derived usage from the Python backend's session_summary
+// view (the bridge). available=false when the backend has not populated this DB
+// (e.g. the Stop hook has not run), in which case the UI shows estimated only.
+export type UiAccurate = {
+  available: boolean;
+  sessions: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  estCostUsd: number;
+  cacheHitRatio: number | null;
+  highRecommendations: number;
+  profiles: string[];
 };
 
 export type UiFinding = {
@@ -73,6 +90,7 @@ export type UiDoctorRunResult = {
 
 export type UiData = {
   summary: UiSummary;
+  accurate: UiAccurate;
   findings: UiFinding[];
   events: UiEvent[];
   doctorLatest: UiDoctorLatest;
@@ -80,10 +98,53 @@ export type UiData = {
   diagnosis: DiagnosisReport;
 };
 
+const EMPTY_ACCURATE: UiAccurate = {
+  available: false, sessions: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
+  cacheWriteTokens: 0, totalTokens: 0, estCostUsd: 0, cacheHitRatio: null,
+  highRecommendations: 0, profiles: []
+};
+
+// Read the Python backend's session_summary view (real token counts) if present.
+// Falls back to EMPTY_ACCURATE (available=false) when the view does not exist,
+// so a TS-only database never errors here.
+export function readAccurateUsage(db: DbClient): UiAccurate {
+  try {
+    const row = db
+      .prepare(
+        `select count(*) as sessions,
+          coalesce(sum(input_tokens), 0) as inputTokens,
+          coalesce(sum(output_tokens), 0) as outputTokens,
+          coalesce(sum(cache_read_tokens), 0) as cacheReadTokens,
+          coalesce(sum(cache_write_tokens), 0) as cacheWriteTokens,
+          coalesce(sum(total_tokens), 0) as totalTokens,
+          coalesce(sum(est_cost_usd), 0) as estCostUsd,
+          coalesce(sum(high_recommendations), 0) as highRecommendations
+        from session_summary`
+      )
+      .get() as Omit<UiAccurate, 'available' | 'cacheHitRatio' | 'profiles'>;
+    if (!row || row.sessions === 0) return EMPTY_ACCURATE;
+    const profiles = (
+      db.prepare('select distinct profile from session_summary where profile is not null').all() as Array<{
+        profile: string;
+      }>
+    ).map((r) => r.profile);
+    const inputSide = row.inputTokens + row.cacheReadTokens + row.cacheWriteTokens;
+    return {
+      ...row,
+      available: true,
+      cacheHitRatio: inputSide > 0 ? row.cacheReadTokens / inputSide : null,
+      profiles
+    };
+  } catch {
+    return EMPTY_ACCURATE; // session_summary view not present (backend has not run)
+  }
+}
+
 export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoot)): UiData {
   const db = openDatabase(dbPath);
   const summary = getSummary(db);
   const events = listEvents(db);
+  const accurate = readAccurateUsage(db);
   db.close();
 
   const findings = runAuditRules({ events, projectRoot });
@@ -91,6 +152,7 @@ export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoo
 
   return {
     summary: toUiSummary(summary, findings),
+    accurate,
     findings: findings.map(toUiFinding),
     events: events.map(toUiEvent).reverse(),
     doctorLatest: getLatestDoctorPatch(projectRoot),
@@ -190,6 +252,20 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
     `- Prompts: ${data.summary.prompts.toLocaleString()}`,
     `- Tool calls: ${data.summary.toolCalls.toLocaleString()}`,
     `- Estimated savings: ${data.summary.estimatedSavingsRange[0].toLocaleString()}-${data.summary.estimatedSavingsRange[1].toLocaleString()} tokens`,
+    '',
+    '## Actual Usage (from transcripts)',
+    '',
+    ...(data.accurate.available
+      ? [
+          `- Actual total tokens: ${data.accurate.totalTokens.toLocaleString()} (vs estimated ${data.summary.totalEstimatedTokens.toLocaleString()})`,
+          `- Input / output: ${data.accurate.inputTokens.toLocaleString()} / ${data.accurate.outputTokens.toLocaleString()}`,
+          `- Cache read / write: ${data.accurate.cacheReadTokens.toLocaleString()} / ${data.accurate.cacheWriteTokens.toLocaleString()}`,
+          `- Cache hit ratio: ${data.accurate.cacheHitRatio === null ? 'n/a' : `${Math.round(data.accurate.cacheHitRatio * 100)}%`}`,
+          `- Estimated API-equivalent cost: $${data.accurate.estCostUsd.toFixed(2)} (not a subscription bill)`,
+          `- Sessions: ${data.accurate.sessions.toLocaleString()}; profiles: ${data.accurate.profiles.join(', ') || 'n/a'}`,
+          `- High-priority recommendations: ${data.accurate.highRecommendations.toLocaleString()}`
+        ]
+      : ['Accurate usage is not available yet. Run the mrtoken-transcript backend (or its Stop hook) to populate real token counts.']),
     '',
     '## Deterministic Audit Findings',
     '',
