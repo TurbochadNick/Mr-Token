@@ -118,11 +118,34 @@ compact won Exp 1) may be the actual product value.
 
 ---
 
-## Harness to build (the real work — a few days, not a command)
+## Harness — mechanism LOCKED: headless `claude -p`
 
-1. **runner**: drive the test agent headless to completion on a task (Claude Agent
-   SDK / headless Claude Code). Detect the reset point live (reuse `watch`'s
-   context-size tracking). Apply the arm's intervention programmatically.
+Driver is the **`claude` CLI in headless `-p` mode** (not a separate SDK):
+- `--model claude-sonnet-4-6`, pinned temperature/effort, identical across arms.
+- `--max-budget-usd <cap>` — built-in hard budget cap per run (abort if exceeded).
+- `--output-format json` — returns `session_id` + usage/cost per run.
+- session persistence ON → writes the transcript JSONL that the backend already
+  parses, so **measurement reuses our existing instrument** (mrtoken ingest).
+- Auth = the user's subscription (no API key needed).
+
+Intervention at the reset point uses a **phased** approach (a single `-p` call
+runs to completion and can't be paused mid-run):
+- **continue**: one `claude -p` to completion.
+- **handoff**: phase 1 `claude -p --max-turns K` (K calibrated so context nears
+  100k), then `mrtoken-transcript handoff` on phase-1's transcript, then a FRESH
+  `claude -p` seeded with the handoff + original prompt to completion.
+- **compact**: phase 1 as above, then continue the SAME session via `--resume`
+  with context compaction, to completion.
+
+UNKNOWNS to settle with a 1-run smoke test (cheap, not the full matrix): does
+headless honor compaction; does `--resume` chain cleanly; what K reaches ~100k
+per task. The runner is built + mock-validated first so only these remain.
+
+### Build steps
+
+1. **runner**: drive the test agent headless to completion (`claude -p`), detect
+   the reset point from the transcript (reuse `watch`'s tracking), apply the arm's
+   intervention via the phased approach above.
 2. **task fixtures**: seed repos + oracle commands + prompts, version-controlled
    under `backend/experiments/tasks/`.
 3. **recorder**: per-run row (task, arm, rep, model, completed?, tokens, cost,

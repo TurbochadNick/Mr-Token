@@ -57,30 +57,83 @@ def run_oracle(task_dir: str, manifest: dict, work: str) -> tuple[bool, str]:
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
 
-def drive_agent(task_dir: str, manifest: dict, work: str, arm: str) -> dict:
-    """SEAM (not yet wired): drive the test agent to complete the task in `work`.
+def _read_prompt(task_dir: str, manifest: dict) -> str:
+    with open(os.path.join(task_dir, manifest["prompt_file"])) as f:
+        return f.read()
 
-    Must, for the given arm:
-      1. Start a Sonnet (medium-effort, temperature 0) headless agent in `work`
-         with the prompt from manifest['prompt_file'] and the usual coding tools.
-      2. Track input-side context size live (reuse mrtoken.watch's logic over the
-         agent's transcript) until it crosses manifest['reset_threshold_tokens'].
-      3. At that reset point, apply the arm:
-           continue -> do nothing, keep going
-           compact  -> compact the context (built-in), keep going
-           handoff  -> `mrtoken-transcript handoff`, start a FRESH agent seeded
-                       with the handoff text + the original prompt, keep going
-         (continue never resets; compact/handoff reset exactly once, here.)
-      4. Stop at completion or manifest['max_steps'].
-      5. Return exact metrics measured FROM THE TRANSCRIPT via the backend:
-         {total_tokens, est_cost_usd, wall_clock_s, steps, tool_errors, reset_fired}
 
-    Implement with the Claude Agent SDK or headless `claude -p`. Pin model/effort
-    identically across arms. Enforce a hard token budget cap (abort if exceeded).
-    """
+def _run_claude(prompt: str, work: str, model: str, budget_usd: float,
+                resume_sid: str | None = None, max_turns: int | None = None) -> dict:
+    """One headless `claude -p` invocation in `work`. Returns parsed JSON result
+    ({session_id, total_cost_usd, usage, num_turns, ...})."""
+    cmd = ["claude", "-p", prompt, "--model", model, "--output-format", "json",
+           "--max-budget-usd", str(budget_usd), "--permission-mode", "acceptEdits"]
+    if resume_sid:
+        cmd += ["--resume", resume_sid]
+    if max_turns:
+        cmd += ["--max-turns", str(max_turns)]
+    proc = subprocess.run(cmd, cwd=work, capture_output=True, text=True, timeout=3600)
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {"_error": (proc.stdout + proc.stderr)[:500], "_rc": proc.returncode}
+
+
+def _measure(session_id: str, work: str) -> dict:
+    """Exact tokens for a session via the backend transcript parser (our instrument)."""
+    from mrtoken.ingest import connect, load_prices, ingest_file
+    import glob, tempfile as _tf
+    esc = work.replace("/", "-").replace(".", "-")
+    hits = glob.glob(os.path.expanduser(f"~/.claude/projects/{esc}/{session_id}.jsonl")) \
+        or glob.glob(os.path.expanduser(f"~/.claude/projects/*/{session_id}.jsonl"))
+    if not hits:
+        return {"total_tokens": None, "est_cost_usd": None, "_warn": "transcript not found"}
+    db = os.path.join(_tf.mkdtemp(), "m.db")
+    conn = connect(db)
+    r = ingest_file(conn, hits[0], load_prices())
+    tid = conn.execute("SELECT id FROM trace WHERE session_id=?", (r["session_id"],)).fetchone()[0]
+    row = conn.execute("SELECT total_tokens, est_cost_usd, tool_errors FROM session_summary "
+                       "WHERE trace_id=?", (tid,)).fetchone()
+    return {"total_tokens": row[0], "est_cost_usd": row[1], "tool_errors": row[2]}
+
+
+def _drive_mock(manifest: dict, arm: str) -> dict:
+    """Zero-spend control-flow validation: simulate token growth crossing the
+    reset point and the per-arm intervention branch. Does not solve the task."""
+    threshold = manifest.get("reset_threshold_tokens", 100000)
+    phase1 = int(threshold * 1.05)              # phase 1 grows just past the reset point
+    reset_fired = arm in ("compact", "handoff")
+    phase2_carry = {"continue": phase1, "compact": int(phase1 * 0.5), "handoff": 2000}[arm]
+    total = phase1 + phase2_carry + 8000        # + some completion work
+    return {"total_tokens": total, "est_cost_usd": round(total * 3e-6, 4),
+            "wall_clock_s": 0.0, "steps": 12, "tool_errors": 0,
+            "reset_fired": int(reset_fired), "notes": f"MOCK ({arm})"}
+
+
+def drive_agent(task_dir: str, manifest: dict, work: str, arm: str,
+                mock: bool = False, budget_usd: float = 5.0) -> dict:
+    """Drive the test agent to complete the task in `work` under `arm`, returning
+    metrics measured from the transcript. See ROI-EXPERIMENT.md.
+
+    LIVE PATH (claude -p) is wired for `continue`; `compact`/`handoff` use the
+    phased --resume/handoff approach and need the 1-run smoke test to calibrate
+    phase-1 turns + validate headless compaction/resume. mock=True is zero-spend."""
+    if mock:
+        return _drive_mock(manifest, arm)
+
+    model = manifest["agent"]["model"]
+    prompt = _read_prompt(task_dir, manifest)
+
+    if arm == "continue":
+        res = _run_claude(prompt, work, model, budget_usd)
+        sid = res.get("session_id")
+        m = _measure(sid, work) if sid else {"_warn": res.get("_error", "no session")}
+        return {**m, "wall_clock_s": None, "steps": res.get("num_turns"),
+                "reset_fired": 0, "notes": "live:continue"}
+
     raise NotImplementedError(
-        "drive_agent() is the next build step — wire the Claude Agent SDK / "
-        "headless claude here (see docstring + ROI-EXPERIMENT.md harness spec).")
+        f"live '{arm}' arm needs the smoke test to calibrate phase-1 turns and "
+        "validate headless compaction/resume — run the continue-arm smoke test first.")
 
 
 def record(db_path: str, row: dict) -> None:
@@ -133,6 +186,10 @@ def main(argv=None):
                     help="validate oracle + plumbing without an agent (no API)")
     ap.add_argument("--arm", choices=["continue", "compact", "handoff"])
     ap.add_argument("--reps", type=int, default=1)
+    ap.add_argument("--mock", action="store_true",
+                    help="validate the full run pipeline with a fake agent (no spend)")
+    ap.add_argument("--budget-usd", type=float, default=5.0,
+                    help="hard per-run budget cap passed to claude -p")
     ap.add_argument("--results-db", default=RESULTS_DB)
     a = ap.parse_args(argv)
 
@@ -140,19 +197,24 @@ def main(argv=None):
         sys.exit(check_fixture(a.task_dir))
 
     if not a.arm:
-        ap.error("give --arm (continue|compact|handoff) or --check-fixture")
+        ap.error("give --arm (continue|compact|handoff), --check-fixture, or add --mock")
 
+    from datetime import datetime, timezone
     manifest = load_manifest(a.task_dir)
     for rep in range(a.reps):
         work = prepare_workdir(a.task_dir, manifest)
         try:
-            metrics = drive_agent(a.task_dir, manifest, work, a.arm)  # NotImplemented for now
+            metrics = drive_agent(a.task_dir, manifest, work, a.arm,
+                                  mock=a.mock, budget_usd=a.budget_usd)
             completed, _ = run_oracle(a.task_dir, manifest, work)
-            record(a.results_db, {"task_id": manifest["id"], "arm": a.arm, "rep": rep,
-                                  "model": manifest["agent"]["model"],
-                                  "effort": manifest["agent"]["effort"],
-                                  "completed": int(completed), **metrics,
-                                  "created_at": "set-after-run"})
+            row = {"task_id": manifest["id"], "arm": a.arm, "rep": rep,
+                   "model": manifest["agent"]["model"], "effort": manifest["agent"]["effort"],
+                   "completed": int(completed),
+                   "created_at": datetime.now(timezone.utc).isoformat(), **metrics}
+            record(a.results_db, row)
+            print(f"  {a.arm} rep{rep}: completed={completed} "
+                  f"tokens={metrics.get('total_tokens')} reset_fired={metrics.get('reset_fired')} "
+                  f"{metrics.get('notes','')}")
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
