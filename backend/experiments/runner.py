@@ -66,8 +66,11 @@ def _run_claude(prompt: str, work: str, model: str, budget_usd: float,
                 resume_sid: str | None = None, max_turns: int | None = None) -> dict:
     """One headless `claude -p` invocation in `work`. Returns parsed JSON result
     ({session_id, total_cost_usd, usage, num_turns, ...})."""
+    # bypassPermissions: the agent runs autonomously (edit + bash) in a throwaway
+    # temp working dir, so it must not prompt. Safe because each run is sandboxed
+    # to a fresh copy of the task seed.
     cmd = ["claude", "-p", prompt, "--model", model, "--output-format", "json",
-           "--max-budget-usd", str(budget_usd), "--permission-mode", "acceptEdits"]
+           "--max-budget-usd", str(budget_usd), "--permission-mode", "bypassPermissions"]
     if resume_sid:
         cmd += ["--resume", resume_sid]
     if max_turns:
