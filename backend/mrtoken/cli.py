@@ -83,6 +83,11 @@ def cmd_watch(args):
     sys.exit(watch(args.session, interval=args.interval, once=args.once))
 
 
+def cmd_handoff(args):
+    from mrtoken.handoff import build_handoff
+    print(build_handoff(args.db, args.session))
+
+
 def cmd_validate(args):
     from mrtoken.validate import validate_db, print_report
     import json
@@ -140,6 +145,11 @@ def main(argv=None):
     p_watch.add_argument("--interval", type=float, default=2.0, help="poll seconds (default 2)")
     p_watch.add_argument("--once", action="store_true", help="replay current transcript and exit")
 
+    p_handoff = sub.add_parser("handoff",
+        help="generate a compact handoff to continue a bloated session fresh")
+    p_handoff.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
+    p_handoff.add_argument("--db", dest="db_sub")
+
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help(); return
@@ -150,7 +160,7 @@ def main(argv=None):
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch,
-                "init": cmd_init}
+                "init": cmd_init, "handoff": cmd_handoff}
     dispatch[a.cmd](a)
 
 

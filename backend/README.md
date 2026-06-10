@@ -49,7 +49,21 @@ mrtoken-transcript list
 # Live in-session advice (tails the current transcript)
 mrtoken-transcript watch
 mrtoken-transcript watch <session-id> --once   # replay & exit (testing)
+
+# Generate a compact handoff to continue a bloated session fresh
+mrtoken-transcript handoff [session-id]
 ```
+
+## Fresh-handoff generator (`handoff`)
+
+When a session is bloated, the cheapest fix is to start fresh with a compact
+handoff. `handoff` builds one **deterministically (no AI call)** from data we
+already have: goal (title / first prompt), most recent request, files touched,
+recent commands, the rule signals that fired, and a token/cost summary. It's
+**printed** for you to review and paste into a new session — content is read on
+demand and never persisted (the ledger stays metadata-only). This is the one
+assistive action (free here; an optional LLM "polish" pass is the natural paid
+upgrade — the seam is marked in `handoff.py`, not built yet).
 
 ## Live advisor (`watch`)
 

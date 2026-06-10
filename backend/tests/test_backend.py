@@ -239,6 +239,34 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(mon.huge_threshold, 80_000)  # research tolerates big reads
 
 
+    def test_handoff_builds_from_transcript(self):
+        from mrtoken.handoff import build_handoff
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            transcript = os.path.join(tmp, "sess-handoff.jsonl")
+            write_jsonl(transcript, [
+                {"type": "user", "timestamp": "2026-06-01T00:00:00Z",
+                 "message": {"content": "Add OAuth login to the API"}},
+                {"type": "assistant", "sessionId": "sess-handoff", "uuid": "a1",
+                 "timestamp": "2026-06-01T00:00:01Z", "cwd": tmp,
+                 "message": {"model": "claude-sonnet-4",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "tool_use", "id": "t1", "name": "Write",
+                                          "input": {"file_path": "/proj/auth.py"}}]}},
+                {"type": "user", "timestamp": "2026-06-01T00:00:02Z",
+                 "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+                                          "content": "ok"}]}},
+                {"type": "user", "timestamp": "2026-06-01T00:00:03Z",
+                 "message": {"content": "now add refresh tokens"}},
+            ])
+            db = os.path.join(tmp, ".token-tithe", "token-tithe.db")
+            md = build_handoff(db, transcript)
+            self.assertIn("Add OAuth login", md)            # goal = first prompt
+            self.assertIn("now add refresh tokens", md)     # last request
+            self.assertIn("/proj/auth.py", md)              # changed file
+
+
 def make_trace() -> tuple[sqlite3.Connection, int]:
     conn = connect(":memory:")
     cur = conn.execute(
