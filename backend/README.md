@@ -212,10 +212,25 @@ join **estimated (events) ↔ actual (session_summary)** per session. Two ways t
    `{schema: "mrtoken.session_summary.v1", sessions: [...]}` with each session's
    recommendations attached.
 
+## Where data lives
+
+Resolved identically by the Python backend (`mrtoken/datadir.py`) and the TS CLI
+(`src/utils/paths.ts`) per the shared contract in `docs/DATA-DIR.md`:
+
+- **Real project (default):** `<project-root>/.token-tithe/token-tithe.db` — data
+  stays local to the project (the privacy story).
+- **Not a project:** a central store `~/.mrtoken/data/projects/<key>/` (or
+  `$XDG_DATA_HOME/token-tithe/...`), keyed per location — never scattered into cwd.
+- **Full-central opt-in:** set `MRTOKEN_DATA_DIR` to route every project under one
+  home, keyed by project.
+- **Overrides:** `--db`/`--events`, or `TOKEN_TITHE_DB` / `MRTOKEN_DB`.
+
+`mrtoken-transcript migrate-data` finds `.token-tithe` DBs scattered by the old
+per-cwd bug and relocates the non-project ones into the central store (dry-run by
+default; `--apply` to move; conflicts skipped, never overwritten).
+
 ## Data model
 
 6 tables: `trace`, `model_call`, `tool_call`, `context_block`, `event`, `recommendation`,
 plus the `session_summary` view.  
 See `docs/DATA_MODEL.md` for full schema and source mapping.
-
-Default DB: `.token-tithe/token-tithe.db` in the detected project root.

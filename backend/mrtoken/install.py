@@ -18,6 +18,7 @@ import json, os, shutil, sys
 from datetime import datetime, timezone
 
 from mrtoken.ingest import connect, find_project_root
+from mrtoken.datadir import resolve_db_path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK_SCRIPT = os.path.join(os.path.dirname(HERE), "hooks", "on_stop.py")
@@ -88,7 +89,7 @@ def _add_hook(settings: dict) -> dict:
 def init(project_root: str | None = None, settings_path: str | None = None,
          dry_run: bool = False, emit=print) -> int:
     root = find_project_root(project_root)
-    db_path = os.path.join(root, ".token-tithe", "token-tithe.db")
+    db_path = resolve_db_path(root)  # shared contract (per-project for real projects)
     settings_path = settings_path or os.path.join(root, ".claude", "settings.local.json")
 
     emit(f"mrtoken init ▸ project root: {root}")

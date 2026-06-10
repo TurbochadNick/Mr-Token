@@ -296,6 +296,62 @@ class BackendTest(unittest.TestCase):
         self.assertGreater(r["handoff"]["saving_per_future_call"], 0)
 
 
+    def test_datadir_non_project_routes_central_not_cwd(self):
+        """The scatter-bug fix: a non-project cwd must NOT get a .token-tithe/."""
+        from mrtoken import datadir
+        import contextlib
+        @contextlib.contextmanager
+        def env(**kv):
+            old = {k: os.environ.get(k) for k in kv}
+            for k, v in kv.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+            try:
+                yield
+            finally:
+                for k, v in old.items():
+                    os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+        with tempfile.TemporaryDirectory() as nonproj, tempfile.TemporaryDirectory() as central:
+            with env(MRTOKEN_DATA_DIR=None, TOKEN_TITHE_DB=None, MRTOKEN_DB=None,
+                     XDG_DATA_HOME=central):
+                db = datadir.resolve_db_path(nonproj)
+                self.assertFalse(db.startswith(nonproj), "must not scatter into the cwd")
+                self.assertTrue(db.startswith(os.path.join(central, "token-tithe", "projects")))
+                self.assertIn(datadir.project_key(nonproj), db)
+
+    def test_datadir_per_project_and_full_central_optin(self):
+        from mrtoken import datadir
+        import contextlib
+        @contextlib.contextmanager
+        def env(**kv):
+            old = {k: os.environ.get(k) for k in kv}
+            for k, v in kv.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+            try:
+                yield
+            finally:
+                for k, v in old.items():
+                    os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+        with tempfile.TemporaryDirectory() as proj, tempfile.TemporaryDirectory() as central:
+            open(os.path.join(proj, "package.json"), "w").close()  # real project
+            with env(MRTOKEN_DATA_DIR=None, TOKEN_TITHE_DB=None, MRTOKEN_DB=None):
+                self.assertEqual(datadir.resolve_db_path(proj),
+                                 os.path.join(proj, ".token-tithe", "token-tithe.db"))
+            with env(MRTOKEN_DATA_DIR=central, TOKEN_TITHE_DB=None, MRTOKEN_DB=None):
+                db = datadir.resolve_db_path(proj)  # opt-in overrides per-project
+                self.assertTrue(db.startswith(os.path.join(central, "projects")))
+            with env(MRTOKEN_DB="/tmp/x/y.db"):
+                self.assertEqual(datadir.resolve_db_path(proj), "/tmp/x/y.db")
+
+    def test_datadir_project_key_matches_sha256_contract(self):
+        from mrtoken import datadir
+        import hashlib
+        p = "/Users/zach/My Proj"
+        expected = "my-proj-" + hashlib.sha256(p.encode()).hexdigest()[:8]
+        self.assertEqual(datadir.project_key(p), expected)
+
+
 def make_trace() -> tuple[sqlite3.Connection, int]:
     conn = connect(":memory:")
     cur = conn.execute(

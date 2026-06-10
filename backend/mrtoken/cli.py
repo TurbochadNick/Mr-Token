@@ -88,6 +88,11 @@ def cmd_handoff(args):
     print(build_handoff(args.db, args.session))
 
 
+def cmd_migrate(args):
+    from mrtoken.migrate import migrate
+    sys.exit(migrate(apply=args.apply))
+
+
 def cmd_why(args):
     from mrtoken.why import print_diagnosis
     print_diagnosis(_open(args.db), args.session or "")
@@ -160,6 +165,11 @@ def main(argv=None):
     p_handoff.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
     p_handoff.add_argument("--db", dest="db_sub")
 
+    p_migrate = sub.add_parser("migrate-data",
+        help="find scattered .token-tithe DBs and relocate non-project ones to the central store")
+    p_migrate.add_argument("--apply", action="store_true",
+        help="actually relocate (default: dry-run report)")
+
     p_why = sub.add_parser("why", help="diagnose where a session's cost went + the main fuel leak")
     p_why.add_argument("session", nargs="?", help="session ID prefix (default: newest)")
     p_why.add_argument("--db", dest="db_sub")
@@ -179,7 +189,8 @@ def main(argv=None):
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch,
-                "init": cmd_init, "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi}
+                "init": cmd_init, "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
+                "migrate-data": cmd_migrate}
     dispatch[a.cmd](a)
 
 

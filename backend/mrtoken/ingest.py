@@ -17,23 +17,15 @@ SCHEMA = os.path.join(HERE, "schema.sql")
 PRICES = os.path.join(HERE, "prices.json")
 
 
-def find_project_root(start: str | None = None) -> str:
-    current = os.path.abspath(start or os.getcwd())
-    while True:
-        if (
-            os.path.exists(os.path.join(current, ".git"))
-            or os.path.exists(os.path.join(current, "package.json"))
-            or os.path.exists(os.path.join(current, "pyproject.toml"))
-        ):
-            return current
-        parent = os.path.dirname(current)
-        if parent == current:
-            return os.path.abspath(start or os.getcwd())
-        current = parent
+# Data-dir resolution lives in mrtoken.datadir (shared contract with the TS side,
+# see backend/docs/DATA-DIR.md). Re-exported here for back-compat callers.
+from mrtoken.datadir import find_project_root, resolve_db_path  # noqa: E402,F401
 
 
-def default_db_path(project_root: str | None = None) -> str:
-    return os.path.join(find_project_root(project_root), ".token-tithe", "token-tithe.db")
+def default_db_path(cwd: str | None = None) -> str:
+    """Resolve the token-tithe.db path for `cwd` per the shared contract.
+    Real project -> <project>/.token-tithe; non-project -> central (never cwd)."""
+    return resolve_db_path(cwd)
 
 
 def now_iso() -> str:
