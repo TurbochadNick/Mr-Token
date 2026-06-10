@@ -7,7 +7,8 @@ The local web UI is called Mr Token; the CLI/package remains `token-tithe`.
 
 ## Requirements
 
-- Node.js 22+
+- Node.js 22 LTS recommended (builds and tested on 22 through 26; `better-sqlite3`
+  v12 ships prebuilt binaries across this range, so no native compile is needed).
 - pnpm
 
 ## Install
