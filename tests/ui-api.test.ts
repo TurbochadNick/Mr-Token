@@ -9,6 +9,7 @@ import { exportMarkdownReport, getSetupStatus, getUiData, runUiDoctor, runUiInit
 describe('Mr Token UI API', () => {
   it('returns dashboard, findings, events, and latest doctor patch data', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-ui-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8'); // mark as a real project so data resolves per-project
     const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
     const patchDir = join(projectRoot, '.token-tithe', 'patches', '20260525-101112');
     mkdirSync(patchDir, { recursive: true });
@@ -62,6 +63,7 @@ describe('Mr Token UI API', () => {
 
   it('supports setup, init, doctor, and report API helpers', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-ui-actions-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8'); // mark as a real project so data resolves per-project
     const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
 
     expect(getSetupStatus(projectRoot, dbPath)).toMatchObject({

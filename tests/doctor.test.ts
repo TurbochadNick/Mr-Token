@@ -7,6 +7,7 @@ import { generateDoctorPatches } from '../src/doctor/patches.js';
 describe('doctor patch generation', () => {
   it('writes safe patch proposals without modifying live files', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-doctor-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8'); // mark as a real project so data resolves per-project
     const claudePath = join(projectRoot, 'CLAUDE.md');
     const settingsPath = join(projectRoot, '.claude', 'settings.local.json');
     const originalClaude = ['# Project', '', 'Keep this command: pnpm test.', 'Historical note. '.repeat(500)].join('\n');
@@ -30,6 +31,7 @@ describe('doctor patch generation', () => {
 
   it('summarizes proposed changes and hook improvements', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-doctor-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8'); // mark as a real project so data resolves per-project
     const result = generateDoctorPatches(projectRoot, new Date(2026, 4, 25, 10, 11, 12));
     const summary = readFileSync(result.summaryPath, 'utf8');
     const diff = readFileSync(result.diffPath, 'utf8');
