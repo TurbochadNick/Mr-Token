@@ -84,10 +84,19 @@ existing transcript and exits, useful for a quick "where am I" check or testing.
 
 `mrtoken-transcript init` is the zero-config path for a pilot evaluator: it
 resolves the project root, creates `.token-tithe/token-tithe.db` (the same DB the
-TS CLI uses), and installs a **project-local** Stop hook into
-`.claude/settings.local.json`. It backs up any existing settings, preserves all
-existing settings and hooks (it adds ours alongside the TS hook), and is
-idempotent. `--print` shows a dry run.
+TS CLI uses), installs a **project-local** Stop hook into
+`.claude/settings.local.json`, and installs the bundled **skills** into
+`.claude/skills/` (currently `/mr-handoff`). It backs up any existing settings,
+preserves all existing settings and hooks (it adds ours alongside the TS hook),
+and is idempotent. `--print` shows a dry run.
+
+### The `/mr-handoff` skill — the wedge, reachable in-session
+
+`init` installs a Claude Code skill so the handoff is one command *inside* a
+session, no terminal switch: when a session bloats, type **`/mr-handoff`** and
+the agent runs `mrtoken-transcript handoff` and shows you the paste-ready summary.
+The `fresh_handoff` recommendation (and the Stop-hook nudge) name this skill, so
+detection → action is one motion: see the nudge, run `/mr-handoff`, start fresh.
 
 ## Auto-update via hook (manual alternative to `init`)
 

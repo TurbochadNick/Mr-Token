@@ -218,6 +218,9 @@ class BackendTest(unittest.TestCase):
             self.assertIn("echo existing", cmds)
             self.assertTrue(any("on_stop.py" in c for c in cmds))
             self.assertTrue(os.path.exists(os.path.join(tmp, ".token-tithe", "token-tithe.db")))
+            # the /mr-handoff skill is installed project-local
+            self.assertTrue(os.path.exists(
+                os.path.join(tmp, ".claude", "skills", "mr-handoff", "SKILL.md")))
 
             # idempotent: second run adds nothing
             init(project_root=tmp, emit=lambda *_: None)

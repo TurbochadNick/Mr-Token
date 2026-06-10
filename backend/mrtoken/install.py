@@ -21,12 +21,30 @@ from mrtoken.ingest import connect, find_project_root
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK_SCRIPT = os.path.join(os.path.dirname(HERE), "hooks", "on_stop.py")
+SKILLS_SRC = os.path.join(os.path.dirname(HERE), "skills")  # backend/skills/<name>/SKILL.md
 HOOK_MARKER = "on_stop.py"   # how we recognise our own hook for idempotency
 
 
 def hook_command() -> str:
     """The exact command Claude Code will run on Stop."""
     return f"{sys.executable} {HOOK_SCRIPT}"
+
+
+def install_skills(root: str) -> list[str]:
+    """Copy bundled MR Token skills into <root>/.claude/skills/. Returns names installed."""
+    if not os.path.isdir(SKILLS_SRC):
+        return []
+    dest_root = os.path.join(root, ".claude", "skills")
+    installed = []
+    for name in sorted(os.listdir(SKILLS_SRC)):
+        src = os.path.join(SKILLS_SRC, name, "SKILL.md")
+        if not os.path.isfile(src):
+            continue
+        dest_dir = os.path.join(dest_root, name)
+        os.makedirs(dest_dir, exist_ok=True)
+        shutil.copy2(src, os.path.join(dest_dir, "SKILL.md"))  # overwrite keeps it current
+        installed.append(name)
+    return installed
 
 
 def _backup(path: str) -> str | None:
@@ -75,32 +93,41 @@ def init(project_root: str | None = None, settings_path: str | None = None,
 
     emit(f"mrtoken init ▸ project root: {root}")
 
+    skills = sorted(
+        n for n in (os.listdir(SKILLS_SRC) if os.path.isdir(SKILLS_SRC) else [])
+        if os.path.isfile(os.path.join(SKILLS_SRC, n, "SKILL.md")))
+
     if dry_run:
         emit(f"  would create DB:       {db_path}")
         emit(f"  would edit settings:   {settings_path}")
         emit(f"  would add Stop hook:   {hook_command()}")
+        emit(f"  would install skills:  {', '.join('/'+s for s in skills) or '(none)'}")
         return 0
 
     # 1 + 2: create the shared DB (connect() makes the dir, tables, view)
     connect(db_path).close()
     emit(f"  ✓ database ready:      {db_path}")
 
-    # 3: install the Stop hook, preserving everything
+    # 3: install bundled skills (idempotent — overwrite keeps them current)
+    installed = install_skills(root)
+    if installed:
+        emit(f"  ✓ installed skills:    {', '.join('/'+s for s in installed)}")
+
+    # 4: install the Stop hook, preserving everything
     settings = _load_settings(settings_path)
     if _already_installed(settings):
-        emit("  ✓ Stop hook already installed — nothing to do")
-        return 0
+        emit("  ✓ Stop hook already installed")
+    else:
+        backup = _backup(settings_path)
+        if backup:
+            emit(f"  ✓ backed up settings:  {os.path.basename(backup)}")
+        _add_hook(settings)
+        os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+        with open(settings_path, "w", encoding="utf-8") as fh:
+            json.dump(settings, fh, indent=2)
+            fh.write("\n")
+        emit(f"  ✓ installed Stop hook: {settings_path}")
 
-    backup = _backup(settings_path)
-    if backup:
-        emit(f"  ✓ backed up settings:  {os.path.basename(backup)}")
-
-    _add_hook(settings)
-    os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-    with open(settings_path, "w", encoding="utf-8") as fh:
-        json.dump(settings, fh, indent=2)
-        fh.write("\n")
-    emit(f"  ✓ installed Stop hook: {settings_path}")
-    emit("\n  Use Claude Code normally — each session is ingested on Stop.")
-    emit("  Inspect with:  mrtoken-transcript report   |   mrtoken-transcript fleet")
+    emit("\n  Use Claude Code normally — sessions are ingested on Stop.")
+    emit("  When a session bloats, run /mr-handoff to start fresh cleanly.")
     return 0
