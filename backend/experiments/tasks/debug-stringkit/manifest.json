@@ -1,0 +1,13 @@
+{
+  "id": "debug-stringkit",
+  "type": "debug-failing-suite",
+  "description": "Fix bugs in stringkit.py until the pytest suite passes.",
+  "prompt_file": "TASK.md",
+  "oracle": "oracle.sh",
+  "seed_dir": "seed",
+  "immutable_files": ["test_stringkit.py"],
+  "reset_threshold_tokens": 100000,
+  "agent": {"model": "claude-sonnet-4-6", "effort": "medium", "temperature": 0},
+  "sizing_note": "SMALL — validates oracle + recorder plumbing only; will not bloat past the 100k reset threshold. Replace with a larger codebase for real measurement runs.",
+  "max_steps": 40
+}

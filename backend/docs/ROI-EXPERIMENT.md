@@ -44,11 +44,12 @@ pre-set point. Default: when cumulative input-side context first crosses
 **100k tokens** (measured live from the transcript, which we already do in
 `watch`). Continue never resets; compact and handoff reset exactly there.
 
-### Test agent (the "dummy")
-- **Primary: Sonnet (pin the exact model id + settings).** Capable enough that
-  completion is not gated by model weakness (a weak model that fails a lot would
-  confound the equal-quality comparison), and far cheaper than Opus. Representative
-  of real cost-sensitive agent usage.
+### Test agent (the "dummy") — LOCKED
+- **Sonnet at MEDIUM reasoning effort** (pin the exact model id). Capable enough
+  that completion is not gated by model weakness (a weak model that fails a lot
+  would confound the equal-quality comparison), far cheaper than Opus, and medium
+  effort is the realistic default for cost-sensitive agent usage. Pin model id,
+  temperature, and effort=medium identically across ALL arms and reps.
 - **Optional replication: Haiku.** Cheap, and tells us whether the effect holds
   on a weaker model (which may bloat differently). Secondary because higher
   non-completion muddies the quality gate.
@@ -132,12 +133,16 @@ compact won Exp 1) may be the actual product value.
 The measurement instrument already exists (we read transcripts for exact tokens).
 The new build is the runner + fixtures + oracle plumbing.
 
-## Open questions for us
-- Which 2 tasks first? (Lean T1 refactor + T2 debug, both with real test suites.)
-- Reset threshold: fixed 100k tokens, or a fixed step count? (100k is more
-  faithful to "context got big.")
-- Pre-register the win threshold (>=20%?) before running, so we cannot move the
-  goalposts after seeing results.
+## Locked decisions
+- **Tasks:** start with **T1 (multi-file refactor)** and **T2 (debug failing
+  suite)**, both with real test-suite oracles.
+- **Reset point:** **fixed 100k tokens** of input-side context (faithful to
+  "context got big"; not a step count).
+- **Pre-registered win thresholds (tiered):** **>=5% token reduction = success
+  signal** (worth pursuing); **>=10-15% = real victory** (the pitch-worthy number).
+  Decided before running so we cannot move the goalposts. Reported vs BOTH the
+  continue and compact arms, gated on equal-or-better completion rate.
+- **Test agent:** Sonnet, medium reasoning effort, pinned across all arms.
 
 ## When to run
 Design now (done). **Run gated on a pilot signal**: if the BYU TTO pilot says
