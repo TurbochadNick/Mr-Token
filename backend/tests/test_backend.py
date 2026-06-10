@@ -270,6 +270,32 @@ class BackendTest(unittest.TestCase):
             self.assertIn("/proj/auth.py", md)              # changed file
 
 
+    def test_why_names_dominant_cost_shape(self):
+        from mrtoken.why import diagnose
+        conn, tid = make_trace()
+        # cache-read dominated session → "carrying cached context" should win
+        conn.execute(
+            "INSERT INTO model_call(trace_id, model, input_tokens, output_tokens, "
+            "cache_read_input_tokens, cache_creation_input_tokens) VALUES(?,?,?,?,?,?)",
+            (tid, "claude-sonnet-4", 100, 500, 500_000, 1000))
+        conn.commit()
+        d = diagnose(conn, tid)
+        self.assertIn("carrying cached context", d["headline"])
+
+    def test_roi_reports_categories_and_handoff(self):
+        from mrtoken.roi import roi_session
+        conn, tid = make_trace()
+        conn.execute("INSERT INTO model_call(trace_id, output_tokens, cache_read_input_tokens) "
+                     "VALUES(?,?,?)", (tid, 100, 50_000))
+        conn.execute("INSERT INTO tool_call(trace_id, tool_name, output_chars, output_tokens_est) "
+                     "VALUES(?,?,?,?)", (tid, "Read", 60_000, 15_000))  # oversized
+        conn.commit()
+        r = roi_session(conn, tid)
+        self.assertGreater(r["categories"]["oversized tool outputs (excess)"], 0)
+        self.assertIsNotNone(r["handoff"])
+        self.assertGreater(r["handoff"]["saving_per_future_call"], 0)
+
+
 def make_trace() -> tuple[sqlite3.Connection, int]:
     conn = connect(":memory:")
     cur = conn.execute(

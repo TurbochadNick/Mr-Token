@@ -52,7 +52,28 @@ mrtoken-transcript watch <session-id> --once   # replay & exit (testing)
 
 # Generate a compact handoff to continue a bloated session fresh
 mrtoken-transcript handoff [session-id]
+
+# Diagnose where a session's cost went (+ the main fuel leak)
+mrtoken-transcript why [session-id]
+
+# Estimate addressable token waste (session or fleet-wide)
+mrtoken-transcript roi [session-id]
 ```
+
+## `why` — where did the cost go?
+
+`why` decomposes a session's spend into its shape — generating output vs carrying
+cached context vs writing new context vs fresh input — lists the avoidable drivers
+(oversized tool outputs, retries, subagents), and names the single biggest fuel
+leak with the action. Surfaced in-session via the `/mr-why` skill.
+
+## `roi` — what's the addressable opportunity?
+
+`roi` estimates avoidable waste, leading with the **structural** lever (context
+carry, usually the biggest cost on long sessions — what the handoff targets) and
+then the smaller **tactical** rule-based categories. **It is a data-grounded
+estimate of *opportunity*, explicitly not a controlled-trial measurement** — the
+report says so, and true ROI requires an act-vs-ignore before/after.
 
 ## Fresh-handoff generator (`handoff`)
 

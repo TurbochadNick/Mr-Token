@@ -88,6 +88,16 @@ def cmd_handoff(args):
     print(build_handoff(args.db, args.session))
 
 
+def cmd_why(args):
+    from mrtoken.why import print_diagnosis
+    print_diagnosis(_open(args.db), args.session or "")
+
+
+def cmd_roi(args):
+    from mrtoken.roi import print_roi
+    print_roi(_open(args.db), args.session)
+
+
 def cmd_validate(args):
     from mrtoken.validate import validate_db, print_report
     import json
@@ -150,6 +160,15 @@ def main(argv=None):
     p_handoff.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
     p_handoff.add_argument("--db", dest="db_sub")
 
+    p_why = sub.add_parser("why", help="diagnose where a session's cost went + the main fuel leak")
+    p_why.add_argument("session", nargs="?", help="session ID prefix (default: newest)")
+    p_why.add_argument("--db", dest="db_sub")
+
+    p_roi = sub.add_parser("roi",
+        help="estimate addressable token waste (session or fleet) — estimate, not a trial")
+    p_roi.add_argument("session", nargs="?", help="session ID prefix (omit for fleet-wide)")
+    p_roi.add_argument("--db", dest="db_sub")
+
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help(); return
@@ -160,7 +179,7 @@ def main(argv=None):
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch,
-                "init": cmd_init, "handoff": cmd_handoff}
+                "init": cmd_init, "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi}
     dispatch[a.cmd](a)
 
 

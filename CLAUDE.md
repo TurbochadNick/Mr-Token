@@ -35,10 +35,11 @@ exists, fall back to **estimated** (events) otherwise.
 - **Python backend:** `pip install -e backend/`; tests
   `cd backend && python3 -m unittest tests.test_backend`. Entry point
   `backend/mrtoken/cli.py`. Commands: `init`, `ingest`, `report`, `list`,
-  `subagents`, `fleet`, `export`, `validate`, `watch`, `handoff`.
+  `subagents`, `fleet`, `export`, `validate`, `watch`, `handoff`, `why`, `roi`.
 - **Skills:** `backend/skills/<name>/SKILL.md` are bundled Claude Code skills;
   `mrtoken-transcript init` installs them into a project's `.claude/skills/`.
-  `/mr-handoff` generates a fresh-session handoff for a bloated session.
+  `/mr-handoff` generates a fresh-session handoff; `/mr-why` diagnoses where a
+  session's cost went.
 
 ## Privacy invariant (both sides)
 
