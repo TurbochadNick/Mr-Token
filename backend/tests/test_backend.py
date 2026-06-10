@@ -296,6 +296,18 @@ class BackendTest(unittest.TestCase):
         self.assertGreater(r["handoff"]["saving_per_future_call"], 0)
 
 
+    def test_status_snapshot_flags_large_context(self):
+        from mrtoken.status import status_snapshot
+        conn, tid = make_trace()
+        conn.execute("INSERT INTO model_call(trace_id, timestamp, input_tokens, output_tokens, "
+                     "cache_read_input_tokens) VALUES(?,?,?,?,?)",
+                     (tid, "2026-06-01T00:00:00Z", 100, 50, 200_000))
+        conn.commit()
+        s = status_snapshot(conn, tid)
+        self.assertEqual(s["calls"], 1)
+        self.assertTrue(s["context_large"])          # ~200k current window
+        self.assertGreaterEqual(s["context_now"], 200_000)
+
     def test_datadir_non_project_routes_central_not_cwd(self):
         """The scatter-bug fix: a non-project cwd must NOT get a .token-tithe/."""
         from mrtoken import datadir

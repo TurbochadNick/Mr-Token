@@ -103,6 +103,11 @@ def cmd_roi(args):
     print_roi(_open(args.db), args.session)
 
 
+def cmd_status(args):
+    from mrtoken.status import print_status
+    sys.exit(print_status(args.db, args.session))
+
+
 def cmd_validate(args):
     from mrtoken.validate import validate_db, print_report
     import json
@@ -179,6 +184,11 @@ def main(argv=None):
     p_roi.add_argument("session", nargs="?", help="session ID prefix (omit for fleet-wide)")
     p_roi.add_argument("--db", dest="db_sub")
 
+    p_status = sub.add_parser("status",
+        help="one-glance snapshot of the current session + the top next action")
+    p_status.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
+    p_status.add_argument("--db", dest="db_sub")
+
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help(); return
@@ -190,7 +200,7 @@ def main(argv=None):
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch,
                 "init": cmd_init, "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
-                "migrate-data": cmd_migrate}
+                "migrate-data": cmd_migrate, "status": cmd_status}
     dispatch[a.cmd](a)
 
 
