@@ -1,0 +1,20 @@
+{
+  "id": "debug-widgetlib",
+  "type": "debug-failing-suite",
+  "description": "Fix bugs across widgetlib modules until the pytest suite passes.",
+  "prompt_file": "TASK.md",
+  "oracle": "oracle.sh",
+  "seed_dir": "seed",
+  "immutable_files": [
+    "test_widgetlib.py"
+  ],
+  "reset_threshold_tokens": 100000,
+  "handoff_phase1_turns": 7,
+  "agent": {
+    "model": "claude-sonnet-4-6",
+    "effort": "medium",
+    "temperature": 0
+  },
+  "max_steps": 50,
+  "note": "Pilot resets the handoff arm at a TURN-COUNT midpoint (handoff_phase1_turns) as a controllable proxy for the 100k token threshold."
+}

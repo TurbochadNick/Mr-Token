@@ -134,9 +134,33 @@ def drive_agent(task_dir: str, manifest: dict, work: str, arm: str,
         return {**m, "wall_clock_s": None, "steps": res.get("num_turns"),
                 "reset_fired": 0, "notes": "live:continue"}
 
+    if arm == "handoff":
+        # Phase 1: run partway (turn-count proxy for the reset point), leaving the
+        # agent's partial edits on disk in `work`.
+        phase1_turns = manifest.get("handoff_phase1_turns", 8)
+        r1 = _run_claude(prompt, work, model, budget_usd, max_turns=phase1_turns)
+        sid1 = r1.get("session_id")
+        m1 = _measure(sid1, work) if sid1 else {"total_tokens": 0, "est_cost_usd": 0}
+        # Generate a compact handoff from phase 1, then a FRESH session continues
+        # (work dir still holds phase 1's edits, so phase 2 builds on them).
+        from mrtoken.handoff import build_handoff
+        handoff_md = build_handoff(None, sid1) if sid1 else ""
+        seeded = (handoff_md + "\n\n--- Original task ---\n" + prompt) if handoff_md else prompt
+        r2 = _run_claude(seeded, work, model, budget_usd)
+        sid2 = r2.get("session_id")
+        m2 = _measure(sid2, work) if sid2 else {"total_tokens": 0, "est_cost_usd": 0}
+        return {
+            "total_tokens": (m1.get("total_tokens") or 0) + (m2.get("total_tokens") or 0),
+            "est_cost_usd": round((m1.get("est_cost_usd") or 0) + (m2.get("est_cost_usd") or 0), 6),
+            "wall_clock_s": None,
+            "steps": (r1.get("num_turns") or 0) + (r2.get("num_turns") or 0),
+            "tool_errors": (m1.get("tool_errors") or 0) + (m2.get("tool_errors") or 0),
+            "reset_fired": 1, "notes": f"live:handoff (phase1={phase1_turns} turns)",
+        }
+
     raise NotImplementedError(
-        f"live '{arm}' arm needs the smoke test to calibrate phase-1 turns and "
-        "validate headless compaction/resume — run the continue-arm smoke test first.")
+        f"live '{arm}' arm not wired for the pilot (compact arm deferred — needs the "
+        "headless-compaction question resolved). Use --arm continue or --arm handoff.")
 
 
 def record(db_path: str, row: dict) -> None:

@@ -167,6 +167,36 @@ The new build is the runner + fixtures + oracle plumbing.
   continue and compact arms, gated on equal-or-better completion rate.
 - **Test agent:** Sonnet, medium reasoning effort, pinned across all arms.
 
+## Pilot 1 results (2026-06-04) — continue vs handoff, short task
+
+First real run. Harness validated end to end with live Sonnet agents (spawn ->
+solve -> oracle -> measure exact tokens). Fixture: `debug-widgetlib` (3 modules,
+7 seeded bugs, ~14 turns to solve, ~5-10k tokens — a SHORT, non-bloated task).
+Handoff reset at a turn-count midpoint (phase1 = 7 of ~14 turns) as a proxy for
+the 100k token threshold. 3 reps per arm.
+
+| arm | runs | completed | median tokens |
+|---|---|---|---|
+| continue | 3 | 3/3 | 9,337 |
+| handoff | 3 | 3/3 | 10,720 |
+
+**Result: handoff cost ~15% MORE than continue, at equal completion (3/3 both).**
+
+This does NOT refute the wedge — it maps its boundary, honestly. On a short,
+non-bloated task there is little carried context to shed, so the reset+handoff
+overhead (generating the handoff + re-establishing context in a fresh session)
+outweighs the carry savings. This is exactly why the `fresh_handoff` rule only
+fires on DEEP/bloated sessions, and it is a useful guardrail: do not hand off
+short tasks. It would have been easy to pick a bloated task and "confirm" the
+wedge; the pilot instead shows where the handoff does and does not pay.
+
+**What this proves / what it does not:** proven — the harness measures real
+causal token deltas at equal quality, and short-task handoff is a net loss.
+NOT yet tested — the regime the wedge actually claims (a session bloated past
+~100k, where carry cost dominates). That needs a genuinely bloating fixture (or a
+real long session), which is the next, larger build. Pilot 1 is the boundary; the
+wedge-confirming run is still ahead.
+
 ## When to run
 Design now (done). **Run gated on a pilot signal**: if the BYU TTO pilot says
 "interesting, but does it actually save money," we run it and return with a causal
