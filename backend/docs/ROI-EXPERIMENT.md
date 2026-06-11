@@ -197,6 +197,45 @@ NOT yet tested — the regime the wedge actually claims (a session bloated past
 real long session), which is the next, larger build. Pilot 1 is the boundary; the
 wedge-confirming run is still ahead.
 
+## Pilot 2 results (2026-06-05) — continue vs handoff, larger task
+
+Fixture: `debug-largelib` (5 modules, 19 functions, 17 seeded bugs). Bigger than
+pilot 1. Handoff reset at a turn-count midpoint (phase1 = 12). 3 reps per arm.
+
+| arm | completed | tokens | median | spread |
+|---|---|---|---|---|
+| continue | 3/3 | 11.3k / 12.4k / 53.2k | 12.4k | 4.7x |
+| handoff | 3/3 | 12.1k / 32.4k / 35.7k | 32.4k | 3.0x |
+
+**Inconclusive, and the setup structurally cannot confirm the wedge yet.** Three
+reasons, all useful findings:
+
+1. **The task does not reliably bloat.** Continue solved it in ~12k tokens twice
+   and only reached 53k once; peak CARRIED context was ~34k, never near 100k.
+   Agents are efficient and do not hoard context unless the task forces it.
+2. **Handoff has a fixed overhead floor** (~20k: regenerate context in a fresh
+   session). It can only pay when the context it sheds exceeds that floor, i.e.
+   well above ~34k. On the common ~12k path the reset is pure overhead.
+3. **A fixed turn-count reset is miscalibrated under this variance.** phase1=12
+   was set from a 23-turn outlier, but most runs finish in ~12 turns, so the
+   reset fired at/after completion and phase 2 was redundant.
+
+**Refined claim:** the handoff is NOT a general token saver; it can only pay for
+genuinely bloated sessions, and the crossover is well above what these fixtures
+reach. This matches why `fresh_handoff` only fires on deep/bloated sessions, and
+it is an honest guardrail against over-claiming.
+
+**What a conclusive pilot 3 needs (a design change, not more reps):**
+- a fixture that RELIABLY pushes carried context past ~100k (forced large reads:
+  big files the task must consult, or a much larger bug set), OR a real long
+  session replayed;
+- a TOKEN-threshold reset (reset when context crosses 100k), not a turn count —
+  needs mid-run control the headless `-p` flow lacks, so likely the Agent SDK
+  with a turn loop, or a transcript-watching reset;
+- more reps (>=5-10) to beat the 3-5x path variance.
+
+Stopping paid runs on the current setup: it answers the boundary, not the claim.
+
 ## When to run
 Design now (done). **Run gated on a pilot signal**: if the BYU TTO pilot says
 "interesting, but does it actually save money," we run it and return with a causal
