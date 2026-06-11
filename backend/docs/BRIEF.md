@@ -1,12 +1,12 @@
 # MR Token — Product Brief
 
-*Status: discovery → MVP build. Last updated 2026-06-01.*
+*Status: discovery → MVP build. Last updated 2026-06-05 (positioning revised after two research passes — see DECISIONS.md section 4-5).*
 
 ## One-liner
-A local-first observability layer for AI agent **workflows** that shows where tokens go, flags waste with cheap deterministic rules, and recommends workflow changes — cheap enough to leave on all the time, useful day one with **no LLM in the loop**.
+A local-first tool that watches your AI coding agent for the waste that actually costs you — bloated tool outputs, re-read loops, context rot — and tells you the one thing to do about it right now. So you **spend less, do more within your rate limits, and keep the agent sharp.** Cheap to leave on always; useful day one with **no LLM in the loop**.
 
-## Problem
-Agents quietly waste tokens: stale history, repeated system prompts, huge tool/log dumps, retry loops, over/under-use of reasoning, inefficient subagents. Users can't see it, so they can't fix it. Per-call dashboards miss it because waste lives at the **task/workflow** level.
+## Problem (sharpened by research)
+The waste that matters is **dynamic**, not "repeated context" (prompt caching makes re-sending the static prefix cheap). The real drivers are huge tool/log dumps, re-reading the same files, retry loops, and runaway step counts — non-cacheable context that snowballs. Stanford's agent-spend study: the same task can cost up to **30x** more depending on how many steps/re-reads the agent took. That snowball does three kinds of damage, depending on the user: **costs money** (metered/API), **eats your rate limit and context window** (flat-rate plans — vendor-documented), and **degrades output quality** (context rot — research-backed, every plan). Users can't see it, and per-call dashboards miss it because it lives at the **session/workflow** level.
 
 ## What it does (in order of build)
 1. **Monitor** — reconstruct a task as `trace → model_call / tool_call → event`, with token counts, cache stats, sizes, timings, cost estimate. No AI.
