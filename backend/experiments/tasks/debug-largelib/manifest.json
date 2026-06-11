@@ -1,0 +1,14 @@
+{
+  "id": "debug-largelib",
+  "type": "debug-failing-suite",
+  "description": "Fix bugs across 5 largelib modules (19 functions) until the suite passes.",
+  "prompt_file": "TASK.md",
+  "oracle": "oracle.sh",
+  "seed_dir": "seed",
+  "immutable_files": ["test_largelib.py"],
+  "reset_threshold_tokens": 100000,
+  "handoff_phase1_turns": 12,
+  "agent": {"model": "claude-sonnet-4-6", "effort": "medium", "temperature": 0},
+  "max_steps": 80,
+  "note": "Larger than debug-widgetlib to push carried context into the bloated regime. handoff_phase1_turns calibrated from a continue run before the matrix."
+}
