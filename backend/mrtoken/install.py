@@ -22,9 +22,10 @@ from mrtoken.datadir import resolve_db_path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK_SCRIPT = os.path.join(os.path.dirname(HERE), "hooks", "on_stop.py")
+PROMPT_HOOK_SCRIPT = os.path.join(os.path.dirname(HERE), "hooks", "on_prompt_submit.py")
 SKILLS_SRC = os.path.join(os.path.dirname(HERE), "skills")  # backend/skills/<name>/SKILL.md
-HOOK_MARKER = "on_stop.py"        # how we recognise our own Stop hook
-STATUSLINE_MARKER = "mrtoken-transcript statusline"  # idempotency sentinel
+HOOK_MARKER = "on_stop.py"             # idempotency sentinel for Stop hook
+PROMPT_HOOK_MARKER = "on_prompt_submit.py"  # idempotency sentinel for UserPromptSubmit
 
 
 def hook_command() -> str:
@@ -32,13 +33,9 @@ def hook_command() -> str:
     return f"{sys.executable} {HOOK_SCRIPT}"
 
 
-def statusline_command() -> str:
-    """The statusLine command for settings.json."""
-    import shutil
-    exe = shutil.which("mrtoken-transcript")
-    if exe:
-        return f"{exe} statusline"
-    return f"{sys.executable} -m mrtoken statusline"
+def prompt_hook_command() -> str:
+    """The command Claude Code runs on UserPromptSubmit (per-turn HUD)."""
+    return f"{sys.executable} {PROMPT_HOOK_SCRIPT}"
 
 
 def install_skills(root: str) -> list[str]:
@@ -86,8 +83,22 @@ def _already_installed(settings: dict) -> bool:
     return False
 
 
-def _statusline_already_set(settings: dict) -> bool:
-    return STATUSLINE_MARKER in str(settings.get("statusLine", ""))
+def _prompt_hook_already_installed(settings: dict) -> bool:
+    for entry in settings.get("hooks", {}).get("UserPromptSubmit", []) or []:
+        for h in entry.get("hooks", []) or []:
+            if PROMPT_HOOK_MARKER in str(h.get("command", "")):
+                return True
+    return False
+
+
+def _add_prompt_hook(settings: dict) -> dict:
+    hooks = settings.setdefault("hooks", {})
+    ups = hooks.setdefault("UserPromptSubmit", [])
+    ups.append({
+        "matcher": "",
+        "hooks": [{"type": "command", "command": prompt_hook_command()}],
+    })
+    return settings
 
 
 def _add_hook(settings: dict) -> dict:
@@ -101,10 +112,12 @@ def _add_hook(settings: dict) -> dict:
 
 
 def init(project_root: str | None = None, settings_path: str | None = None,
+         global_settings_path: str | None = None,
          dry_run: bool = False, emit=print) -> int:
     root = find_project_root(project_root)
     db_path = resolve_db_path(root)  # shared contract (per-project for real projects)
     settings_path = settings_path or os.path.join(root, ".claude", "settings.local.json")
+    global_settings_path = global_settings_path or os.path.expanduser("~/.claude/settings.json")
 
     emit(f"mrtoken init ▸ project root: {root}")
 
@@ -112,15 +125,13 @@ def init(project_root: str | None = None, settings_path: str | None = None,
         n for n in (os.listdir(SKILLS_SRC) if os.path.isdir(SKILLS_SRC) else [])
         if os.path.isfile(os.path.join(SKILLS_SRC, n, "SKILL.md")))
 
-    global_settings_path = os.path.expanduser("~/.claude/settings.json")
-
     if dry_run:
-        emit(f"  would create DB:       {db_path}")
-        emit(f"  would edit settings:   {settings_path}")
-        emit(f"  would add Stop hook:   {hook_command()}")
-        emit(f"  would install skills:  {', '.join('/'+s for s in skills) or '(none)'}")
-        emit(f"  would set statusLine:  {global_settings_path}")
-        emit(f"    command:             {statusline_command()}")
+        emit(f"  would create DB:            {db_path}")
+        emit(f"  would edit settings:        {settings_path}")
+        emit(f"  would add Stop hook:        {hook_command()}")
+        emit(f"  would install skills:       {', '.join('/'+s for s in skills) or '(none)'}")
+        emit(f"  would add per-turn HUD:     {global_settings_path}")
+        emit(f"    UserPromptSubmit command: {prompt_hook_command()}")
         return 0
 
     # 1 + 2: create the shared DB (connect() makes the dir, tables, view)
@@ -147,21 +158,23 @@ def init(project_root: str | None = None, settings_path: str | None = None,
             fh.write("\n")
         emit(f"  ✓ installed Stop hook: {settings_path}")
 
-    # 5: add statusLine to global Claude Code settings (idempotent)
+    # 5: add UserPromptSubmit HUD hook to global Claude Code settings (idempotent)
     global_settings = _load_settings(global_settings_path)
-    if _statusline_already_set(global_settings):
-        emit("  ✓ statusLine already set")
+    # remove any stale statusLine key from earlier installs
+    global_settings.pop("statusLine", None)
+    if _prompt_hook_already_installed(global_settings):
+        emit("  ✓ per-turn HUD hook already installed")
     else:
         backup = _backup(global_settings_path)
         if backup:
             emit(f"  ✓ backed up global settings: {os.path.basename(backup)}")
-        global_settings["statusLine"] = statusline_command()
+        _add_prompt_hook(global_settings)
         os.makedirs(os.path.dirname(global_settings_path), exist_ok=True)
         with open(global_settings_path, "w", encoding="utf-8") as fh:
             json.dump(global_settings, fh, indent=2)
             fh.write("\n")
-        emit(f"  ✓ statusLine set:      {global_settings_path}")
-        emit(f"    command:             {global_settings['statusLine']}")
+        emit(f"  ✓ per-turn HUD hook set: {global_settings_path}")
+        emit(f"    command: {prompt_hook_command()}")
 
     emit("\n  Use Claude Code normally — sessions are ingested on Stop.")
     emit("  When a session bloats, run /mr-handoff to start fresh cleanly.")

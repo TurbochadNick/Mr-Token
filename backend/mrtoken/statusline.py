@@ -36,13 +36,13 @@ def _top_signal(signals: list[str]) -> str | None:
     return best
 
 
-def statusline_hud(session_arg: str | None = None) -> int:
+def build_statusline_text(session_arg: str | None = None) -> str | None:
+    """Return the HUD string, or None if no active session found."""
     from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
 
     path = resolve_path(session_arg)
     if not path:
-        print("mr · no session")
-        return 0
+        return None
 
     mon = LiveMonitor(emit=lambda _: None)  # silent — only need snapshot data
     lines, _ = _iter_new_lines(path, 0)
@@ -72,5 +72,9 @@ def statusline_hud(session_arg: str | None = None) -> int:
     if top:
         parts.append(f"⚠ {_SIGNAL_LABELS.get(top, top)}")
 
-    print(" · ".join(parts))
+    return " · ".join(parts)
+
+
+def statusline_hud(session_arg: str | None = None) -> int:
+    print(build_statusline_text(session_arg) or "mr · no session")
     return 0

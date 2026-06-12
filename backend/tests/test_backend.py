@@ -215,19 +215,22 @@ class BackendTest(unittest.TestCase):
 
 
     def test_init_installs_hook_preserves_and_is_idempotent(self):
-        from mrtoken.install import init, _load_settings, _already_installed
+        from mrtoken.install import (init, _load_settings, _already_installed,
+                                     _prompt_hook_already_installed)
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "package.json"), "w") as h:
                 h.write("{}")
             settings_dir = os.path.join(tmp, ".claude")
             os.makedirs(settings_dir)
             settings_path = os.path.join(settings_dir, "settings.local.json")
+            global_settings_path = os.path.join(tmp, "global-settings.json")
             with open(settings_path, "w") as h:
                 json.dump({"permissions": {"allow": ["Bash(ls *)"]},
                            "hooks": {"Stop": [{"matcher": "", "hooks": [
                                {"type": "command", "command": "echo existing"}]}]}}, h)
 
-            init(project_root=tmp, emit=lambda *_: None)
+            init(project_root=tmp, global_settings_path=global_settings_path,
+                 emit=lambda *_: None)
             s = _load_settings(settings_path)
             # existing setting + existing hook preserved, ours added
             self.assertEqual(s["permissions"]["allow"], ["Bash(ls *)"])
@@ -238,13 +241,21 @@ class BackendTest(unittest.TestCase):
             # the /mr-handoff skill is installed project-local
             self.assertTrue(os.path.exists(
                 os.path.join(tmp, ".claude", "skills", "mr-handoff", "SKILL.md")))
+            # per-turn HUD hook added to global settings
+            gs = _load_settings(global_settings_path)
+            self.assertTrue(_prompt_hook_already_installed(gs))
+            self.assertNotIn("statusLine", gs)  # stale key must not appear
 
-            # idempotent: second run adds nothing
-            init(project_root=tmp, emit=lambda *_: None)
+            # idempotent: second run adds nothing extra
+            init(project_root=tmp, global_settings_path=global_settings_path,
+                 emit=lambda *_: None)
             s2 = _load_settings(settings_path)
             cmds2 = [hh["command"] for e in s2["hooks"]["Stop"] for hh in e["hooks"]]
             self.assertEqual(len(cmds2), len(cmds))
             self.assertTrue(_already_installed(s2))
+            gs2 = _load_settings(global_settings_path)
+            ups2 = gs2.get("hooks", {}).get("UserPromptSubmit", [])
+            self.assertEqual(len(ups2), 1)  # idempotent — not added twice
 
     def test_watch_is_profile_aware(self):
         from mrtoken.watch import LiveMonitor
