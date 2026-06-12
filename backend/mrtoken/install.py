@@ -23,9 +23,11 @@ from mrtoken.datadir import resolve_db_path
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK_SCRIPT = os.path.join(os.path.dirname(HERE), "hooks", "on_stop.py")
 PROMPT_HOOK_SCRIPT = os.path.join(os.path.dirname(HERE), "hooks", "on_prompt_submit.py")
+COMPACT_HOOK_SCRIPT = os.path.join(os.path.dirname(HERE), "hooks", "on_pre_compact.py")
 SKILLS_SRC = os.path.join(os.path.dirname(HERE), "skills")  # backend/skills/<name>/SKILL.md
-HOOK_MARKER = "on_stop.py"             # idempotency sentinel for Stop hook
+HOOK_MARKER = "on_stop.py"                  # idempotency sentinel for Stop hook
 PROMPT_HOOK_MARKER = "on_prompt_submit.py"  # idempotency sentinel for UserPromptSubmit
+COMPACT_HOOK_MARKER = "on_pre_compact.py"   # idempotency sentinel for PreCompact
 
 
 def hook_command() -> str:
@@ -36,6 +38,11 @@ def hook_command() -> str:
 def prompt_hook_command() -> str:
     """The command Claude Code runs on UserPromptSubmit (per-turn HUD)."""
     return f"{sys.executable} {PROMPT_HOOK_SCRIPT}"
+
+
+def compact_hook_command() -> str:
+    """The command Claude Code runs on PreCompact."""
+    return f"{sys.executable} {COMPACT_HOOK_SCRIPT}"
 
 
 def install_skills(root: str) -> list[str]:
@@ -91,12 +98,30 @@ def _prompt_hook_already_installed(settings: dict) -> bool:
     return False
 
 
+def _compact_hook_already_installed(settings: dict) -> bool:
+    for entry in settings.get("hooks", {}).get("PreCompact", []) or []:
+        for h in entry.get("hooks", []) or []:
+            if COMPACT_HOOK_MARKER in str(h.get("command", "")):
+                return True
+    return False
+
+
 def _add_prompt_hook(settings: dict) -> dict:
     hooks = settings.setdefault("hooks", {})
     ups = hooks.setdefault("UserPromptSubmit", [])
     ups.append({
         "matcher": "",
         "hooks": [{"type": "command", "command": prompt_hook_command()}],
+    })
+    return settings
+
+
+def _add_compact_hook(settings: dict) -> dict:
+    hooks = settings.setdefault("hooks", {})
+    pre = hooks.setdefault("PreCompact", [])
+    pre.append({
+        "matcher": "",
+        "hooks": [{"type": "command", "command": compact_hook_command()}],
     })
     return settings
 
@@ -132,6 +157,7 @@ def init(project_root: str | None = None, settings_path: str | None = None,
         emit(f"  would install skills:       {', '.join('/'+s for s in skills) or '(none)'}")
         emit(f"  would add per-turn HUD:     {global_settings_path}")
         emit(f"    UserPromptSubmit command: {prompt_hook_command()}")
+        emit(f"    PreCompact command:       {compact_hook_command()}")
         return 0
 
     # 1 + 2: create the shared DB (connect() makes the dir, tables, view)
@@ -158,23 +184,31 @@ def init(project_root: str | None = None, settings_path: str | None = None,
             fh.write("\n")
         emit(f"  ✓ installed Stop hook: {settings_path}")
 
-    # 5: add UserPromptSubmit HUD hook to global Claude Code settings (idempotent)
+    # 5: add UserPromptSubmit + PreCompact hooks to global Claude Code settings (idempotent)
     global_settings = _load_settings(global_settings_path)
-    # remove any stale statusLine key from earlier installs
-    global_settings.pop("statusLine", None)
+    global_settings.pop("statusLine", None)  # remove stale key from earlier installs
+    changed = False
     if _prompt_hook_already_installed(global_settings):
         emit("  ✓ per-turn HUD hook already installed")
     else:
+        _add_prompt_hook(global_settings)
+        changed = True
+    if _compact_hook_already_installed(global_settings):
+        emit("  ✓ PreCompact hook already installed")
+    else:
+        _add_compact_hook(global_settings)
+        changed = True
+    if changed:
         backup = _backup(global_settings_path)
         if backup:
             emit(f"  ✓ backed up global settings: {os.path.basename(backup)}")
-        _add_prompt_hook(global_settings)
         os.makedirs(os.path.dirname(global_settings_path), exist_ok=True)
         with open(global_settings_path, "w", encoding="utf-8") as fh:
             json.dump(global_settings, fh, indent=2)
             fh.write("\n")
-        emit(f"  ✓ per-turn HUD hook set: {global_settings_path}")
-        emit(f"    command: {prompt_hook_command()}")
+        emit(f"  ✓ hooks installed:     {global_settings_path}")
+        emit(f"    UserPromptSubmit:    {prompt_hook_command()}")
+        emit(f"    PreCompact:          {compact_hook_command()}")
 
     emit("\n  Use Claude Code normally — sessions are ingested on Stop.")
     emit("  When a session bloats, run /mr-handoff to start fresh cleanly.")
