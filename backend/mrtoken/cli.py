@@ -118,6 +118,11 @@ def cmd_validate(args):
         print_report(report)
 
 
+def cmd_statusline(args):
+    from mrtoken.statusline import statusline_hud
+    sys.exit(statusline_hud(getattr(args, "session", None)))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mrtoken-transcript",
         description="Local-first token observability for AI agent workflows")
@@ -189,6 +194,10 @@ def main(argv=None):
     p_status.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
     p_status.add_argument("--db", dest="db_sub")
 
+    p_sl = sub.add_parser("statusline",
+        help="print one-line HUD for Claude Code's statusLine setting (no DB write)")
+    p_sl.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
+
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help(); return
@@ -200,7 +209,8 @@ def main(argv=None):
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch,
                 "init": cmd_init, "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
-                "migrate-data": cmd_migrate, "status": cmd_status}
+                "migrate-data": cmd_migrate, "status": cmd_status,
+                "statusline": cmd_statusline}
     dispatch[a.cmd](a)
 
 

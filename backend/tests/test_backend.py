@@ -196,6 +196,23 @@ class BackendTest(unittest.TestCase):
         self.assertIn("context window", joined)
         self.assertIn("Read returned", joined)
 
+    def test_live_monitor_snapshot_tracks_signals(self):
+        from mrtoken.watch import LiveMonitor
+        mon = LiveMonitor(emit=lambda _: None)
+        # assistant turn with large context + huge tool output
+        mon.feed({"type": "assistant", "message": {
+            "model": "claude-sonnet-4",
+            "usage": {"input_tokens": 5, "cache_read_input_tokens": 200_000,
+                      "output_tokens": 50},
+            "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}})
+        mon.feed({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "x" * 60_000}]}})
+        snap = mon.snapshot()
+        self.assertGreater(snap["context_now"], 0)
+        self.assertGreater(snap["cum_cost"], 0.0)
+        self.assertIn("context", snap["signals_fired"])
+        self.assertIn("huge_tool_output", snap["signals_fired"])
+
 
     def test_init_installs_hook_preserves_and_is_idempotent(self):
         from mrtoken.install import init, _load_settings, _already_installed

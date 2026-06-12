@@ -80,6 +80,9 @@ class LiveMonitor:
         self.bash_out_n = 0
         self.profile: str | None = None
         self.huge_threshold = HUGE_TOOL_CHARS
+        # structured state for statusline / snapshot consumers
+        self._context_now: int = 0
+        self.signals_fired: list[str] = []  # rule keys that fired, in order
 
     def _reclassify(self) -> None:
         if sum(self.tool_counts.values()) < 4:
@@ -115,7 +118,9 @@ class LiveMonitor:
             # context-size proxy: this call's whole input side ≈ current window
             window = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
                       + u.get("cache_creation_input_tokens", 0))
+            self._context_now = window
             if window >= CONTEXT_WARN_TOKENS and self._debounce("context"):
+                self.signals_fired.append("context")
                 self.emit(f"  ℹ context window ~{window//1000}k tokens — consider /compact "
                           "or a fresh session with a handoff summary")
 
@@ -155,6 +160,7 @@ class LiveMonitor:
                     # huge output just landed (profile-aware threshold)
                     if chars >= self.huge_threshold and self._debounce("huge_tool_output"):
                         prof = f" for {self.profile} profile" if self.profile else ""
+                        self.signals_fired.append("huge_tool_output")
                         self.emit(f"  ⚠ {name} returned ~{chars//4:,} tok ({self.huge_threshold//1000}k "
                                   f"threshold{prof}) — write large outputs to a file, pass a summary")
                     # error tracking
@@ -162,9 +168,21 @@ class LiveMonitor:
                         if self.errors_recent:
                             self.errors_recent[-1] = 1
                         if sum(self.errors_recent) >= RETRY_ERROR_TRIGGER and self._debounce("retry_loop"):
+                            self.signals_fired.append("retry_loop")
                             self.emit(f"  ⚠ {sum(self.errors_recent)} tool errors in the last "
                                       f"{len(self.errors_recent)} turns — likely a retry loop; "
                                       "stop and re-plan or reduce context")
+
+
+    def snapshot(self) -> dict:
+        """Return current monitor state (for statusline and other consumers)."""
+        return {
+            "model_calls": self.model_calls,
+            "cum_cost": self.cum_cost,
+            "profile": self.profile,
+            "context_now": self._context_now,
+            "signals_fired": list(self.signals_fired),
+        }
 
 
 def _iter_new_lines(path: str, offset: int) -> tuple[list[str], int]:
