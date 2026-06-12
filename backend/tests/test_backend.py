@@ -296,6 +296,25 @@ class BackendTest(unittest.TestCase):
         self.assertGreater(r["handoff"]["saving_per_future_call"], 0)
 
 
+    def test_re_read_loop_detects_repeated_reads(self):
+        from mrtoken.rules import rule_re_read_loop
+        conn, tid = make_trace()
+        # same Read (same input hash) 4 times = 3 redundant re-reads
+        for _ in range(4):
+            conn.execute("INSERT INTO tool_call(trace_id, tool_name, input_hash, output_tokens_est) "
+                         "VALUES(?,?,?,?)", (tid, "Read", "samehash", 1000))
+        # a one-off read should not count
+        conn.execute("INSERT INTO tool_call(trace_id, tool_name, input_hash, output_tokens_est) "
+                     "VALUES(?,?,?,?)", (tid, "Read", "otherhash", 500))
+        conn.commit()
+        recs = rule_re_read_loop(conn, tid)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["rule"], "re_read_loop")
+        import json
+        ev = json.loads(recs[0]["evidence_json"])
+        self.assertEqual(ev["redundant_reads"], 3)
+        self.assertEqual(ev["wasted_tokens_est"], 3000)
+
     def test_status_snapshot_flags_large_context(self):
         from mrtoken.status import status_snapshot
         conn, tid = make_trace()

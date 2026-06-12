@@ -260,12 +260,45 @@ def rule_fresh_handoff(conn, tid: int) -> list:
 
 # ── engine ────────────────────────────────────────────────────────────────────
 
+RE_READ_TRIGGER = 3          # same read repeated >= this many times = a re-read loop
+READ_TOOLS = {"read", "grep", "glob", "notebookread"}
+
+
+def rule_re_read_loop(conn, tid: int) -> list:
+    """Re-reading the same file/target wastes tokens AND bloats context — a top
+    dynamic-cost driver (Stanford agent-spend study: same task varies up to 30x by
+    re-reads). Detected privacy-cleanly: a repeated read produces the SAME input
+    hash, so we count duplicate (tool, input_hash) groups without storing paths."""
+    rows = conn.execute("""
+        SELECT LOWER(tool_name) name, COUNT(*) c, AVG(COALESCE(output_tokens_est,0)) avg_out
+        FROM tool_call WHERE trace_id=? AND input_hash IS NOT NULL
+        GROUP BY LOWER(tool_name), input_hash HAVING c >= ?
+    """, (tid, RE_READ_TRIGGER)).fetchall()
+    hits = [(n, c, a) for n, c, a in rows if n in READ_TOOLS]
+    if not hits:
+        return []
+    redundant = sum(c - 1 for _, c, _ in hits)              # the avoidable re-reads
+    wasted = int(sum((c - 1) * (a or 0) for _, c, a in hits))  # re-paid output tokens
+    by_tool = {}
+    for n, c, _ in hits:
+        by_tool[n] = by_tool.get(n, 0) + (c - 1)
+    sev = "warn" if wasted >= 2000 else "info"
+    return [_rec("re_read_loop", sev,
+                 f"{redundant} redundant re-read(s) of the same target "
+                 f"(~{wasted:,} tok re-paid into context). Read once and keep the result, "
+                 "or read targeted ranges instead of re-reading whole files.",
+                 {"redundant_reads": redundant, "wasted_tokens_est": wasted,
+                  "by_tool": by_tool, "distinct_targets": len(hits)},
+                 wasted or None)]
+
+
 ALL_RULES = [
     rule_repeated_context,
     rule_huge_tool_output,
     rule_retry_loop,
     rule_low_cache,
     rule_fresh_handoff,
+    rule_re_read_loop,
 ]
 
 
