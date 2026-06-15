@@ -58,17 +58,18 @@ def statusline_block() -> dict:
     return {"type": "command", "command": statusline_command(), "padding": 0}
 
 
-def install_skills(root: str) -> list[str]:
-    """Copy bundled MR Token skills into <root>/.claude/skills/. Returns names installed."""
+def install_skills(skills_root: str) -> list[str]:
+    """Copy bundled MR Token skills into <skills_root>/<name>/SKILL.md. Installed
+    GLOBALLY (~/.claude/skills) so /mr-* and the Stop-hook flywheel work in every
+    project, matching the global hooks — not just where init was run. Returns names."""
     if not os.path.isdir(SKILLS_SRC):
         return []
-    dest_root = os.path.join(root, ".claude", "skills")
     installed = []
     for name in sorted(os.listdir(SKILLS_SRC)):
         src = os.path.join(SKILLS_SRC, name, "SKILL.md")
         if not os.path.isfile(src):
             continue
-        dest_dir = os.path.join(dest_root, name)
+        dest_dir = os.path.join(skills_root, name)
         os.makedirs(dest_dir, exist_ok=True)
         shutil.copy2(src, os.path.join(dest_dir, "SKILL.md"))  # overwrite keeps it current
         installed.append(name)
@@ -162,12 +163,15 @@ def init(project_root: str | None = None, settings_path: str | None = None,
     skills = sorted(
         n for n in (os.listdir(SKILLS_SRC) if os.path.isdir(SKILLS_SRC) else [])
         if os.path.isfile(os.path.join(SKILLS_SRC, n, "SKILL.md")))
+    # skills go next to the global settings (~/.claude/skills) so /mr-* shows up
+    # in every project, not only where init ran
+    skills_root = os.path.join(os.path.dirname(global_settings_path), "skills")
 
     if dry_run:
         emit(f"  would create DB:            {db_path}")
         emit(f"  would edit settings:        {settings_path}")
         emit(f"  would add Stop hook:        {hook_command()}")
-        emit(f"  would install skills:       {', '.join('/'+s for s in skills) or '(none)'}")
+        emit(f"  would install skills:       {', '.join('/'+s for s in skills) or '(none)'} → {skills_root}")
         emit(f"  would edit global settings: {global_settings_path}")
         emit(f"    statusLine command:       {statusline_command()}")
         emit(f"    UserPromptSubmit command: {prompt_hook_command()}")
@@ -178,10 +182,10 @@ def init(project_root: str | None = None, settings_path: str | None = None,
     connect(db_path).close()
     emit(f"  ✓ database ready:      {db_path}")
 
-    # 3: install bundled skills (idempotent — overwrite keeps them current)
-    installed = install_skills(root)
+    # 3: install bundled skills GLOBALLY (idempotent — overwrite keeps them current)
+    installed = install_skills(skills_root)
     if installed:
-        emit(f"  ✓ installed skills:    {', '.join('/'+s for s in installed)}")
+        emit(f"  ✓ installed skills:    {', '.join('/'+s for s in installed)}  ({skills_root})")
 
     # 4: install the Stop hook, preserving everything
     settings = _load_settings(settings_path)

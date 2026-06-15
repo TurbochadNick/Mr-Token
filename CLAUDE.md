@@ -37,7 +37,8 @@ exists, fall back to **estimated** (events) otherwise.
   `backend/mrtoken/cli.py`. Commands: `init`, `ingest`, `report`, `list`,
   `subagents`, `fleet`, `export`, `validate`, `watch`, `handoff`, `why`, `roi`.
 - **Skills:** `backend/skills/<name>/SKILL.md` are bundled Claude Code skills;
-  `mrtoken-transcript init` installs them into a project's `.claude/skills/`.
+  `mrtoken-transcript init` installs them GLOBALLY into `~/.claude/skills/` (so
+  `/mr-*` and the Stop-hook flywheel work in every project, like the hooks do).
   `/mr-handoff` generates a fresh-session handoff; `/mr-why` diagnoses where a
   session's cost went.
 

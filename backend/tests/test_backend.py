@@ -238,9 +238,13 @@ class BackendTest(unittest.TestCase):
             self.assertIn("echo existing", cmds)
             self.assertTrue(any("on_stop.py" in c for c in cmds))
             self.assertTrue(os.path.exists(os.path.join(tmp, ".token-tithe", "token-tithe.db")))
-            # the /mr-handoff skill is installed project-local
+            # the /mr-handoff skill is installed GLOBALLY (next to global settings),
+            # so /mr-* works in every project, not just where init ran
+            global_skills = os.path.join(os.path.dirname(global_settings_path), "skills")
             self.assertTrue(os.path.exists(
-                os.path.join(tmp, ".claude", "skills", "mr-handoff", "SKILL.md")))
+                os.path.join(global_skills, "mr-handoff", "SKILL.md")))
+            self.assertFalse(os.path.exists(
+                os.path.join(tmp, ".claude", "skills", "mr-handoff")))  # no longer project-local
             # per-turn HUD hook + statusLine added to global settings
             gs = _load_settings(global_settings_path)
             self.assertTrue(_prompt_hook_already_installed(gs))
