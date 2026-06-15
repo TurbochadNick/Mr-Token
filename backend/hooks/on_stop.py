@@ -17,18 +17,6 @@ if BACKEND_ROOT not in sys.path:
 PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
-def _dbg(msg: str) -> None:
-    """Append a diagnostic line so we can confirm which hooks actually fire."""
-    try:
-        from datetime import datetime
-        d = os.path.expanduser("~/.mrtoken")
-        os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "hook-debug.log"), "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat(timespec='seconds')} [Stop] {msg}\n")
-    except Exception:
-        pass
-
-
 def find_transcripts(session_id: str) -> list[str]:
     """Return main transcript + any subagent transcripts for this session."""
     paths = []
@@ -49,7 +37,6 @@ def main():
         payload = {}
 
     session_id = payload.get("session_id", "")
-    _dbg(f"fired session_id={session_id[:8] or '(none)'} cwd={payload.get('cwd','')}")
     if not session_id:
         # nothing to do — hook fired without a session_id
         sys.exit(0)
@@ -108,12 +95,11 @@ def main():
                 rec_line = f"  ·  [{rule}] {short}"
 
         message = (hud or f"mr · {totals['model_calls']} calls") + rec_line
-        _dbg(f"emit systemMessage: {message[:120]}")
-        # Emit as a structured systemMessage (the only hook output the UI renders).
+        # Emit as a structured systemMessage (renders in the terminal CLI; the
+        # desktop GUI app runs the hook for ingestion but does not surface this).
         print(json.dumps({"systemMessage": message}))
 
     except Exception as e:
-        _dbg(f"error: {e}")
         # never crash Claude Code — silent fail, log to stderr
         print(f"mrtoken hook error: {e}", file=sys.stderr)
         sys.exit(0)

@@ -9,8 +9,10 @@ Typical output:
   mr · ctx 42% · ~$0.18 · research
   mr · no session
 
-Registered in Claude Code settings.json as `statusLine` — runs on every turn.
-Reads only, never writes. Must exit quickly.
+Registered in Claude Code settings.json as `statusLine` (object form). NOTE:
+statusLine is a TERMINAL-CLI feature — it renders in the bottom status line of
+`claude` running in a terminal. The Claude desktop GUI app ignores it (no status
+line to populate). Reads only, never writes. Must exit quickly.
 """
 from __future__ import annotations
 import json
