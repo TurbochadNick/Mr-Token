@@ -14,6 +14,7 @@ current project. `--once` replays the existing transcript once and exits
 
 Live signals (cheap, incremental, debounced):
   • huge tool output just landed   → offload to a file
+  • same target re-read 3×+        → keep the first result, read ranges not files
   • tool errors clustering         → likely retry loop, stop and re-plan
   • context window getting large   → /compact or fresh handoff
   • cost milestones crossed        → informational ($ is API-equivalent estimate)
@@ -33,7 +34,8 @@ CONTEXT_WARN_TOKENS = 150_000     # current window size proxy → suggest compac
 # instead of every fixed increment (which spams on expensive sessions)
 COST_MILESTONES = [5, 25, 50, 100, 250, 500, 1000, 2000, 5000]
 
-DEBOUNCE_S = {"huge_tool_output": 20, "retry_loop": 60, "context": 120}
+DEBOUNCE_S = {"huge_tool_output": 20, "retry_loop": 60, "context": 120,
+              "re_read_loop": 90}  # re-reads accumulate slowly — don't spam
 
 
 def _load_prices():
@@ -83,6 +85,16 @@ class LiveMonitor:
         # structured state for statusline / snapshot consumers
         self._context_now: int = 0
         self.signals_fired: list[str] = []  # rule keys that fired, in order
+        # re-read tracking — privacy-clean, mirrors the retrospective re_read_loop
+        # rule: identical read input → identical hash, so we count duplicate
+        # (tool, input_hash) groups live without ever storing a path.
+        from mrtoken.ingest import sha as _sha
+        from mrtoken.rules import READ_TOOLS, RE_READ_TRIGGER
+        self._sha = _sha
+        self._read_tools = READ_TOOLS
+        self._re_read_trigger = RE_READ_TRIGGER
+        self.pending_read_hash: dict[str, tuple[str, str]] = {}  # tool_use_id -> (tool, hash)
+        self.read_groups: dict[tuple[str, str], dict] = {}       # (tool, hash) -> counters
 
     def _reclassify(self) -> None:
         if sum(self.tool_counts.values()) < 4:
@@ -98,6 +110,27 @@ class LiveMonitor:
         if profile != prev:
             self.emit(f"  · profile: {profile} — thresholds calibrated "
                       f"(huge-output ≥ {self.huge_threshold//1000}k tok)")
+
+    def _track_read(self, block: dict, key: str) -> None:
+        """Count repeated reads of the same target and warn on the Nth one.
+        Fires when the same read is *requested* RE_READ_TRIGGER times — the
+        timeliest moment to nudge, before paying for yet another identical result.
+        Wasted-token estimate uses the already-completed identical reads."""
+        if key not in self._read_tools:
+            return
+        h = self._sha(json.dumps(block.get("input", {})))
+        self.pending_read_hash[block.get("id")] = (key, h)
+        g = self.read_groups.setdefault((key, h), {"req": 0, "done": 0, "out_tok": 0})
+        g["req"] += 1
+        if g["req"] >= self._re_read_trigger and self._debounce("re_read_loop"):
+            self.signals_fired.append("re_read_loop")
+            redundant = g["req"] - 1
+            avg = (g["out_tok"] / g["done"]) if g["done"] else 0
+            wasted = int(redundant * avg)
+            wtok = f", ~{wasted:,} tok re-paid into context" if wasted else ""
+            self.emit(f"  ⚠ re-read the same {key} target {g['req']}× "
+                      f"({redundant} redundant{wtok}) — read once and keep the "
+                      "result, or read targeted ranges instead of whole files")
 
     def _debounce(self, key: str) -> bool:
         now = time.time()
@@ -139,6 +172,7 @@ class LiveMonitor:
                     self.pending_tools[b.get("id")] = name
                     key = (name or "").lower()
                     self.tool_counts[key] = self.tool_counts.get(key, 0) + 1
+                    self._track_read(b, key)
             self._reclassify()
             self.errors_recent.append(0)  # placeholder, may flip on tool_result
             if len(self.errors_recent) > RECENT_ERROR_WINDOW:
@@ -157,6 +191,12 @@ class LiveMonitor:
                     if (name or "").lower() == "bash":
                         self.bash_out_total += chars
                         self.bash_out_n += 1
+                    # a read completed — credit its output tokens to its re-read group
+                    rh = self.pending_read_hash.pop(tuid, None)
+                    if rh is not None:
+                        g = self.read_groups.setdefault(rh, {"req": 0, "done": 0, "out_tok": 0})
+                        g["done"] += 1
+                        g["out_tok"] += chars // 4
                     # huge output just landed (profile-aware threshold)
                     if chars >= self.huge_threshold and self._debounce("huge_tool_output"):
                         prof = f" for {self.profile} profile" if self.profile else ""

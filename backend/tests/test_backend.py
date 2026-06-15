@@ -258,6 +258,34 @@ class BackendTest(unittest.TestCase):
             ups2 = gs2.get("hooks", {}).get("UserPromptSubmit", [])
             self.assertEqual(len(ups2), 1)  # idempotent — not added twice
 
+    def test_live_monitor_detects_re_read_loop(self):
+        from mrtoken.watch import LiveMonitor
+        out = []
+        mon = LiveMonitor(emit=out.append)
+        # read the SAME target (identical input → identical hash) 3 times
+        same_input = {"file_path": "/repo/big.py"}
+        for i in range(3):
+            mon.feed({"type": "assistant", "message": {
+                "model": "claude-sonnet-4", "usage": {"input_tokens": 1, "output_tokens": 1},
+                "content": [{"type": "tool_use", "id": f"r{i}", "name": "Read",
+                             "input": same_input}]}})
+            mon.feed({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"r{i}", "content": "y" * 8000}]}})
+        joined = "\n".join(out)
+        self.assertIn("re-read the same read target", joined)
+        self.assertIn("re_read_loop", mon.snapshot()["signals_fired"])
+
+    def test_live_monitor_distinct_reads_dont_trigger(self):
+        from mrtoken.watch import LiveMonitor
+        mon = LiveMonitor(emit=lambda _: None)
+        # three reads of DIFFERENT targets → distinct hashes → no loop
+        for i in range(3):
+            mon.feed({"type": "assistant", "message": {
+                "model": "claude-sonnet-4", "usage": {"input_tokens": 1, "output_tokens": 1},
+                "content": [{"type": "tool_use", "id": f"d{i}", "name": "Read",
+                             "input": {"file_path": f"/repo/file{i}.py"}}]}})
+        self.assertNotIn("re_read_loop", mon.snapshot()["signals_fired"])
+
     def test_watch_is_profile_aware(self):
         from mrtoken.watch import LiveMonitor
         out = []
