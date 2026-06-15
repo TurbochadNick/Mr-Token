@@ -17,6 +17,18 @@ if BACKEND_ROOT not in sys.path:
 PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
+def _dbg(msg: str) -> None:
+    """Append a diagnostic line so we can confirm which hooks actually fire."""
+    try:
+        from datetime import datetime
+        d = os.path.expanduser("~/.mrtoken")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "hook-debug.log"), "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} [Stop] {msg}\n")
+    except Exception:
+        pass
+
+
 def find_transcripts(session_id: str) -> list[str]:
     """Return main transcript + any subagent transcripts for this session."""
     paths = []
@@ -37,6 +49,7 @@ def main():
         payload = {}
 
     session_id = payload.get("session_id", "")
+    _dbg(f"fired session_id={session_id[:8] or '(none)'} cwd={payload.get('cwd','')}")
     if not session_id:
         # nothing to do — hook fired without a session_id
         sys.exit(0)
@@ -66,18 +79,20 @@ def main():
             totals["recs"]        += len(recs)
             totals["high"]        += sum(1 for rc in recs if rc["severity"] == "high")
 
-        # one-line summary printed to Claude Code transcript footer
-        high_str = f"  {totals['high']} high-priority" if totals["high"] else ""
-        print(
-            f"mrtoken ✓  {totals['model_calls']} calls · "
-            f"{totals['recs']} recommendations{high_str}"
-            f"  →  mrtoken-transcript report {session_id[:8]}"
-        )
+        # Build the HUD line for the just-finished turn (context %, cost, profile,
+        # top signal). The Stop hook fires per-turn in the desktop app, so this is
+        # our live status surface there.
+        hud = None
+        try:
+            from mrtoken.statusline import build_statusline_text
+            hud = build_statusline_text(session_id)
+        except Exception:
+            hud = None
 
-        # if high-priority recommendations exist, surface the first message
+        # Append the top high-priority recommendation, if any.
+        rec_line = ""
         if totals["high"]:
-            conn2 = conn  # same connection
-            first_high = conn2.execute("""
+            first_high = conn.execute("""
                 SELECT r.rule, r.message FROM recommendation r
                 JOIN trace t ON t.id = r.trace_id
                 WHERE t.session_id=? AND r.severity='high'
@@ -89,11 +104,16 @@ def main():
             """, (session_id,)).fetchone()
             if first_high:
                 rule, msg = first_high
-                # truncate for terminal display
-                short = msg[:120] + "…" if len(msg) > 120 else msg
-                print(f"  [{rule}] {short}")
+                short = msg[:160] + "…" if len(msg) > 160 else msg
+                rec_line = f"  ·  [{rule}] {short}"
+
+        message = (hud or f"mr · {totals['model_calls']} calls") + rec_line
+        _dbg(f"emit systemMessage: {message[:120]}")
+        # Emit as a structured systemMessage (the only hook output the UI renders).
+        print(json.dumps({"systemMessage": message}))
 
     except Exception as e:
+        _dbg(f"error: {e}")
         # never crash Claude Code — silent fail, log to stderr
         print(f"mrtoken hook error: {e}", file=sys.stderr)
         sys.exit(0)

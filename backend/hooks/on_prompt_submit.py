@@ -14,6 +14,18 @@ if BACKEND_ROOT not in sys.path:
     sys.path.insert(0, BACKEND_ROOT)
 
 
+def _dbg(msg: str) -> None:
+    """Append a diagnostic line so we can confirm this hook actually fires."""
+    try:
+        from datetime import datetime
+        d = os.path.expanduser("~/.mrtoken")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "hook-debug.log"), "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} [UserPromptSubmit] {msg}\n")
+    except Exception:
+        pass
+
+
 def main():
     raw = sys.stdin.read().strip()
     try:
@@ -29,10 +41,11 @@ def main():
     try:
         from mrtoken.statusline import build_statusline_text
         line = build_statusline_text()
+        _dbg(f"fired cwd={cwd or ''} emit={line!r}")
         if line:
             print(json.dumps({"systemMessage": line}))
-    except Exception:
-        pass  # never block the prompt
+    except Exception as e:
+        _dbg(f"error: {e}")  # never block the prompt
 
     sys.exit(0)
 
