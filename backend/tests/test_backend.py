@@ -304,6 +304,9 @@ class BackendTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "package.json"), "w") as h:
                 h.write("{}")
+            real = os.path.join(tmp, "auth.py")
+            with open(real, "w") as h:
+                h.write("# real file\n")
             transcript = os.path.join(tmp, "sess-handoff.jsonl")
             write_jsonl(transcript, [
                 {"type": "user", "timestamp": "2026-06-01T00:00:00Z",
@@ -312,8 +315,11 @@ class BackendTest(unittest.TestCase):
                  "timestamp": "2026-06-01T00:00:01Z", "cwd": tmp,
                  "message": {"model": "claude-sonnet-4",
                              "usage": {"input_tokens": 10, "output_tokens": 5},
-                             "content": [{"type": "tool_use", "id": "t1", "name": "Write",
-                                          "input": {"file_path": "/proj/auth.py"}}]}},
+                             "content": [
+                                 {"type": "tool_use", "id": "t1", "name": "Write",
+                                  "input": {"file_path": real}},
+                                 {"type": "tool_use", "id": "t2", "name": "Edit",
+                                  "input": {"file_path": "/proj/gone.py"}}]}},
                 {"type": "user", "timestamp": "2026-06-01T00:00:02Z",
                  "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
                                           "content": "ok"}]}},
@@ -322,9 +328,43 @@ class BackendTest(unittest.TestCase):
             ])
             db = os.path.join(tmp, ".token-tithe", "token-tithe.db")
             md = build_handoff(db, transcript)
-            self.assertIn("Add OAuth login", md)            # goal = first prompt
-            self.assertIn("now add refresh tokens", md)     # last request
-            self.assertIn("/proj/auth.py", md)              # changed file
+            self.assertIn("now add refresh tokens", md)   # goal = most recent request
+            self.assertIn(real, md)                       # edited file that still exists
+            self.assertNotIn("/proj/gone.py", md)         # stale path filtered out
+
+    def test_handoff_prefers_title_and_filters_stale(self):
+        from mrtoken.handoff import _scan_transcript, build_handoff
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            f1 = os.path.join(tmp, "first.py"); f2 = os.path.join(tmp, "second.py")
+            for f in (f1, f2):
+                with open(f, "w") as h:
+                    h.write("x\n")
+            transcript = os.path.join(tmp, "sess.jsonl")
+            write_jsonl(transcript, [
+                {"type": "ai-title", "aiTitle": "Build the CRM engine"},
+                {"type": "user", "message": {"content": "continue harkable"}},  # stale opener
+                {"type": "assistant", "sessionId": "sess", "uuid": "a1", "cwd": tmp,
+                 "message": {"model": "claude-sonnet-4",
+                             "usage": {"input_tokens": 1, "output_tokens": 1},
+                             "content": [
+                                 {"type": "tool_use", "id": "t1", "name": "Write",
+                                  "input": {"file_path": f1}},
+                                 {"type": "tool_use", "id": "t2", "name": "Edit",
+                                  "input": {"file_path": "/gone/old.py"}},
+                                 {"type": "tool_use", "id": "t3", "name": "Edit",
+                                  "input": {"file_path": f2}}]}},
+                {"type": "user", "message": {"content": "wire up the pipeline endpoint"}},
+            ])
+            db = os.path.join(tmp, ".token-tithe", "token-tithe.db")
+            # recency-ordered + existence-filtered: f2 (last touched) first, no stale
+            self.assertEqual(_scan_transcript(transcript)["changed_files"], [f2, f1])
+            md = build_handoff(db, transcript)
+            self.assertIn("Build the CRM engine", md)          # title wins the Goal
+            self.assertIn("wire up the pipeline endpoint", md)  # shown as "where I left off"
+            self.assertNotIn("continue harkable", md)          # stale opener never surfaces
+            self.assertNotIn("/gone/old.py", md)               # stale path filtered
 
 
     def test_why_names_dominant_cost_shape(self):
