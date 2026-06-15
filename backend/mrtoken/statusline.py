@@ -36,11 +36,18 @@ def _top_signal(signals: list[str]) -> str | None:
     return best
 
 
-def build_statusline_text(session_arg: str | None = None) -> str | None:
-    """Return the HUD string, or None if no active session found."""
+def build_statusline_text(session_arg: str | None = None,
+                          transcript_path: str | None = None) -> str | None:
+    """Return the HUD string, or None if no active session found.
+
+    If transcript_path is given (the statusLine protocol hands us the exact
+    file on stdin), use it directly — far more accurate than newest-mtime.
+    """
+    import os
     from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
 
-    path = resolve_path(session_arg)
+    path = transcript_path if (transcript_path and os.path.isfile(transcript_path)) \
+        else resolve_path(session_arg)
     if not path:
         return None
 
@@ -76,5 +83,25 @@ def build_statusline_text(session_arg: str | None = None) -> str | None:
 
 
 def statusline_hud(session_arg: str | None = None) -> int:
-    print(build_statusline_text(session_arg) or "mr · no session")
+    """Entry point for the `statusLine` setting.
+
+    Claude Code pipes a JSON payload on stdin describing the current session
+    (session_id, transcript_path, cwd, model). We read transcript_path from it
+    so the line reflects THIS session, not the newest file on disk.
+    """
+    import os, sys
+    transcript_path = None
+    try:
+        raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+        if raw.strip():
+            payload = json.loads(raw)
+            transcript_path = payload.get("transcript_path")
+            cwd = (payload.get("cwd")
+                   or (payload.get("workspace") or {}).get("current_dir"))
+            if cwd and os.path.isdir(cwd):
+                os.chdir(cwd)
+    except Exception:
+        pass
+
+    print(build_statusline_text(session_arg, transcript_path) or "mr · no session")
     return 0

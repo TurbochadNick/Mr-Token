@@ -241,10 +241,11 @@ class BackendTest(unittest.TestCase):
             # the /mr-handoff skill is installed project-local
             self.assertTrue(os.path.exists(
                 os.path.join(tmp, ".claude", "skills", "mr-handoff", "SKILL.md")))
-            # per-turn HUD hook added to global settings
+            # per-turn HUD hook + statusLine added to global settings
             gs = _load_settings(global_settings_path)
             self.assertTrue(_prompt_hook_already_installed(gs))
-            self.assertNotIn("statusLine", gs)  # stale key must not appear
+            self.assertEqual(gs["statusLine"]["type"], "command")  # object form, not bare string
+            self.assertIn("statusline", gs["statusLine"]["command"])
 
             # idempotent: second run adds nothing extra
             init(project_root=tmp, global_settings_path=global_settings_path,

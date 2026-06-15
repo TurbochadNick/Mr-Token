@@ -45,6 +45,19 @@ def compact_hook_command() -> str:
     return f"{sys.executable} {COMPACT_HOOK_SCRIPT}"
 
 
+def statusline_command() -> str:
+    """The command the statusLine setting runs each refresh (ambient HUD bar)."""
+    exe = shutil.which("mrtoken-transcript")
+    if exe:
+        return f"{exe} statusline"
+    return f"{sys.executable} -m mrtoken statusline"
+
+
+def statusline_block() -> dict:
+    """The statusLine value in the object form Claude Code expects."""
+    return {"type": "command", "command": statusline_command(), "padding": 0}
+
+
 def install_skills(root: str) -> list[str]:
     """Copy bundled MR Token skills into <root>/.claude/skills/. Returns names installed."""
     if not os.path.isdir(SKILLS_SRC):
@@ -155,7 +168,8 @@ def init(project_root: str | None = None, settings_path: str | None = None,
         emit(f"  would edit settings:        {settings_path}")
         emit(f"  would add Stop hook:        {hook_command()}")
         emit(f"  would install skills:       {', '.join('/'+s for s in skills) or '(none)'}")
-        emit(f"  would add per-turn HUD:     {global_settings_path}")
+        emit(f"  would edit global settings: {global_settings_path}")
+        emit(f"    statusLine command:       {statusline_command()}")
         emit(f"    UserPromptSubmit command: {prompt_hook_command()}")
         emit(f"    PreCompact command:       {compact_hook_command()}")
         return 0
@@ -184,10 +198,20 @@ def init(project_root: str | None = None, settings_path: str | None = None,
             fh.write("\n")
         emit(f"  ✓ installed Stop hook: {settings_path}")
 
-    # 5: add UserPromptSubmit + PreCompact hooks to global Claude Code settings (idempotent)
+    # 5: set the statusLine (ambient HUD bar) + UserPromptSubmit/PreCompact hooks
+    # in global Claude Code settings (idempotent). statusLine is the primary
+    # surface; the hooks are belt-and-suspenders for clients that render them.
     global_settings = _load_settings(global_settings_path)
-    global_settings.pop("statusLine", None)  # remove stale key from earlier installs
     changed = False
+
+    desired_sl = statusline_block()
+    if global_settings.get("statusLine") != desired_sl:
+        global_settings["statusLine"] = desired_sl  # object form (string form is ignored)
+        changed = True
+        emit("  ✓ statusLine HUD bar set (object form)")
+    else:
+        emit("  ✓ statusLine already set")
+
     if _prompt_hook_already_installed(global_settings):
         emit("  ✓ per-turn HUD hook already installed")
     else:
@@ -206,9 +230,9 @@ def init(project_root: str | None = None, settings_path: str | None = None,
         with open(global_settings_path, "w", encoding="utf-8") as fh:
             json.dump(global_settings, fh, indent=2)
             fh.write("\n")
-        emit(f"  ✓ hooks installed:     {global_settings_path}")
-        emit(f"    UserPromptSubmit:    {prompt_hook_command()}")
-        emit(f"    PreCompact:          {compact_hook_command()}")
+        emit(f"  ✓ global settings written: {global_settings_path}")
+        emit(f"    statusLine:    {statusline_command()}")
+        emit(f"    UserPromptSubmit / PreCompact hooks also installed")
 
     emit("\n  Use Claude Code normally — sessions are ingested on Stop.")
     emit("  When a session bloats, run /mr-handoff to start fresh cleanly.")
