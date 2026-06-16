@@ -262,6 +262,24 @@ class BackendTest(unittest.TestCase):
             ups2 = gs2.get("hooks", {}).get("UserPromptSubmit", [])
             self.assertEqual(len(ups2), 1)  # idempotent — not added twice
 
+    def test_init_warns_before_replacing_existing_statusline(self):
+        from mrtoken.install import init, _load_settings
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            gpath = os.path.join(tmp, "global-settings.json")
+            with open(gpath, "w") as h:  # user already has their own statusLine
+                json.dump({"statusLine": {"type": "command", "command": "my-bar"}}, h)
+            out = []
+            init(project_root=tmp, global_settings_path=gpath, emit=out.append)
+            joined = "\n".join(out)
+            self.assertIn("replacing your existing statusLine", joined)
+            gs = _load_settings(gpath)
+            self.assertIn("statusline", gs["statusLine"]["command"])  # ours installed
+            # and a backup of the old settings exists to restore from
+            self.assertTrue(any(f.startswith("global-settings.json.mrtoken-bak")
+                                for f in os.listdir(tmp)))
+
     def test_live_monitor_detects_re_read_loop(self):
         from mrtoken.watch import LiveMonitor
         out = []

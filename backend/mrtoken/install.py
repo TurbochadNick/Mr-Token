@@ -209,7 +209,13 @@ def init(project_root: str | None = None, settings_path: str | None = None,
     changed = False
 
     desired_sl = statusline_block()
-    if global_settings.get("statusLine") != desired_sl:
+    existing_sl = global_settings.get("statusLine")
+    if existing_sl != desired_sl:
+        # warn before clobbering a status bar the user already had — the whole
+        # settings file is backed up just below, so the old one is recoverable
+        if existing_sl and statusline_command() not in json.dumps(existing_sl):
+            emit("  ⚠ replacing your existing statusLine with MR Token's HUD "
+                 "(restore it from the .mrtoken-bak backup written below)")
         global_settings["statusLine"] = desired_sl  # object form (string form is ignored)
         changed = True
         emit("  ✓ statusLine HUD bar set (object form)")
