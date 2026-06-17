@@ -64,6 +64,8 @@ def export_report(conn: sqlite3.Connection, prefix: str | None = None,
             {"rule": r[0], "severity": r[1], "message": r[2], "est_savings_tokens": r[3]}
             for r in recs
         ]
+    from mrtoken import __version__
     return json.dumps({"schema": "mrtoken.session_summary.v1",
+                       "tool_version": __version__,  # so a tester's export self-identifies
                        "redacted": redact,
                        "sessions": summaries}, indent=2)

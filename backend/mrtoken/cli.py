@@ -124,8 +124,10 @@ def cmd_statusline(args):
 
 
 def main(argv=None):
+    from mrtoken import __version__
     ap = argparse.ArgumentParser(prog="mrtoken-transcript",
         description="Local-first token observability for AI agent workflows")
+    ap.add_argument("--version", action="version", version=f"mrtoken-transcript {__version__}")
     ap.add_argument("--db", default=DEFAULT_DB, help="SQLite database (default: .token-tithe/token-tithe.db)")
     sub = ap.add_subparsers(dest="cmd")
 

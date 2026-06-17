@@ -280,6 +280,17 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(any(f.startswith("global-settings.json.mrtoken-bak")
                                 for f in os.listdir(tmp)))
 
+    def test_cli_reports_version(self):
+        import io, contextlib
+        from mrtoken.cli import main
+        from mrtoken import __version__
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            with self.assertRaises(SystemExit) as cm:
+                main(["--version"])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn(__version__, buf.getvalue())
+
     def test_init_accepts_dry_run_flag(self):
         # regression: QUICKSTART says `init --dry-run`, but the flag was named
         # --print and argparse rejected --dry-run with "unrecognized arguments"
@@ -327,6 +338,8 @@ class BackendTest(unittest.TestCase):
 
             doc = json.loads(export_report(conn, redact=True))
             red = doc["sessions"][0]
+            from mrtoken import __version__
+            self.assertEqual(doc["tool_version"], __version__)  # export self-identifies
             self.assertTrue(doc["redacted"])
             self.assertIsNone(red["title"])           # work-revealing fields stripped
             self.assertIsNone(red["project_path"])
