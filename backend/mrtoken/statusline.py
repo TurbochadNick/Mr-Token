@@ -17,8 +17,27 @@ line to populate). Reads only, never writes. Must exit quickly.
 from __future__ import annotations
 import json
 
-CONTEXT_MAX = 200_000   # current Claude context window (Sonnet/Opus/Haiku)
-CONTEXT_WARN_PCT = 70   # show ⚠ flag at this % or above
+CONTEXT_TIERS = (200_000, 1_000_000)  # known Claude context windows
+CONTEXT_WARN_PCT = 70                 # show ⚠ flag at this % of the window or above
+
+
+def context_window(context_now: int) -> int:
+    """Infer the model's context window from observed usage.
+
+    The transcript records the model as e.g. 'claude-opus-4-8' WITHOUT the [1m]
+    marker, so we can't read the window off the model id. But usage can never
+    exceed the window, so the smallest known tier that fits the observed size is
+    the window: a 1M-context session simply reveals itself the moment it passes
+    200k. This keeps `ctx %` honest on 1M models instead of pinning them at 99%.
+    Override with the MRTOKEN_CONTEXT_MAX env var if you need to."""
+    import os
+    env = os.environ.get("MRTOKEN_CONTEXT_MAX", "")
+    if env.isdigit() and int(env) > 0:
+        return int(env)
+    for tier in CONTEXT_TIERS:
+        if context_now <= tier:
+            return tier
+    return CONTEXT_TIERS[-1]
 
 _SIGNAL_LABELS: dict[str, str] = {
     "huge_tool_output": "huge output",
@@ -63,7 +82,7 @@ def build_statusline_text(session_arg: str | None = None,
 
     snap = mon.snapshot()
     ctx_now = snap["context_now"]
-    ctx_pct = min(99, int(ctx_now / CONTEXT_MAX * 100)) if ctx_now else 0
+    ctx_pct = min(99, int(ctx_now / context_window(ctx_now) * 100)) if ctx_now else 0
 
     parts = ["mr"]
 
@@ -77,7 +96,14 @@ def build_statusline_text(session_arg: str | None = None,
     if snap["profile"]:
         parts.append(snap["profile"])
 
-    top = _top_signal(snap["signals_fired"])
+    signals = snap["signals_fired"]
+    # "compact soon" is a live gauge of CURRENT fullness, not a historical event:
+    # suppress it if context is no longer high (e.g. a 1M session that passed
+    # through the 140–200k band, briefly looked like a full 200k window, and then
+    # revealed its real 1M window). retry/huge-output signals are real events, kept.
+    if ctx_pct < CONTEXT_WARN_PCT:
+        signals = [s for s in signals if s != "context"]
+    top = _top_signal(signals)
     if top:
         parts.append(f"⚠ {_SIGNAL_LABELS.get(top, top)}")
 

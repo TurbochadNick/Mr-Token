@@ -29,7 +29,10 @@ PROJECTS = os.path.expanduser("~/.claude/projects")
 HUGE_TOOL_CHARS = 40_000          # ~10k tok
 RECENT_ERROR_WINDOW = 8           # last N model calls
 RETRY_ERROR_TRIGGER = 3           # errors within window → warn
-CONTEXT_WARN_TOKENS = 150_000     # current window size proxy → suggest compaction
+# context warning is window-aware (see statusline.context_window): warn at
+# CONTEXT_WARN_PCT% of the inferred window, so a 1M-context session isn't told to
+# compact at 150k the way a fixed token floor would.
+from mrtoken.statusline import context_window, CONTEXT_WARN_PCT
 # escalating "notable" cost thresholds (USD) — emit once when each is crossed,
 # instead of every fixed increment (which spams on expensive sessions)
 COST_MILESTONES = [5, 25, 50, 100, 250, 500, 1000, 2000, 5000]
@@ -152,9 +155,10 @@ class LiveMonitor:
             window = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
                       + u.get("cache_creation_input_tokens", 0))
             self._context_now = window
-            if window >= CONTEXT_WARN_TOKENS and self._debounce("context"):
+            if window >= context_window(window) * CONTEXT_WARN_PCT / 100 and self._debounce("context"):
                 self.signals_fired.append("context")
-                self.emit(f"  ℹ context window ~{window//1000}k tokens — consider /compact "
+                pct = int(window / context_window(window) * 100)
+                self.emit(f"  ℹ context window ~{window//1000}k tokens ({pct}%) — consider /compact "
                           "or a fresh session with a handoff summary")
 
             # cost milestones — escalating ladder, each crossed once

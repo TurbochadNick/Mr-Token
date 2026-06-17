@@ -11,8 +11,7 @@ import os, sqlite3
 from mrtoken.ingest import connect, load_prices, ingest_file, default_db_path
 from mrtoken.rules import analyse
 from mrtoken.watch import resolve_path
-
-CONTEXT_LARGE = 150_000  # current-window tokens above which a reset is worth it
+from mrtoken.statusline import context_window, CONTEXT_WARN_PCT
 
 
 def _fmt(n) -> str:
@@ -29,13 +28,17 @@ def status_snapshot(conn: sqlite3.Connection, tid: int) -> dict:
         "SELECT input_tokens + cache_read_input_tokens + cache_creation_input_tokens "
         "FROM model_call WHERE trace_id=? ORDER BY timestamp DESC LIMIT 1", (tid,)).fetchone()
     context_now = (cur[0] if cur else 0) or 0
+    # "large" = past the warn threshold of the (inferred) window, matching the HUD,
+    # so a 1M session isn't called large at 32% the way a fixed 150k floor would
+    window = context_window(context_now)
+    context_large = context_now >= window * CONTEXT_WARN_PCT / 100
     top = conn.execute(
         "SELECT rule, severity, message FROM recommendation WHERE trace_id=? "
         "ORDER BY CASE rule WHEN 'fresh_handoff' THEN 0 WHEN 'retry_loop' THEN 1 ELSE 2 END, "
         "CASE severity WHEN 'high' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END LIMIT 1", (tid,)).fetchone()
     return {"profile": profile, "calls": calls or 0, "total_tokens": total_tok or 0,
             "est_cost": cost or 0.0, "cache_ratio": cache, "tool_errors": errs or 0,
-            "context_now": context_now, "context_large": context_now >= CONTEXT_LARGE,
+            "context_now": context_now, "context_large": context_large,
             "top": ({"rule": top[0], "severity": top[1], "message": top[2]} if top else None)}
 
 

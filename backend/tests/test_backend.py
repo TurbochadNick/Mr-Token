@@ -186,7 +186,7 @@ class BackendTest(unittest.TestCase):
         # an assistant turn with a huge context window
         mon.feed({"type": "assistant", "message": {
             "model": "claude-sonnet-4",
-            "usage": {"input_tokens": 5, "cache_read_input_tokens": 200_000,
+            "usage": {"input_tokens": 5, "cache_read_input_tokens": 180_000,
                       "output_tokens": 50},
             "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}})
         # the tool returns a huge result
@@ -202,7 +202,7 @@ class BackendTest(unittest.TestCase):
         # assistant turn with large context + huge tool output
         mon.feed({"type": "assistant", "message": {
             "model": "claude-sonnet-4",
-            "usage": {"input_tokens": 5, "cache_read_input_tokens": 200_000,
+            "usage": {"input_tokens": 5, "cache_read_input_tokens": 180_000,
                       "output_tokens": 50},
             "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}})
         mon.feed({"type": "user", "message": {"content": [
@@ -344,6 +344,18 @@ class BackendTest(unittest.TestCase):
             self.assertIsNone(red["title"])           # work-revealing fields stripped
             self.assertIsNone(red["project_path"])
             self.assertEqual(red["model_calls"], plain["model_calls"])  # metrics kept
+
+    def test_context_window_inferred_from_usage(self):
+        from mrtoken.statusline import context_window
+        self.assertEqual(context_window(150_000), 200_000)    # fits the 200k tier
+        self.assertEqual(context_window(199_999), 200_000)
+        self.assertEqual(context_window(319_000), 1_000_000)  # exceeds 200k -> 1M window
+        self.assertEqual(context_window(0), 200_000)
+        os.environ["MRTOKEN_CONTEXT_MAX"] = "500000"          # explicit override wins
+        try:
+            self.assertEqual(context_window(10), 500_000)
+        finally:
+            del os.environ["MRTOKEN_CONTEXT_MAX"]
 
     def test_live_monitor_detects_re_read_loop(self):
         from mrtoken.watch import LiveMonitor
@@ -501,15 +513,27 @@ class BackendTest(unittest.TestCase):
 
     def test_status_snapshot_flags_large_context(self):
         from mrtoken.status import status_snapshot
+        # 180k on a 200k window = 90% full -> large
         conn, tid = make_trace()
         conn.execute("INSERT INTO model_call(trace_id, timestamp, input_tokens, output_tokens, "
                      "cache_read_input_tokens) VALUES(?,?,?,?,?)",
-                     (tid, "2026-06-01T00:00:00Z", 100, 50, 200_000))
+                     (tid, "2026-06-01T00:00:00Z", 100, 50, 180_000))
         conn.commit()
         s = status_snapshot(conn, tid)
         self.assertEqual(s["calls"], 1)
-        self.assertTrue(s["context_large"])          # ~200k current window
-        self.assertGreaterEqual(s["context_now"], 200_000)
+        self.assertTrue(s["context_large"])          # 180k/200k = 90% -> large
+
+    def test_status_large_is_window_aware_on_1m(self):
+        # 360k can only occur on a >200k window, so it's a ~36%-full 1M session,
+        # NOT "large" — the bug that pinned 1M sessions at 99%/compact-soon
+        from mrtoken.status import status_snapshot
+        conn, tid = make_trace()
+        conn.execute("INSERT INTO model_call(trace_id, timestamp, input_tokens, output_tokens, "
+                     "cache_read_input_tokens) VALUES(?,?,?,?,?)",
+                     (tid, "2026-06-01T00:00:00Z", 100, 50, 360_000))
+        conn.commit()
+        s = status_snapshot(conn, tid)
+        self.assertFalse(s["context_large"])         # 360k/1M = 36% -> not large
 
     def test_datadir_non_project_routes_central_not_cwd(self):
         """The scatter-bug fix: a non-project cwd must NOT get a .token-tithe/."""
