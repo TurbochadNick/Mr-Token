@@ -1,49 +1,47 @@
-# Uninstall Mr Token
+# Uninstall / turn off MR Token
 
-## Remove Local Data
+## One command (reverses `init`)
 
-From the project root:
+```bash
+mrtoken-transcript uninstall
+```
+
+This removes everything `init` added and **preserves all your other Claude Code
+settings**, backing up each settings file first:
+
+- the project-local **Stop** hook from `.claude/settings.local.json`
+- the **statusLine** bar and the **UserPromptSubmit** + **PreCompact** hooks from
+  `~/.claude/settings.json`
+- the `/mr-handoff`, `/mr-status`, `/mr-why` skills from `~/.claude/skills/`
+  (keep them with `--keep-skills`)
+
+Run it once per project you ran `init` in (the global bits are only removed once).
+
+Nothing runs in the background, so once the hooks are removed, MR Token does
+nothing at all.
+
+## Remove the local data
+
+The metadata ledger is just a folder; delete it per project:
 
 ```bash
 rm -rf .token-tithe/
 ```
 
-## Remove Claude Hooks
-
-Open:
-
-```text
-.claude/settings.local.json
-```
-
-Remove hook entries whose command starts with:
-
-```text
-token-tithe watch --stdin
-```
-
-Keep unrelated Claude settings and hooks.
-
-## Restore Backup
-
-If `token-tithe init` created a backup, it will be next to the settings file:
-
-```text
-.claude/settings.local.json.<timestamp>.bak
-```
-
-Restore it manually:
+## Uninstall the package
 
 ```bash
-cp .claude/settings.local.json.<timestamp>.bak .claude/settings.local.json
+pip uninstall mrtoken
 ```
 
-## Unlink CLI
+## Restore a settings backup
 
-```bash
-npm unlink -g token-tithe
+`init` and `uninstall` write a timestamped backup next to any settings file they
+change:
+
+```text
+~/.claude/settings.json.mrtoken-bak.<timestamp>
+.claude/settings.local.json.mrtoken-bak.<timestamp>
 ```
 
-## Optional: Delete Clone
-
-If installed from a git clone, delete the cloned `token-tithe` repository after unlinking.
+Restore one by copying it back over the original.

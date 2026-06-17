@@ -262,6 +262,33 @@ class BackendTest(unittest.TestCase):
             ups2 = gs2.get("hooks", {}).get("UserPromptSubmit", [])
             self.assertEqual(len(ups2), 1)  # idempotent — not added twice
 
+    def test_uninstall_reverses_init_preserving_other_settings(self):
+        from mrtoken.install import init, uninstall, _load_settings, _already_installed
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            settings_path = os.path.join(tmp, ".claude", "settings.local.json")
+            os.makedirs(os.path.dirname(settings_path))
+            with open(settings_path, "w") as h:  # a Stop hook the user already had
+                json.dump({"permissions": {"allow": ["Bash(ls *)"]},
+                           "hooks": {"Stop": [{"matcher": "", "hooks": [
+                               {"type": "command", "command": "echo keepme"}]}]}}, h)
+            gpath = os.path.join(tmp, "global-settings.json")
+            init(project_root=tmp, global_settings_path=gpath, emit=lambda *_: None)
+            skills = os.path.join(os.path.dirname(gpath), "skills")
+            self.assertTrue(_already_installed(_load_settings(settings_path)))
+            self.assertTrue(os.path.exists(os.path.join(skills, "mr-handoff", "SKILL.md")))
+
+            uninstall(project_root=tmp, global_settings_path=gpath, emit=lambda *_: None)
+            s, g = _load_settings(settings_path), _load_settings(gpath)
+            self.assertFalse(_already_installed(s))                       # our Stop hook gone
+            cmds = [hh["command"] for e in s.get("hooks", {}).get("Stop", []) for hh in e["hooks"]]
+            self.assertIn("echo keepme", cmds)                            # user's hook preserved
+            self.assertEqual(s["permissions"]["allow"], ["Bash(ls *)"])   # other settings preserved
+            self.assertNotIn("statusLine", g)                            # global HUD gone
+            self.assertFalse(g.get("hooks", {}).get("UserPromptSubmit"))  # global hook gone
+            self.assertFalse(os.path.exists(os.path.join(skills, "mr-handoff")))  # skill removed
+
     def test_init_warns_before_replacing_existing_statusline(self):
         from mrtoken.install import init, _load_settings
         with tempfile.TemporaryDirectory() as tmp:

@@ -78,6 +78,12 @@ def cmd_init(args):
                   dry_run=args.print))
 
 
+def cmd_uninstall(args):
+    from mrtoken.install import uninstall
+    sys.exit(uninstall(project_root=args.project_root,
+                       remove_skills=not args.keep_skills))
+
+
 def cmd_watch(args):
     from mrtoken.watch import watch
     sys.exit(watch(args.session, interval=args.interval, once=args.once))
@@ -163,6 +169,12 @@ def main(argv=None):
     p_validate.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_validate.add_argument("--db", dest="db_sub")
 
+    p_uninstall = sub.add_parser("uninstall",
+        help="remove MR Token's hooks + statusLine + skills (reverse of init)")
+    p_uninstall.add_argument("--project-root", help="project root (default: auto-detect)")
+    p_uninstall.add_argument("--keep-skills", action="store_true",
+        help="leave the /mr-* skills installed")
+
     p_init = sub.add_parser("init",
         help="set up the backend in this project (DB + project-local Stop hook)")
     p_init.add_argument("--project-root", help="project root (default: auto-detect)")
@@ -213,7 +225,8 @@ def main(argv=None):
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch,
-                "init": cmd_init, "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
+                "init": cmd_init, "uninstall": cmd_uninstall,
+        "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,
                 "statusline": cmd_statusline}
     dispatch[a.cmd](a)

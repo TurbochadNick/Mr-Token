@@ -53,6 +53,29 @@ mrtoken-transcript init
 Run `mrtoken-transcript init --dry-run` first if you want to see exactly what it
 will touch.
 
+## What `init` changes (and how to turn it off)
+
+`init` adds Claude Code hooks so MR Token can see your sessions. They are all
+**read-only and 100% local**: they read the session transcript, write metadata to
+a local `.token-tithe/` folder, and print the HUD. They never modify your
+prompts, never block Claude, and never send anything anywhere. They only fire
+during a Claude Code session, there is no background process.
+
+| What | Where | What it does |
+|---|---|---|
+| **Stop** hook | `.claude/settings.local.json` (project) | After each turn, reads the transcript into the local DB and computes the HUD |
+| **statusLine** | `~/.claude/settings.json` (global) | Draws the bottom status bar (`mr · ctx 38% · …`) |
+| **UserPromptSubmit** hook | `~/.claude/settings.json` (global) | Shows the one-line HUD when you submit a prompt |
+| **PreCompact** hook | `~/.claude/settings.json` (global) | Suggests `/mr-handoff` right before Claude auto-compacts |
+| `/mr-*` skills | `~/.claude/skills/` (global) | The `/mr-status`, `/mr-why`, `/mr-handoff` commands |
+
+`init` backs up each settings file before editing and preserves your other
+hooks/settings. Turn all of it off any time with one command:
+
+```bash
+mrtoken-transcript uninstall      # see docs/UNINSTALL.md
+```
+
 ## Where you'll see it
 
 | You're using | What you get |

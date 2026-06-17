@@ -150,6 +150,78 @@ def _add_hook(settings: dict) -> dict:
     return settings
 
 
+def _strip_hooks(settings: dict, event: str, marker: str) -> int:
+    """Remove only the hooks for `event` whose command contains `marker`,
+    preserving any unrelated hooks. Drops a now-empty event. Returns count removed."""
+    events = settings.get("hooks", {})
+    entries = events.get(event)
+    if not entries:
+        return 0
+    removed, kept = 0, []
+    for entry in entries:
+        hs = entry.get("hooks", []) or []
+        keep = [h for h in hs if marker not in str(h.get("command", ""))]
+        removed += len(hs) - len(keep)
+        if keep:
+            entry["hooks"] = keep
+            kept.append(entry)
+    if kept:
+        events[event] = kept
+    else:
+        events.pop(event, None)
+    return removed
+
+
+def uninstall(project_root: str | None = None, settings_path: str | None = None,
+              global_settings_path: str | None = None, remove_skills: bool = True,
+              emit=print) -> int:
+    """Reverse of init: remove MR Token's hooks + statusLine (and the /mr-* skills)
+    from the project-local and global Claude Code settings. Backs up each file
+    first and preserves all your other settings. Leaves the local .token-tithe
+    data in place (delete it with `rm -rf .token-tithe`)."""
+    root = find_project_root(project_root)
+    settings_path = settings_path or os.path.join(root, ".claude", "settings.local.json")
+    global_settings_path = global_settings_path or os.path.expanduser("~/.claude/settings.json")
+
+    # project-local: the Stop hook
+    settings = _load_settings(settings_path)
+    if _already_installed(settings):
+        _backup(settings_path)
+        _strip_hooks(settings, "Stop", HOOK_MARKER)
+        with open(settings_path, "w", encoding="utf-8") as fh:
+            json.dump(settings, fh, indent=2); fh.write("\n")
+        emit(f"  ✓ removed Stop hook: {settings_path}")
+    else:
+        emit("  · no project Stop hook found")
+
+    # global: statusLine + UserPromptSubmit + PreCompact
+    g = _load_settings(global_settings_path)
+    changed = False
+    if statusline_command() in json.dumps(g.get("statusLine") or ""):
+        g.pop("statusLine", None); changed = True
+        emit("  ✓ removed statusLine HUD bar")
+    changed = bool(_strip_hooks(g, "UserPromptSubmit", PROMPT_HOOK_MARKER)) or changed
+    changed = bool(_strip_hooks(g, "PreCompact", COMPACT_HOOK_MARKER)) or changed
+    if changed:
+        _backup(global_settings_path)
+        with open(global_settings_path, "w", encoding="utf-8") as fh:
+            json.dump(g, fh, indent=2); fh.write("\n")
+        emit(f"  ✓ removed global hooks: {global_settings_path}")
+    else:
+        emit("  · no global hooks found")
+
+    if remove_skills:
+        skills_root = os.path.join(os.path.dirname(global_settings_path), "skills")
+        for name in ("mr-handoff", "mr-status", "mr-why"):
+            d = os.path.join(skills_root, name)
+            if os.path.isdir(d):
+                shutil.rmtree(d); emit(f"  ✓ removed skill /{name}")
+
+    emit("  done — other settings preserved; .token-tithe data left as-is "
+         "(rm -rf .token-tithe to remove it).")
+    return 0
+
+
 def init(project_root: str | None = None, settings_path: str | None = None,
          global_settings_path: str | None = None,
          dry_run: bool = False, emit=print) -> int:
