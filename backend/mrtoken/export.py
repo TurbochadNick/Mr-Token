@@ -38,10 +38,23 @@ def session_summaries(conn: sqlite3.Connection, prefix: str | None = None) -> li
     return [dict(zip(SUMMARY_COLUMNS, row)) for row in rows]
 
 
-def export_report(conn: sqlite3.Connection, prefix: str | None = None) -> str:
-    """Return a JSON document of session summaries + their recommendations."""
+# the only fields that reveal WHAT/WHERE you work; --redact nulls these so the
+# export is safe to share. All metrics + generic rule messages stay intact.
+IDENTIFYING_FIELDS = ("project_path", "title")
+
+
+def export_report(conn: sqlite3.Connection, prefix: str | None = None,
+                  redact: bool = False) -> str:
+    """Return a JSON document of session summaries + their recommendations.
+
+    redact=True drops project_path and title (the only work-revealing fields),
+    keeping every metric, the generic rule messages, and session_id (so a
+    recipient can still dedupe) — making the file safe to hand to anyone."""
     summaries = session_summaries(conn, prefix)
     for s in summaries:
+        if redact:
+            for f in IDENTIFYING_FIELDS:
+                s[f] = None
         recs = conn.execute(
             "SELECT rule, severity, message, est_savings_tokens FROM recommendation "
             "WHERE trace_id=? ORDER BY CASE severity WHEN 'high' THEN 0 "
@@ -52,4 +65,5 @@ def export_report(conn: sqlite3.Connection, prefix: str | None = None) -> str:
             for r in recs
         ]
     return json.dumps({"schema": "mrtoken.session_summary.v1",
+                       "redacted": redact,
                        "sessions": summaries}, indent=2)

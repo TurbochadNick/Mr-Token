@@ -206,8 +206,13 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
             etype = o.get("type")
             msg = o.get("message") if isinstance(o.get("message"), dict) else {}
 
-            if etype in ("custom-title", "ai-title") and not meta["title"]:
-                meta["title"] = o.get("title") or o.get("text")
+            # titles live under customTitle / aiTitle (not "title"); a human-set
+            # custom title wins, an ai-title only fills if none seen yet
+            if etype == "custom-title":
+                meta["title"] = (o.get("customTitle") or o.get("title")
+                                 or o.get("text") or meta["title"])
+            elif etype == "ai-title" and not meta["title"]:
+                meta["title"] = o.get("aiTitle") or o.get("title") or o.get("text")
 
             if etype == "assistant" and "usage" in msg:
                 u = msg["usage"]

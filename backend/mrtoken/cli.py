@@ -69,7 +69,7 @@ def cmd_fleet(args):
 
 def cmd_export(args):
     from mrtoken.export import export_report
-    print(export_report(_open(args.db), args.session))
+    print(export_report(_open(args.db), args.session, redact=getattr(args, "redact", False)))
 
 
 def cmd_init(args):
@@ -153,6 +153,8 @@ def main(argv=None):
         help="emit accurate per-session metrics as JSON (integration surface for the UI)")
     p_export.add_argument("session", nargs="?", help="session ID prefix")
     p_export.add_argument("--db", dest="db_sub")
+    p_export.add_argument("--redact", action="store_true",
+        help="drop project_path + title so the export is safe to share")
 
     p_validate = sub.add_parser("validate",
         help="corroborate fired recommendations (precision proxy, not labels)")

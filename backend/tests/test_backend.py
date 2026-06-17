@@ -280,6 +280,38 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(any(f.startswith("global-settings.json.mrtoken-bak")
                                 for f in os.listdir(tmp)))
 
+    def test_ingest_extracts_title_and_export_redacts(self):
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.rules import analyse
+        from mrtoken.export import export_report
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = os.path.join(tmp, "s.jsonl")
+            write_jsonl(transcript, [
+                {"type": "custom-title", "customTitle": "Secret Acme migration"},
+                {"type": "user", "message": {"content": "do the thing"}},
+                {"type": "assistant", "sessionId": "sx", "uuid": "a1",
+                 "cwd": "/Users/alice/secret-proj",
+                 "message": {"model": "claude-sonnet-4",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "ok"}]}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            r = ingest_file(conn, transcript, load_prices())
+            tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
+                               (r["session_id"],)).fetchone()[0]
+            analyse(conn, tid)
+
+            plain = json.loads(export_report(conn))["sessions"][0]
+            self.assertEqual(plain["title"], "Secret Acme migration")   # ingest reads customTitle
+            self.assertEqual(plain["project_path"], "/Users/alice/secret-proj")
+
+            doc = json.loads(export_report(conn, redact=True))
+            red = doc["sessions"][0]
+            self.assertTrue(doc["redacted"])
+            self.assertIsNone(red["title"])           # work-revealing fields stripped
+            self.assertIsNone(red["project_path"])
+            self.assertEqual(red["model_calls"], plain["model_calls"])  # metrics kept
+
     def test_live_monitor_detects_re_read_loop(self):
         from mrtoken.watch import LiveMonitor
         out = []
