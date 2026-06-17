@@ -14,17 +14,28 @@ minutes to install, then it runs passively while you work.
 - Python 3.10+
 - Claude Code (the CLI or the desktop app; see "Where you'll see it" below)
 
-## Install
+## Install (one command)
 
 ```bash
 git clone <repo-url> mr_token
 cd mr_token
-pip install -e backend/        # installs the `mrtoken-transcript` command
+./install.sh
 ```
 
-## Set it up in a project
+`install.sh` checks Python, installs the backend, sets up the hooks + `/mr-*`
+skills, and prints what to do next. Update later with `./update.sh`.
 
-From the root of a project you use Claude Code in:
+Prefer to do it by hand:
+
+```bash
+pip install -e backend/        # installs the `mrtoken-transcript` command
+mrtoken-transcript init        # hooks + skills + statusLine
+```
+
+## Per-project setup (optional)
+
+`install.sh` already enables the live HUD and `/mr-*` everywhere. To also get
+retrospective reports for a specific project, run this from its root:
 
 ```bash
 mrtoken-transcript init
