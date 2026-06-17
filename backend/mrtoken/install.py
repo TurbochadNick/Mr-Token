@@ -50,7 +50,11 @@ def statusline_command() -> str:
     exe = shutil.which("mrtoken-transcript")
     if exe:
         return f"{exe} statusline"
-    return f"{sys.executable} -m mrtoken statusline"
+    # No console script (e.g. installed from source without pip). Run the cli
+    # MODULE with the package dir on PYTHONPATH so it imports from any cwd. Note
+    # `-m mrtoken` only prints help; the runnable entry is `-m mrtoken.cli`.
+    pkg_parent = os.path.dirname(HERE)  # dir containing the mrtoken package
+    return f'PYTHONPATH="{pkg_parent}" {sys.executable} -m mrtoken.cli statusline'
 
 
 def statusline_block() -> dict:

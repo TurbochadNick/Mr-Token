@@ -262,6 +262,20 @@ class BackendTest(unittest.TestCase):
             ups2 = gs2.get("hooks", {}).get("UserPromptSubmit", [])
             self.assertEqual(len(ups2), 1)  # idempotent — not added twice
 
+    def test_statusline_command_source_fallback_is_runnable(self):
+        # when there's no console script (installed from source, no pip), the
+        # statusLine command must run the real entry, not `-m mrtoken` (help only)
+        import mrtoken.install as inst
+        real = inst.shutil.which
+        inst.shutil.which = lambda *_a, **_k: None
+        try:
+            cmd = inst.statusline_command()
+        finally:
+            inst.shutil.which = real
+        self.assertIn("-m mrtoken.cli statusline", cmd)
+        self.assertNotIn("-m mrtoken statusline", cmd)  # the help-only entry
+        self.assertIn("PYTHONPATH=", cmd)               # importable from any cwd
+
     def test_uninstall_reverses_init_preserving_other_settings(self):
         from mrtoken.install import init, uninstall, _load_settings, _already_installed
         with tempfile.TemporaryDirectory() as tmp:

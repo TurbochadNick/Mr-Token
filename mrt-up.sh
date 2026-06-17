@@ -3,7 +3,7 @@
 # Port owner per ~/Projects/PORTS.md.
 set -uo pipefail
 PORT="${MRT_PORT:-4317}"
-DIR="/Users/zacharynielsen/Projects/gate-pending/mr_token"
+DIR="$(cd "$(dirname "$0")" && pwd)"   # this repo, wherever it's checked out
 LOG="/tmp/mr_token.log"
 
 pid="$(lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
