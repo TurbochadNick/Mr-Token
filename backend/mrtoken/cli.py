@@ -165,7 +165,8 @@ def main(argv=None):
         help="set up the backend in this project (DB + project-local Stop hook)")
     p_init.add_argument("--project-root", help="project root (default: auto-detect)")
     p_init.add_argument("--settings", help="settings file (default: <root>/.claude/settings.local.json)")
-    p_init.add_argument("--print", action="store_true", help="dry run — show what would happen")
+    p_init.add_argument("--dry-run", "--print", dest="print", action="store_true",
+        help="dry run — show what would happen, write nothing")
 
     p_watch = sub.add_parser("watch", help="live in-session advice (tails the transcript)")
     p_watch.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")

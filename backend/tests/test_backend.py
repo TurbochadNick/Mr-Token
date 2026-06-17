@@ -280,6 +280,26 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(any(f.startswith("global-settings.json.mrtoken-bak")
                                 for f in os.listdir(tmp)))
 
+    def test_init_accepts_dry_run_flag(self):
+        # regression: QUICKSTART says `init --dry-run`, but the flag was named
+        # --print and argparse rejected --dry-run with "unrecognized arguments"
+        import io, contextlib
+        from mrtoken.cli import main
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                # cmd_init does sys.exit(rc); code 0 = parsed + dry-ran clean
+                # (an unrecognized flag would exit 2 instead)
+                for flag in ("--dry-run", "--print"):
+                    with self.assertRaises(SystemExit) as cm:
+                        main(["init", flag, "--project-root", tmp])
+                    self.assertEqual(cm.exception.code, 0)
+            out = buf.getvalue()
+        self.assertIn("would create DB", out)            # dry-run ran
+        self.assertFalse(os.path.exists(os.path.join(tmp, ".token-tithe")))  # wrote nothing
+
     def test_ingest_extracts_title_and_export_redacts(self):
         from mrtoken.ingest import connect, ingest_file, load_prices
         from mrtoken.rules import analyse
