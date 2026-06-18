@@ -28,7 +28,8 @@ def main():
 
     try:
         from mrtoken.statusline import build_statusline_text
-        line = build_statusline_text()
+        # use the EXACT transcript Claude Code handed us, not a newest-file guess
+        line = build_statusline_text(transcript_path=payload.get("transcript_path"))
         if line:
             print(json.dumps({"systemMessage": line}))
     except Exception:

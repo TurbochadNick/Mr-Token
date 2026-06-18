@@ -27,8 +27,10 @@ def main():
 
     try:
         from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
+        from mrtoken.statusline import context_window
 
-        path = resolve_path(None)
+        # use the EXACT transcript Claude Code handed us, not a newest-file guess
+        path = resolve_path(payload.get("transcript_path"))
         if not path:
             sys.exit(0)
 
@@ -42,7 +44,8 @@ def main():
 
         snap = mon.snapshot()
         has_handoff_signal = "context" in snap["signals_fired"]
-        ctx_pct = min(99, int(snap["context_now"] / 200_000 * 100)) if snap["context_now"] else 0
+        cn = snap["context_now"]
+        ctx_pct = min(99, int(cn / context_window(cn) * 100)) if cn else 0
 
         if has_handoff_signal or ctx_pct >= 70:
             msg = (

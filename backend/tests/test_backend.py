@@ -386,6 +386,30 @@ class BackendTest(unittest.TestCase):
             self.assertIsNone(red["project_path"])
             self.assertEqual(red["model_calls"], plain["model_calls"])  # metrics kept
 
+    def test_latest_transcript_prefers_session_over_newest(self):
+        # the K2 multi-agent trap: another agent's transcript is newer, but the
+        # CURRENT session (by env id) must win — not newest-mtime-across-projects
+        import mrtoken.watch as w
+        with tempfile.TemporaryDirectory() as tmp:
+            cur_d = os.path.join(tmp, "-proj-a"); other_d = os.path.join(tmp, "-proj-b")
+            os.makedirs(cur_d); os.makedirs(other_d)
+            cur = os.path.join(cur_d, "aaaa1111.jsonl")
+            other = os.path.join(other_d, "bbbb2222.jsonl")
+            for f in (cur, other):
+                with open(f, "w") as h:
+                    h.write("{}\n")
+            os.utime(cur, (1, 1))                      # current session OLDER
+            os.utime(other, (10**9, 10**9))            # other agent NEWER
+            real = w.PROJECTS
+            w.PROJECTS = tmp
+            os.environ["MRTOKEN_SESSION"] = "aaaa1111"
+            try:
+                # cwd that won't match either dir -> would fall to newest (other)
+                self.assertEqual(w.latest_transcript("/no/such/cwd"), cur)
+            finally:
+                w.PROJECTS = real
+                del os.environ["MRTOKEN_SESSION"]
+
     def test_context_window_inferred_from_usage(self):
         from mrtoken.statusline import context_window
         self.assertEqual(context_window(150_000), 200_000)    # fits the 200k tier

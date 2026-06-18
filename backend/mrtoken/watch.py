@@ -47,14 +47,23 @@ def _load_prices():
 
 
 def latest_transcript(cwd: str | None = None) -> str | None:
+    # The CURRENT session wins, even if another agent's transcript was written
+    # more recently. This is the multi-agent / K2 case: newest-mtime-across-all
+    # would otherwise grab a different agent's session. CLAUDE_CODE_SESSION_ID is
+    # set by Claude Code for CLI commands; MRTOKEN_SESSION overrides it.
+    sid = os.environ.get("MRTOKEN_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if sid:
+        hits = glob.glob(os.path.join(PROJECTS, "*", f"{sid}*.jsonl"))
+        if hits:
+            return max(hits, key=os.path.getmtime)
     cwd = cwd or os.getcwd()
     escaped = cwd.replace("/", "-").replace(".", "-")
     candidates = glob.glob(os.path.join(PROJECTS, escaped, "*.jsonl"))
-    if not candidates:
-        candidates = glob.glob(os.path.join(PROJECTS, "*", "*.jsonl"))
-    if not candidates:
-        return None
-    return max(candidates, key=os.path.getmtime)
+    if candidates:
+        return max(candidates, key=os.path.getmtime)
+    # last resort only (no session id, cwd dir empty): newest across all projects
+    candidates = glob.glob(os.path.join(PROJECTS, "*", "*.jsonl"))
+    return max(candidates, key=os.path.getmtime) if candidates else None
 
 
 def resolve_path(arg: str | None) -> str | None:
