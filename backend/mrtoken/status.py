@@ -28,9 +28,12 @@ def status_snapshot(conn: sqlite3.Connection, tid: int) -> dict:
         "SELECT input_tokens + cache_read_input_tokens + cache_creation_input_tokens "
         "FROM model_call WHERE trace_id=? ORDER BY timestamp DESC LIMIT 1", (tid,)).fetchone()
     context_now = (cur[0] if cur else 0) or 0
-    # "large" = past the warn threshold of the (inferred) window, matching the HUD,
-    # so a 1M session isn't called large at 32% the way a fixed 150k floor would
-    window = context_window(context_now)
+    # window from the session MAX (sticky/ratchet), not the latest call, so the
+    # "large" flag and inferred window don't flip when a call dips below a tier
+    mx = conn.execute(
+        "SELECT MAX(input_tokens + cache_read_input_tokens + cache_creation_input_tokens) "
+        "FROM model_call WHERE trace_id=?", (tid,)).fetchone()
+    window = context_window(max(context_now, (mx[0] if mx else 0) or 0))
     context_large = context_now >= window * CONTEXT_WARN_PCT / 100
     top = conn.execute(
         "SELECT rule, severity, message FROM recommendation WHERE trace_id=? "

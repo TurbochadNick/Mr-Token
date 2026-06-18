@@ -15,6 +15,20 @@ def write_jsonl(path, rows):
 
 
 class BackendTest(unittest.TestCase):
+    def setUp(self):
+        # window-inference tests must be deterministic regardless of any machine
+        # override (MRTOKEN_CONTEXT_MAX env or ~/.mrtoken/config.json)
+        import mrtoken.statusline as _sl
+        self._saved_env = os.environ.pop("MRTOKEN_CONTEXT_MAX", None)
+        self._saved_cfg = _sl._config_context_max
+        _sl._config_context_max = lambda: None
+
+    def tearDown(self):
+        import mrtoken.statusline as _sl
+        _sl._config_context_max = self._saved_cfg
+        if self._saved_env is not None:
+            os.environ["MRTOKEN_CONTEXT_MAX"] = self._saved_env
+
     def test_default_db_path_is_project_local(self):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "package.json"), "w", encoding="utf-8") as handle:
@@ -409,6 +423,31 @@ class BackendTest(unittest.TestCase):
             finally:
                 w.PROJECTS = real
                 del os.environ["MRTOKEN_SESSION"]
+
+    def test_context_window_config_override(self):
+        # a persistent override (config or env) pins the window -> no tier-flip
+        import mrtoken.statusline as sl
+        saved = sl._config_context_max
+        sl._config_context_max = lambda: 1_000_000
+        try:
+            self.assertEqual(sl.context_window(50_000), 1_000_000)   # not the 200k tier
+            self.assertEqual(sl.context_window(0), 1_000_000)
+        finally:
+            sl._config_context_max = saved
+
+    def test_context_window_is_sticky_within_session(self):
+        # the wildness fix: window ratchets up off the session MAX, so a dip
+        # (e.g. after a compaction) does NOT flip ctx% back across a tier
+        from mrtoken.watch import LiveMonitor
+        from mrtoken.statusline import context_window
+        mon = LiveMonitor(emit=lambda _: None)
+        mon.feed({"type": "assistant", "message": {"model": "claude-sonnet-4",
+            "usage": {"input_tokens": 1, "cache_read_input_tokens": 250_000, "output_tokens": 1}}})
+        mon.feed({"type": "assistant", "message": {"model": "claude-sonnet-4",
+            "usage": {"input_tokens": 1, "cache_read_input_tokens": 50_000, "output_tokens": 1}}})  # dip
+        snap = mon.snapshot()
+        self.assertGreaterEqual(snap["context_max"], 250_000)            # ratcheted up
+        self.assertEqual(context_window(snap["context_max"]), 1_000_000)  # stays 1M, no flip-back
 
     def test_context_window_inferred_from_usage(self):
         from mrtoken.statusline import context_window

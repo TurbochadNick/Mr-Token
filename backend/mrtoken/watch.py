@@ -96,6 +96,8 @@ class LiveMonitor:
         self.huge_threshold = HUGE_TOOL_CHARS
         # structured state for statusline / snapshot consumers
         self._context_now: int = 0
+        self._context_max: int = 0   # ratchets up; window is inferred from this so
+                                     # ctx% never flips back after a compaction dip
         self.signals_fired: list[str] = []  # rule keys that fired, in order
         # re-read tracking — privacy-clean, mirrors the retrospective re_read_loop
         # rule: identical read input → identical hash, so we count duplicate
@@ -164,11 +166,12 @@ class LiveMonitor:
             window = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
                       + u.get("cache_creation_input_tokens", 0))
             self._context_now = window
-            if window >= context_window(window) * CONTEXT_WARN_PCT / 100 and self._debounce("context"):
+            self._context_max = max(self._context_max, window)
+            win = context_window(self._context_max)   # sticky window (ratchets up)
+            if window >= win * CONTEXT_WARN_PCT / 100 and self._debounce("context"):
                 self.signals_fired.append("context")
-                pct = int(window / context_window(window) * 100)
-                self.emit(f"  ℹ context window ~{window//1000}k tokens ({pct}%) — consider /compact "
-                          "or a fresh session with a handoff summary")
+                self.emit(f"  ℹ context window ~{window//1000}k tokens ({int(window/win*100)}%) — "
+                          "consider /compact or a fresh session with a handoff summary")
 
             # cost milestones — escalating ladder, each crossed once
             crossed = [m for m in COST_MILESTONES
@@ -234,6 +237,7 @@ class LiveMonitor:
             "cum_cost": self.cum_cost,
             "profile": self.profile,
             "context_now": self._context_now,
+            "context_max": self._context_max,
             "signals_fired": list(self.signals_fired),
         }
 

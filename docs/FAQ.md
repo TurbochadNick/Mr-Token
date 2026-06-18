@@ -21,9 +21,14 @@ Mr Token flags it around 70% and suggests `/mr-handoff` (start a fresh session
 with a compact summary) rather than waiting for a lossy auto-compact.
 
 The window size depends on the model (commonly 200k tokens, 1M on some Claude
-variants). Mr Token infers it from your real usage, so the percentage is accurate
-on 1M-context models instead of pinning them at 99%. Override with the
-`MRTOKEN_CONTEXT_MAX` environment variable if needed.
+variants). Mr Token infers it from your real usage and the inferred window only
+ratchets up (it never flips back down after a compaction). One caveat of
+inference: a 1M session looks like a near-full 200k one until it crosses 200k, a
+single jump in `ctx %`. If you know your window, set it once and the percentage
+stays exact:
+
+- per-shell: `export MRTOKEN_CONTEXT_MAX=1000000`
+- persistent: `~/.mrtoken/config.json` -> `{"context_max": 1000000}`
 
 ## Does this work with Claude desktop app?
 

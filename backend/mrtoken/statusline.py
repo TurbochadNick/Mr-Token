@@ -21,19 +21,38 @@ CONTEXT_TIERS = (200_000, 1_000_000)  # known Claude context windows
 CONTEXT_WARN_PCT = 70                 # show ⚠ flag at this % of the window or above
 
 
+def _config_context_max() -> int | None:
+    """Persistent per-user window override: ~/.mrtoken/config.json {"context_max": N}.
+    Set this once if you know your window (e.g. 1000000 on a 1M-context model) and
+    the inferred `ctx %` stays exact with no tier-flip."""
+    import os, json
+    try:
+        with open(os.path.expanduser("~/.mrtoken/config.json"), encoding="utf-8") as fh:
+            v = json.load(fh).get("context_max")
+        return int(v) if v and int(v) > 0 else None
+    except Exception:
+        return None
+
+
 def context_window(context_now: int) -> int:
-    """Infer the model's context window from observed usage.
+    """The model's context window. Prefer an explicit override (env then config),
+    else INFER from observed usage.
 
     The transcript records the model as e.g. 'claude-opus-4-8' WITHOUT the [1m]
-    marker, so we can't read the window off the model id. But usage can never
-    exceed the window, so the smallest known tier that fits the observed size is
-    the window: a 1M-context session simply reveals itself the moment it passes
-    200k. This keeps `ctx %` honest on 1M models instead of pinning them at 99%.
-    Override with the MRTOKEN_CONTEXT_MAX env var if you need to."""
+    marker, so we can't read the window off the model id. Usage can't exceed the
+    window, so the smallest known tier that fits is the window. Caveat: a 1M
+    session looks like a near-full 200k one UNTIL it crosses 200k, which is the
+    one-step jump you'd see without an override. Callers pass the session's MAX
+    context (not the latest reading) so the window only ratchets UP, never flips
+    back down after a compaction. Set MRTOKEN_CONTEXT_MAX or config.json to avoid
+    the jump entirely."""
     import os
     env = os.environ.get("MRTOKEN_CONTEXT_MAX", "")
     if env.isdigit() and int(env) > 0:
         return int(env)
+    cfg = _config_context_max()
+    if cfg:
+        return cfg
     for tier in CONTEXT_TIERS:
         if context_now <= tier:
             return tier
@@ -82,7 +101,8 @@ def build_statusline_text(session_arg: str | None = None,
 
     snap = mon.snapshot()
     ctx_now = snap["context_now"]
-    ctx_pct = min(99, int(ctx_now / context_window(ctx_now) * 100)) if ctx_now else 0
+    win = context_window(snap.get("context_max") or ctx_now)  # sticky window
+    ctx_pct = min(99, int(ctx_now / win * 100)) if ctx_now else 0
 
     parts = ["mr"]
 
