@@ -41,10 +41,13 @@ def diagnose(conn: sqlite3.Connection, tid: int) -> dict:
     }
     comp_total = sum(comp.values()) or 1e-9
 
-    # avoidable drivers
+    # avoidable drivers — use the SAME profile-aware threshold as the rules engine
+    # (not a hardcoded 40000, which disagreed with the huge_tool_output rule)
+    from mrtoken.rules import _thresholds
+    huge_limit = _thresholds(conn, tid)[0]["huge_tool_chars"]
     huge = conn.execute("""
         SELECT COALESCE(SUM(output_tokens_est),0), COUNT(*) FROM tool_call
-        WHERE trace_id=? AND output_chars > 40000""", (tid,)).fetchone()
+        WHERE trace_id=? AND output_chars > ?""", (tid, huge_limit)).fetchone()
     huge_tok, huge_n = huge
     retry = conn.execute("""
         SELECT COUNT(*), COALESCE(SUM(output_tokens_est),0) FROM tool_call

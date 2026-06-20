@@ -109,16 +109,26 @@ def rule_huge_tool_output(conn, tid: int) -> list:
     if not rows:
         return []
     prof_note = f" (threshold for '{profile}' profile)" if profile else ""
-    recs = []
-    for name, oc, tuid in rows:
-        tok = oc // 4
-        recs.append(_rec("huge_tool_output", "warn",
-                         f"Tool '{name}' returned ~{tok:,} tok{prof_note}. "
-                         "Write large outputs to disk and pass only a compact summary to the model.",
-                         {"tool_use_id": tuid, "output_chars": oc, "output_tokens_est": tok,
-                          "profile": profile, "threshold_chars": limit},
-                         max(0, tok - 2000)))
-    return recs
+    n = len(rows)
+    total_tok = sum(oc // 4 for _, oc, _ in rows)
+    # ONE collapsed rec, not one per output (a single session can have 30+ and
+    # spamming near-identical warnings buries the signal)
+    if n == 1:
+        name, oc, _ = rows[0]
+        msg = (f"Tool '{name}' returned ~{oc//4:,} tok{prof_note}. "
+               "Write large outputs to disk and pass only a compact summary.")
+    else:
+        top = ", ".join(f"{nm} ~{oc//4:,} tok" for nm, oc, _ in rows[:3])
+        more = f" (+{n - 3} more)" if n > 3 else ""
+        msg = (f"{n} oversized tool outputs{prof_note}, ~{total_tok:,} tok total "
+               f"(biggest: {top}{more}). Each is re-paid into context on every later "
+               "call — write large outputs to disk and pass compact summaries.")
+    return [_rec("huge_tool_output", "warn", msg,
+                 {"count": n, "total_tokens_est": total_tok, "profile": profile,
+                  "threshold_chars": limit,
+                  "offenders": [{"tool": nm, "output_chars": oc, "tool_use_id": ti}
+                                for nm, oc, ti in rows[:10]]},
+                 max(0, total_tok - 2000 * n))]
 
 
 def rule_retry_loop(conn, tid: int) -> list:
@@ -217,14 +227,18 @@ def rule_fresh_handoff(conn, tid: int) -> list:
     inp_first, ratio_first = totals(mc_rows[:q])
     inp_last,  ratio_last  = totals(mc_rows[-q:])
 
-    signals = []
-    # 1. input token growth (context expanding)
+    # Split signals into SIZE (the session is merely big) vs TROUBLE (real
+    # degradation). A well-cached long session does NOT benefit from a handoff —
+    # handoff resets the cheap cached prefix (the project's own ROI finding). The
+    # old guard fired on input-growth + depth, which BOTH just mean "big", so it
+    # cried wolf on healthy productive sessions. Now require real trouble.
+    size_signals, trouble_signals = [], []
     if inp_first and inp_last / inp_first >= HANDOFF_INPUT_GROWTH:
-        signals.append(f"input tokens grew {inp_last/inp_first:.1f}× from first to last quarter")
-    # 2. cache ratio decay (fresh tokens dominating)
+        size_signals.append(f"input tokens grew {inp_last/inp_first:.1f}× from first to last quarter")
+    if n >= 30:
+        size_signals.append(f"{n} model calls — conversation depth is high")
     if ratio_first - ratio_last >= HANDOFF_CACHE_DECAY:
-        signals.append(f"cache hit fell {ratio_first:.0%} → {ratio_last:.0%} (context churning)")
-    # 3. retry errors in the second half
+        trouble_signals.append(f"cache hit fell {ratio_first:.0%} → {ratio_last:.0%} (context churning)")
     late_cutoff = mc_rows[n // 2][6]
     errs_late = conn.execute("""
         SELECT COUNT(*) FROM tool_call tc
@@ -232,13 +246,12 @@ def rule_fresh_handoff(conn, tid: int) -> list:
         WHERE tc.trace_id=? AND tc.is_error=1 AND mc.timestamp >= ?
     """, (tid, late_cutoff)).fetchone()[0] or 0
     if errs_late >= 3:
-        signals.append(f"{errs_late} tool errors in second half — stale context may be compounding")
-    # 4. raw conversation depth
-    if n >= 30:
-        signals.append(f"{n} model calls — conversation depth is high")
+        trouble_signals.append(f"{errs_late} tool errors in second half — stale context may be compounding")
 
-    if len(signals) < 2:
-        return []   # require at least 2 signals before firing
+    signals = trouble_signals + size_signals
+    # need at least one TROUBLE signal (churn/errors) plus corroboration
+    if not trouble_signals or len(signals) < 2:
+        return []
 
     # estimate savings: drop the repeated/stale portion of cached input
     waste_row = conn.execute("""

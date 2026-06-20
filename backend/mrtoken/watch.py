@@ -118,6 +118,11 @@ class LiveMonitor:
         avg = {"bash": (self.bash_out_total / self.bash_out_n) if self.bash_out_n else 0}
         profile, _conf, _sig = classify_from_counts(self.tool_counts, avg)
         prev = self.profile
+        # stickiness: once a session shows strong intent (edits → code, orchestration
+        # → agent), don't DOWNGRADE to benchmark/research just because bash/reads later
+        # dominate — that caused the mid-session profile flip the HUD showed.
+        if prev in ("code", "agent") and profile in ("benchmark", "research"):
+            profile = prev
         self.profile = profile
         self.huge_threshold = PROFILE_THRESHOLDS.get(
             profile, DEFAULT_THRESHOLDS)["huge_tool_chars"]

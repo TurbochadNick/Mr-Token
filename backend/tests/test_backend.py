@@ -366,6 +366,31 @@ class BackendTest(unittest.TestCase):
         self.assertIn("would create DB", out)            # dry-run ran
         self.assertFalse(os.path.exists(os.path.join(tmp, ".token-tithe")))  # wrote nothing
 
+    def test_huge_tool_output_collapses_to_one_rec(self):
+        from mrtoken.rules import rule_huge_tool_output
+        conn, tid = make_trace()
+        for i in range(5):
+            conn.execute("INSERT INTO tool_call(trace_id, tool_name, output_chars, "
+                         "output_tokens_est, tool_use_id) VALUES(?,?,?,?,?)",
+                         (tid, "Read", 200_000, 50_000, f"t{i}"))
+        conn.commit()
+        recs = rule_huge_tool_output(conn, tid)
+        self.assertEqual(len(recs), 1)                 # one rec, not five
+        self.assertIn("5 oversized", recs[0]["message"])
+
+    def test_fresh_handoff_needs_trouble_not_just_size(self):
+        from mrtoken.rules import rule_fresh_handoff
+        conn, tid = make_trace()
+        # 32 calls, input grows ~32x, cache held at 90% (no decay), NO errors:
+        # pure SIZE signals -> must NOT fire (the cry-wolf the user saw)
+        for i in range(32):
+            inp = 1000 * (i + 1)
+            conn.execute("INSERT INTO model_call(trace_id, timestamp, input_tokens, "
+                         "output_tokens, cache_read_input_tokens) VALUES(?,?,?,?,?)",
+                         (tid, f"2026-06-01T00:{i:02d}:00Z", inp, 100, inp * 9))
+        conn.commit()
+        self.assertEqual(rule_fresh_handoff(conn, tid), [])
+
     def test_ingest_dedupes_usage_per_message_id_and_prices_opus(self):
         from mrtoken.ingest import connect, ingest_file, load_prices
         with tempfile.TemporaryDirectory() as tmp:
