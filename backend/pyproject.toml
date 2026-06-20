@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mrtoken"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local-first token observability for AI agent workflows"
 requires-python = ">=3.11"
 dependencies = []
