@@ -118,7 +118,15 @@ function multiDeliverablePrompt(events: StoredEvent[]): DiagnosisFinding | null 
 function lateCompaction(events: StoredEvent[]): DiagnosisFinding | null {
   const bySession = new Map<string, StoredEvent[]>();
   for (const event of events) bySession.set(event.sessionId ?? 'unknown', [...(bySession.get(event.sessionId ?? 'unknown') ?? []), event]);
-  const hits = [...bySession.values()].filter((group) => sum(group.map((event) => event.estimatedTokens)) > 40000 && !group.some((event) => event.eventType.includes('Compact')) || group.filter((event) => event.eventType === 'Stop').length >= 8).flat();
+  // (large by tokens OR by turn count) AND not yet compacted. The old expression
+  // lacked parens — `a && b || c` flagged ANY session with >=8 Stop events (every
+  // long session) regardless of size or whether it had already compacted.
+  const hits = [...bySession.values()].filter((group) => {
+    const tokens = sum(group.map((event) => event.estimatedTokens));
+    const stops = group.filter((event) => event.eventType === 'Stop').length;
+    const compacted = group.some((event) => event.eventType.includes('Compact'));
+    return (tokens > 40000 || stops >= 8) && !compacted;
+  }).flat();
   if (!hits.length) return null;
   const waste = Math.round(sum(hits.map((event) => event.estimatedTokens)) * 0.2);
   return finding('Late Compaction / Long Session Drift', 'medium', 'medium', waste, hits.slice(0, 4).map((event) => ev(event, 'long session drift')), 'The session is hauling stale load. Old context can cost more than it helps.', ['Compact.', 'Start a fresh session.', 'Export a short state summary.', 'Use /clear or equivalent when switching tasks.']);
