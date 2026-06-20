@@ -114,9 +114,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("session", nargs="?")
     ap.add_argument("--list", action="store_true")
-    ap.add_argument("--db", default="mrtoken.db")
+    ap.add_argument("--db", default=None, help="default: the project-local .token-tithe db")
     a = ap.parse_args(argv)
-    conn = sqlite3.connect(a.db)
+    from mrtoken.ingest import default_db_path
+    conn = sqlite3.connect(a.db or default_db_path())  # was a stray 'mrtoken.db' in cwd
     if a.list or not a.session:
         list_traces(conn)
     else:
