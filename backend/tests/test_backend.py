@@ -366,6 +366,38 @@ class BackendTest(unittest.TestCase):
         self.assertIn("would create DB", out)            # dry-run ran
         self.assertFalse(os.path.exists(os.path.join(tmp, ".token-tithe")))  # wrote nothing
 
+    def test_ingest_dedupes_usage_per_message_id_and_prices_opus(self):
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = os.path.join(tmp, "s.jsonl")
+            usage = {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 1000}
+            # Claude Code writes 2 lines for ONE API response (text, then tool_use),
+            # each REPEATING the same usage + same message.id -> must count once
+            write_jsonl(transcript, [
+                {"type": "user", "message": {"content": "hi"}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u1", "cwd": tmp,
+                 "message": {"id": "msg_1", "model": "claude-opus-4-8", "usage": usage,
+                             "content": [{"type": "text", "text": "ok"}]}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u2", "cwd": tmp,
+                 "message": {"id": "msg_1", "model": "claude-opus-4-8", "usage": usage,
+                             "content": [{"type": "tool_use", "id": "t1", "name": "Read",
+                                          "input": {"file_path": "/x"}}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result",
+                             "tool_use_id": "t1", "content": "data"}]}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            r = ingest_file(conn, transcript, load_prices())
+            self.assertEqual(r["model_calls"], 1)  # one response, not two lines
+            tid = conn.execute("SELECT id FROM trace WHERE session_id=?", (r["session_id"],)).fetchone()[0]
+            mc, inp, out, cost = conn.execute(
+                "SELECT model_calls, input_tokens, output_tokens, est_cost_usd "
+                "FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
+            self.assertEqual((mc, inp, out), (1, 100, 50))  # counted once, not doubled
+            # Opus 4.8 = 5/25 in + cache_read 0.5 (was 15/75/1.5 -> 3x too high)
+            self.assertAlmostEqual(cost, round(100/1e6*5 + 50/1e6*25 + 1000/1e6*0.5, 6), places=6)
+            tc = conn.execute("SELECT COUNT(*) FROM tool_call WHERE trace_id=?", (tid,)).fetchone()[0]
+            self.assertEqual(tc, 1)  # tool_use on the 2nd line still captured despite dedup
+
     def test_ingest_extracts_title_and_export_redacts(self):
         from mrtoken.ingest import connect, ingest_file, load_prices
         from mrtoken.rules import analyse

@@ -86,6 +86,9 @@ SELECT
   COALESCE(SUM(mc.output_tokens), 0)                    AS output_tokens,
   COALESCE(SUM(mc.cache_read_input_tokens), 0)          AS cache_read_tokens,
   COALESCE(SUM(mc.cache_creation_input_tokens), 0)      AS cache_write_tokens,
+  -- non-cached tokens (fresh input + output). The cache_read/write columns above
+  -- carry the cached throughput; a true "in+out+cache" total balloons into the
+  -- 100M+ range on cached sessions and is not a useful headline.
   COALESCE(SUM(mc.input_tokens + mc.output_tokens), 0)  AS total_tokens,
   ROUND(COALESCE(SUM(mc.est_cost_usd), 0), 6)           AS est_cost_usd,
   CASE
@@ -168,6 +171,7 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
     meta = {"project_path": None, "git_branch": None, "cc_version": None,
             "entrypoint": None, "title": None, "first_ts": None, "last_ts": None}
     model_calls, tool_calls, pending_tools = [], [], {}  # tool_use_id -> tool_call dict
+    seen_msg_ids = {}  # API message id -> first line's uuid (dedupe usage per response)
     blocks = {}  # (block_type, hash) -> dict
     n_lines = 0
 
@@ -215,28 +219,38 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
                 meta["title"] = o.get("aiTitle") or o.get("title") or o.get("text")
 
             if etype == "assistant" and "usage" in msg:
-                u = msg["usage"]
-                cc = u.get("cache_creation") or {}
-                model_calls.append({
-                    "request_id": o.get("requestId"),
-                    "message_uuid": o.get("uuid"),
-                    "parent_uuid": o.get("parentUuid"),
-                    "model": msg.get("model"),
-                    "timestamp": ts,
-                    "input_tokens": u.get("input_tokens", 0),
-                    "output_tokens": u.get("output_tokens", 0),
-                    "cache_read_input_tokens": u.get("cache_read_input_tokens", 0),
-                    "cache_creation_input_tokens": u.get("cache_creation_input_tokens", 0),
-                    "ephemeral_1h_tokens": cc.get("ephemeral_1h_input_tokens", 0),
-                    "ephemeral_5m_tokens": cc.get("ephemeral_5m_input_tokens", 0),
-                    "service_tier": u.get("service_tier"),
-                    "stop_reason": msg.get("stop_reason"),
-                    "is_sidechain": 1 if o.get("isSidechain") else 0,
-                    "est_cost_usd": est_cost(prices, msg.get("model"), u),
-                    "price_version": prices["version"],
-                })
+                # Claude Code writes MULTIPLE transcript lines per API response (one
+                # per content block), each REPEATING the same usage. Count usage
+                # once per API message id, else tokens AND cost inflate ~2x. Tool_use
+                # blocks are split across those lines, so still scan each line, but
+                # link them to the single model_call (the response's first uuid).
+                mid = msg.get("id")
+                first_seen = mid is None or mid not in seen_msg_ids
+                if mid is not None and first_seen:
+                    seen_msg_ids[mid] = o.get("uuid")
+                link_uuid = seen_msg_ids.get(mid, o.get("uuid"))
+                if first_seen:
+                    u = msg["usage"]
+                    cc = u.get("cache_creation") or {}
+                    model_calls.append({
+                        "request_id": o.get("requestId"),
+                        "message_uuid": o.get("uuid"),
+                        "parent_uuid": o.get("parentUuid"),
+                        "model": msg.get("model"),
+                        "timestamp": ts,
+                        "input_tokens": u.get("input_tokens", 0),
+                        "output_tokens": u.get("output_tokens", 0),
+                        "cache_read_input_tokens": u.get("cache_read_input_tokens", 0),
+                        "cache_creation_input_tokens": u.get("cache_creation_input_tokens", 0),
+                        "ephemeral_1h_tokens": cc.get("ephemeral_1h_input_tokens", 0),
+                        "ephemeral_5m_tokens": cc.get("ephemeral_5m_input_tokens", 0),
+                        "service_tier": u.get("service_tier"),
+                        "stop_reason": msg.get("stop_reason"),
+                        "is_sidechain": 1 if o.get("isSidechain") else 0,
+                        "est_cost_usd": est_cost(prices, msg.get("model"), u),
+                        "price_version": prices["version"],
+                    })
                 # tool_use blocks requested by this assistant turn
-                msg_uuid = o.get("uuid")  # link tool_calls back to this model_call later
                 for b in (msg.get("content") or []):
                     if isinstance(b, dict) and b.get("type") == "tool_use":
                         inp = json.dumps(b.get("input", {}))
@@ -246,7 +260,7 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
                             "started_at": ts, "output_chars": None,
                             "output_tokens_est": None, "output_hash": None,
                             "is_error": 0, "ended_at": None,
-                            "_msg_uuid": msg_uuid,  # internal; used to set model_call_id after insert
+                            "_msg_uuid": link_uuid,  # link to the single model_call for this response
                         }
                 track_block("assistant", content_text(msg.get("content")), ts)
 
