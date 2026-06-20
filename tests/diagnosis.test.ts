@@ -8,6 +8,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 describe('fuel diagnosis', () => {
+  it('scores against REAL totals when provided, not estimated findings', () => {
+    const report = diagnoseFuel({
+      projectRoot: '/tmp/p',
+      events: [event({ stdoutLength: 20000, estimatedTokens: 5000, toolName: 'Bash', eventType: 'PostToolUse' })],
+      realTotalTokens: 1000,
+      realWasteTokens: 100
+    });
+    expect(report.fuelScore).toBe(90); // 100 - 100/1000
+    expect(report.burnProfile.wastePercentage).toBe(10);
+    expect(report.burnProfile.suspectedWasteTokens).toBe(100);
+    expect(report.burnProfile.confidence).toBe('high');
+  });
+
   it('detects huge tool output', () => {
     const report = diagnoseFuel({ projectRoot: '/tmp/p', events: [event({ stdoutLength: 20000, estimatedTokens: 5000, toolName: 'Bash', eventType: 'PostToolUse' })] });
     expect(report.findings[0]?.category).toBe('Huge Tool Output');

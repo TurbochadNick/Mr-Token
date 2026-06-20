@@ -11,6 +11,12 @@ export function diagnoseFuel(input: {
   projectRoot: string;
   totalTokens?: number;
   generatedAt?: string;
+  // REAL transcript-derived numbers (from the Python session_summary +
+  // recommendation tables). When present, the fuel score and burn profile use
+  // these instead of char-counted estimates. Findings below stay estimate-based
+  // (the TS event ledger) and remain the detailed guidance.
+  realTotalTokens?: number;
+  realWasteTokens?: number;
 }): DiagnosisReport {
   const findings = [
     hugeToolOutput(input.events),
@@ -28,15 +34,21 @@ export function diagnoseFuel(input: {
   ].filter((finding): finding is DiagnosisFinding => Boolean(finding))
     .sort((a, b) => b.estimatedWasteTokens - a.estimatedWasteTokens || a.category.localeCompare(b.category));
 
-  const totalTokens = input.totalTokens ?? sum(input.events.map((event) => event.estimatedTokens));
-  const suspectedWasteTokens = Math.min(totalTokens, sum(findings.map((finding) => finding.estimatedWasteTokens)));
-  const fuelScore = calculateFuelScore(totalTokens, suspectedWasteTokens);
+  const useReal = input.realTotalTokens !== undefined && input.realTotalTokens > 0;
+  const estTotal = input.totalTokens ?? sum(input.events.map((event) => event.estimatedTokens));
+  // score against REAL totals when available (both numerator and denominator real,
+  // never a mix); fall back to the estimated event totals otherwise
+  const scoreTotal = useReal ? (input.realTotalTokens as number) : estTotal;
+  const scoreWaste = useReal
+    ? Math.min(scoreTotal, input.realWasteTokens ?? 0)
+    : Math.min(estTotal, sum(findings.map((finding) => finding.estimatedWasteTokens)));
+  const fuelScore = calculateFuelScore(scoreTotal, scoreWaste);
   const burnProfile: BurnProfile = {
-    usefulEstimatedTokens: Math.max(0, totalTokens - suspectedWasteTokens),
-    suspectedWasteTokens,
-    wastePercentage: totalTokens === 0 ? 0 : Math.round((suspectedWasteTokens / totalTokens) * 100),
+    usefulEstimatedTokens: Math.max(0, scoreTotal - scoreWaste),
+    suspectedWasteTokens: scoreWaste,
+    wastePercentage: scoreTotal === 0 ? 0 : Math.round((scoreWaste / scoreTotal) * 100),
     topBurnCauses: findings.slice(0, 3).map((finding) => finding.category),
-    confidence: aggregateConfidence(findings)
+    confidence: useReal ? 'high' : aggregateConfidence(findings)
   };
 
   return {

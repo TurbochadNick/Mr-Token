@@ -34,6 +34,7 @@ export type UiAccurate = {
   estCostUsd: number;
   cacheHitRatio: number | null;
   highRecommendations: number;
+  wasteSavingsTokens: number; // sum of recommendation.est_savings_tokens (real)
   profiles: string[];
 };
 
@@ -101,7 +102,7 @@ export type UiData = {
 const EMPTY_ACCURATE: UiAccurate = {
   available: false, sessions: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
   cacheWriteTokens: 0, totalTokens: 0, estCostUsd: 0, cacheHitRatio: null,
-  highRecommendations: 0, profiles: []
+  highRecommendations: 0, wasteSavingsTokens: 0, profiles: []
 };
 
 // Read the Python backend's session_summary view (real token counts) if present.
@@ -121,18 +122,30 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
           coalesce(sum(high_recommendations), 0) as highRecommendations
         from session_summary`
       )
-      .get() as Omit<UiAccurate, 'available' | 'cacheHitRatio' | 'profiles'>;
+      .get() as Omit<UiAccurate, 'available' | 'cacheHitRatio' | 'profiles' | 'wasteSavingsTokens'>;
     if (!row || row.sessions === 0) return EMPTY_ACCURATE;
     const profiles = (
       db.prepare('select distinct profile from session_summary where profile is not null').all() as Array<{
         profile: string;
       }>
     ).map((r) => r.profile);
+    // real recoverable waste = sum of the backend rules' est_savings_tokens.
+    // Resilient on its own: session_summary can exist without the recommendation
+    // table (older/partial backend), and that must not void the accurate data.
+    let wasteSavingsTokens = 0;
+    try {
+      wasteSavingsTokens = (
+        db.prepare('select coalesce(sum(est_savings_tokens), 0) as t from recommendation').get() as { t: number }
+      ).t;
+    } catch {
+      wasteSavingsTokens = 0;
+    }
     const inputSide = row.inputTokens + row.cacheReadTokens + row.cacheWriteTokens;
     return {
       ...row,
       available: true,
       cacheHitRatio: inputSide > 0 ? row.cacheReadTokens / inputSide : null,
+      wasteSavingsTokens,
       profiles
     };
   } catch {
@@ -148,7 +161,13 @@ export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoo
   db.close();
 
   const findings = runAuditRules({ events, projectRoot });
-  const diagnosis = diagnoseFuel({ events, projectRoot, totalTokens: summary.totalTokens });
+  const diagnosis = diagnoseFuel({
+    events, projectRoot, totalTokens: summary.totalTokens,
+    // prefer REAL transcript totals for the fuel score when the backend has run,
+    // so the headline rating reflects reality not char-counted estimates
+    realTotalTokens: accurate.available ? accurate.totalTokens : undefined,
+    realWasteTokens: accurate.available ? accurate.wasteSavingsTokens : undefined
+  });
 
   return {
     summary: toUiSummary(summary, findings),
