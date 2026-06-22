@@ -210,9 +210,10 @@ def main(argv=None):
         help="leave the /mr-* skills installed")
 
     p_init = sub.add_parser("init",
-        help="set up the backend in this project (DB + project-local Stop hook)")
+        help="set up the backend in this project (DB + global Stop/HUD hooks)")
     p_init.add_argument("--project-root", help="project root (default: auto-detect)")
-    p_init.add_argument("--settings", help="settings file (default: <root>/.claude/settings.local.json)")
+    p_init.add_argument("--settings",
+        help="override where the Stop hook is written (default: global ~/.claude/settings.json)")
     p_init.add_argument("--dry-run", "--print", dest="print", action="store_true",
         help="dry run — show what would happen, write nothing")
 

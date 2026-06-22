@@ -245,12 +245,14 @@ class BackendTest(unittest.TestCase):
 
             init(project_root=tmp, global_settings_path=global_settings_path,
                  emit=lambda *_: None)
+            # the user's OWN project-local Stop hook + other settings preserved;
+            # ours is NOT added project-local (it goes global now so it fires for
+            # sessions started from any folder, e.g. the desktop app)
             s = _load_settings(settings_path)
-            # existing setting + existing hook preserved, ours added
             self.assertEqual(s["permissions"]["allow"], ["Bash(ls *)"])
-            cmds = [hh["command"] for e in s["hooks"]["Stop"] for hh in e["hooks"]]
-            self.assertIn("echo existing", cmds)
-            self.assertTrue(any("on_stop.py" in c for c in cmds))
+            local_cmds = [hh["command"] for e in s["hooks"]["Stop"] for hh in e["hooks"]]
+            self.assertIn("echo existing", local_cmds)
+            self.assertFalse(any("on_stop.py" in c for c in local_cmds))
             self.assertTrue(os.path.exists(os.path.join(tmp, ".token-tithe", "token-tithe.db")))
             # the /mr-handoff skill is installed GLOBALLY (next to global settings),
             # so /mr-* works in every project, not just where init ran
@@ -259,22 +261,47 @@ class BackendTest(unittest.TestCase):
                 os.path.join(global_skills, "mr-handoff", "SKILL.md")))
             self.assertFalse(os.path.exists(
                 os.path.join(tmp, ".claude", "skills", "mr-handoff")))  # no longer project-local
-            # per-turn HUD hook + statusLine added to global settings
+            # Stop hook + per-turn HUD hook + statusLine all in GLOBAL settings
             gs = _load_settings(global_settings_path)
+            self.assertTrue(_already_installed(gs))           # Stop hook is global
             self.assertTrue(_prompt_hook_already_installed(gs))
             self.assertEqual(gs["statusLine"]["type"], "command")  # object form, not bare string
             self.assertIn("statusline", gs["statusLine"]["command"])
+            g_stop = [hh["command"] for e in gs["hooks"]["Stop"] for hh in e["hooks"]]
 
             # idempotent: second run adds nothing extra
             init(project_root=tmp, global_settings_path=global_settings_path,
                  emit=lambda *_: None)
-            s2 = _load_settings(settings_path)
-            cmds2 = [hh["command"] for e in s2["hooks"]["Stop"] for hh in e["hooks"]]
-            self.assertEqual(len(cmds2), len(cmds))
-            self.assertTrue(_already_installed(s2))
             gs2 = _load_settings(global_settings_path)
+            g_stop2 = [hh["command"] for e in gs2["hooks"]["Stop"] for hh in e["hooks"]]
+            self.assertEqual(len(g_stop2), len(g_stop))  # Stop not duplicated
+            self.assertTrue(_already_installed(gs2))
             ups2 = gs2.get("hooks", {}).get("UserPromptSubmit", [])
             self.assertEqual(len(ups2), 1)  # idempotent — not added twice
+
+    def test_init_migrates_legacy_project_local_stop_hook_to_global(self):
+        # an install from a prior version put the Stop hook project-local; re-running
+        # init must move it to global and strip the local one so it can't double-fire
+        from mrtoken.install import (init, hook_command, _load_settings,
+                                     _already_installed)
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            local = os.path.join(tmp, ".claude", "settings.local.json")
+            os.makedirs(os.path.dirname(local))
+            with open(local, "w") as h:  # legacy MR Token Stop hook + a user hook
+                json.dump({"hooks": {"Stop": [
+                    {"matcher": "", "hooks": [{"type": "command", "command": hook_command()}]},
+                    {"matcher": "", "hooks": [{"type": "command", "command": "echo mine"}]},
+                ]}}, h)
+            gpath = os.path.join(tmp, "global-settings.json")
+            init(project_root=tmp, global_settings_path=gpath, emit=lambda *_: None)
+
+            self.assertTrue(_already_installed(_load_settings(gpath)))   # moved to global
+            s = _load_settings(local)
+            cmds = [hh["command"] for e in s.get("hooks", {}).get("Stop", []) for hh in e["hooks"]]
+            self.assertNotIn(hook_command(), cmds)                       # legacy ours stripped
+            self.assertIn("echo mine", cmds)                             # user's hook preserved
 
     def test_statusline_command_source_fallback_is_runnable(self):
         # when there's no console script (installed from source, no pip), the
@@ -304,12 +331,13 @@ class BackendTest(unittest.TestCase):
             gpath = os.path.join(tmp, "global-settings.json")
             init(project_root=tmp, global_settings_path=gpath, emit=lambda *_: None)
             skills = os.path.join(os.path.dirname(gpath), "skills")
-            self.assertTrue(_already_installed(_load_settings(settings_path)))
+            self.assertTrue(_already_installed(_load_settings(gpath)))     # Stop hook is global now
             self.assertTrue(os.path.exists(os.path.join(skills, "mr-handoff", "SKILL.md")))
 
-            uninstall(project_root=tmp, global_settings_path=gpath, emit=lambda *_: None)
+            uninstall(project_root=tmp, settings_path=settings_path,
+                      global_settings_path=gpath, emit=lambda *_: None)
             s, g = _load_settings(settings_path), _load_settings(gpath)
-            self.assertFalse(_already_installed(s))                       # our Stop hook gone
+            self.assertFalse(_already_installed(g))                       # our global Stop hook gone
             cmds = [hh["command"] for e in s.get("hooks", {}).get("Stop", []) for hh in e["hooks"]]
             self.assertIn("echo keepme", cmds)                            # user's hook preserved
             self.assertEqual(s["permissions"]["allow"], ["Bash(ls *)"])   # other settings preserved
