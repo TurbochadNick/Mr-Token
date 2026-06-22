@@ -518,6 +518,23 @@ class BackendTest(unittest.TestCase):
         finally:
             del os.environ["MRTOKEN_CONTEXT_MAX"]
 
+    def test_live_monitor_dedupes_usage_per_message_id(self):
+        from mrtoken.watch import LiveMonitor
+        mon = LiveMonitor(emit=lambda _: None)
+        usage = {"input_tokens": 100, "cache_read_input_tokens": 1000, "output_tokens": 50}
+        # two transcript lines, ONE API response (same message.id), usage repeated
+        for content in ([{"type": "text", "text": "ok"}],
+                        [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]):
+            mon.feed({"type": "assistant", "message": {
+                "id": "m1", "model": "claude-sonnet-4", "usage": usage, "content": content}})
+        self.assertEqual(mon.snapshot()["model_calls"], 1)   # counted once, not twice
+        self.assertGreater(mon.snapshot()["cum_cost"], 0)
+        self.assertEqual(mon.tool_counts.get("read"), 1)     # tool still captured
+        # a DISTINCT response counts again
+        mon.feed({"type": "assistant", "message": {
+            "id": "m2", "model": "claude-sonnet-4", "usage": usage, "content": []}})
+        self.assertEqual(mon.snapshot()["model_calls"], 2)
+
     def test_live_monitor_detects_re_read_loop(self):
         from mrtoken.watch import LiveMonitor
         out = []

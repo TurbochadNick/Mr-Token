@@ -84,6 +84,7 @@ class LiveMonitor:
         self.prices, self.est_cost = _load_prices()
         self.model_calls = 0
         self.cum_cost = 0.0
+        self._seen_msg_ids: set[str] = set()  # dedup usage per API response (msg.id)
         self.errors_recent: list[int] = []   # 1/0 per recent model call
         self.last_emit: dict[str, float] = {}
         self.last_cost_milestone = 0.0
@@ -163,30 +164,44 @@ class LiveMonitor:
         msg = o.get("message") if isinstance(o.get("message"), dict) else {}
 
         if etype == "assistant" and "usage" in msg:
-            self.model_calls += 1
-            u = msg["usage"]
-            self.cum_cost += self.est_cost(self.prices, msg.get("model"), u)
+            # Claude Code writes multiple transcript lines per API response, each
+            # REPEATING the same usage. Count cost/calls/context ONCE per message
+            # id, else the live HUD inflates ~2x and disagrees with `status`.
+            # Tool_use blocks are split across those lines, so scan them every line.
+            mid = msg.get("id")
+            new_response = mid is None or mid not in self._seen_msg_ids
+            if mid is not None and new_response:
+                self._seen_msg_ids.add(mid)
 
-            # context-size proxy: this call's whole input side ≈ current window
-            window = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
-                      + u.get("cache_creation_input_tokens", 0))
-            self._context_now = window
-            self._context_max = max(self._context_max, window)
-            win = context_window(self._context_max)   # sticky window (ratchets up)
-            if window >= win * CONTEXT_WARN_PCT / 100 and self._debounce("context"):
-                self.signals_fired.append("context")
-                self.emit(f"  ℹ context window ~{window//1000}k tokens ({int(window/win*100)}%) — "
-                          "consider /compact or a fresh session with a handoff summary")
+            if new_response:
+                self.model_calls += 1
+                u = msg["usage"]
+                self.cum_cost += self.est_cost(self.prices, msg.get("model"), u)
 
-            # cost milestones — escalating ladder, each crossed once
-            crossed = [m for m in COST_MILESTONES
-                       if self.last_cost_milestone < m <= self.cum_cost]
-            if crossed:
-                self.last_cost_milestone = crossed[-1]
-                self.emit(f"  ℹ session est cost crossed ${crossed[-1]:,} "
-                          f"(~${self.cum_cost:,.2f} API-equivalent, not a subscription bill)")
+                # context-size proxy: this call's whole input side ≈ current window
+                window = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+                          + u.get("cache_creation_input_tokens", 0))
+                self._context_now = window
+                self._context_max = max(self._context_max, window)
+                win = context_window(self._context_max)   # sticky window (ratchets up)
+                if window >= win * CONTEXT_WARN_PCT / 100 and self._debounce("context"):
+                    self.signals_fired.append("context")
+                    self.emit(f"  ℹ context window ~{window//1000}k tokens ({int(window/win*100)}%) — "
+                              "consider /compact or a fresh session with a handoff summary")
 
-            # register requested tools; record one error slot per call
+                # cost milestones — escalating ladder, each crossed once
+                crossed = [m for m in COST_MILESTONES
+                           if self.last_cost_milestone < m <= self.cum_cost]
+                if crossed:
+                    self.last_cost_milestone = crossed[-1]
+                    self.emit(f"  ℹ session est cost crossed ${crossed[-1]:,} "
+                              f"(~${self.cum_cost:,.2f} API-equivalent, not a subscription bill)")
+
+                self.errors_recent.append(0)  # one slot per response; may flip on tool_result
+                if len(self.errors_recent) > RECENT_ERROR_WINDOW:
+                    self.errors_recent.pop(0)
+
+            # register requested tools (blocks are split across the response's lines)
             for b in (msg.get("content") or []):
                 if isinstance(b, dict) and b.get("type") == "tool_use":
                     name = b.get("name")
@@ -195,9 +210,6 @@ class LiveMonitor:
                     self.tool_counts[key] = self.tool_counts.get(key, 0) + 1
                     self._track_read(b, key)
             self._reclassify()
-            self.errors_recent.append(0)  # placeholder, may flip on tool_result
-            if len(self.errors_recent) > RECENT_ERROR_WINDOW:
-                self.errors_recent.pop(0)
 
         elif etype == "user":
             content = msg.get("content") if msg else o.get("content")
