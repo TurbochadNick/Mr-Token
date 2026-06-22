@@ -5,8 +5,8 @@ Reads the current session's live transcript, computes context %, cost,
 profile, and the highest-priority rule signal, then prints ONE line to stdout.
 
 Typical output:
-  mr · ctx 78% ⚠ · ~$1.20 · code · ⚠ retry loop
-  mr · ctx 42% · ~$0.18 · research
+  mr · Opus 4.8·high · ctx 78% ⚠ · ~$1.20 · code · ⚠ retry loop
+  mr · Opus 4.8·medium · ctx 42% · ~$0.18 · research
   mr · no session
 
 Registered in Claude Code settings.json as `statusLine` (object form). NOTE:
@@ -16,6 +16,7 @@ line to populate). Reads only, never writes. Must exit quickly.
 """
 from __future__ import annotations
 import json
+import re
 
 CONTEXT_TIERS = (200_000, 1_000_000)  # known Claude context windows
 CONTEXT_WARN_PCT = 70                 # show ⚠ flag at this % of the window or above
@@ -76,12 +77,39 @@ def _top_signal(signals: list[str]) -> str | None:
     return best
 
 
+def _model_label(model) -> str | None:
+    """Compact model name for the HUD. Accepts the statusLine `model` object
+    ({id, display_name}) OR a bare model-id string (from the transcript).
+    Prefers a display name that already carries a version, else derives
+    'Family M.m' from the id, e.g. 'claude-opus-4-8' -> 'Opus 4.8'."""
+    if not model:
+        return None
+    if isinstance(model, str):
+        mid, disp = model, None
+    else:
+        mid, disp = model.get("id"), model.get("display_name")
+    if disp and any(c.isdigit() for c in disp):
+        return disp
+    if mid:
+        m = re.match(r"(?:claude-)?([a-z]+)-(\d+)-(\d+)", mid)
+        if m:
+            return f"{m.group(1).capitalize()} {m.group(2)}.{m.group(3)}"
+    return disp or mid
+
+
 def build_statusline_text(session_arg: str | None = None,
-                          transcript_path: str | None = None) -> str | None:
+                          transcript_path: str | None = None,
+                          model=None, effort: str | None = None) -> str | None:
     """Return the HUD string, or None if no active session found.
 
     If transcript_path is given (the statusLine protocol hands us the exact
     file on stdin), use it directly — far more accurate than newest-mtime.
+
+    `model` / `effort` come from the statusLine stdin payload (model object and
+    effort.level). `model` falls back to the transcript's last assistant model
+    when not supplied (so the name still shows in the Stop-hook HUD); `effort`
+    has no transcript source, so it only appears when the stdin payload provides
+    it (i.e. in the terminal statusLine).
     """
     import os
     from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
@@ -93,11 +121,17 @@ def build_statusline_text(session_arg: str | None = None,
 
     mon = LiveMonitor(emit=lambda _: None)  # silent — only need snapshot data
     lines, _ = _iter_new_lines(path, 0)
+    last_model = None
     for ln in lines:
         try:
-            mon.feed(json.loads(ln))
+            obj = json.loads(ln)
         except json.JSONDecodeError:
-            pass
+            continue
+        mon.feed(obj)
+        if obj.get("type") == "assistant":
+            mm = (obj.get("message") or {}).get("model")
+            if mm:
+                last_model = mm
 
     snap = mon.snapshot()
     ctx_now = snap["context_now"]
@@ -105,6 +139,12 @@ def build_statusline_text(session_arg: str | None = None,
     ctx_pct = min(99, int(ctx_now / win * 100)) if ctx_now else 0
 
     parts = ["mr"]
+
+    # identity: which brain is running + how hard it's reasoning. model from the
+    # stdin payload (terminal) or the transcript (anywhere); effort from stdin only.
+    label = _model_label(model or last_model)
+    if label:
+        parts.append(f"{label}·{effort}" if effort else label)
 
     if ctx_pct:
         flag = " ⚠" if ctx_pct >= CONTEXT_WARN_PCT else ""
@@ -143,11 +183,16 @@ def statusline_hud(session_arg: str | None = None) -> int:
     """
     import os, sys
     transcript_path = None
+    model = None
+    effort = None
     try:
         raw = sys.stdin.read() if not sys.stdin.isatty() else ""
         if raw.strip():
             payload = json.loads(raw)
             transcript_path = payload.get("transcript_path")
+            model = payload.get("model")
+            eff = payload.get("effort")
+            effort = eff.get("level") if isinstance(eff, dict) else None
             cwd = (payload.get("cwd")
                    or (payload.get("workspace") or {}).get("current_dir"))
             if cwd and os.path.isdir(cwd):
@@ -155,5 +200,6 @@ def statusline_hud(session_arg: str | None = None) -> int:
     except Exception:
         pass
 
-    print(build_statusline_text(session_arg, transcript_path) or "mr · no session")
+    print(build_statusline_text(session_arg, transcript_path, model, effort)
+          or "mr · no session")
     return 0

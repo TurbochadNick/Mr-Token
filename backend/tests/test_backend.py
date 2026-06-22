@@ -344,6 +344,17 @@ class BackendTest(unittest.TestCase):
         self.assertIsNotNone(nudge)
         self.assertIn("0.4.2", nudge)
 
+    def test_model_label_for_hud(self):
+        from mrtoken.statusline import _model_label
+        # statusLine model object: terse display name -> enrich version from id
+        self.assertEqual(_model_label({"id": "claude-opus-4-8", "display_name": "Opus"}), "Opus 4.8")
+        # bare id string (transcript fallback), trailing date ignored
+        self.assertEqual(_model_label("claude-sonnet-4-6-20250101"), "Sonnet 4.6")
+        self.assertEqual(_model_label("claude-haiku-4-5"), "Haiku 4.5")
+        # already-versioned display name kept as-is
+        self.assertEqual(_model_label({"display_name": "Opus 4.8"}), "Opus 4.8")
+        self.assertIsNone(_model_label(None))
+
     def test_cli_reports_version(self):
         import io, contextlib
         from mrtoken.cli import main
