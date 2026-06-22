@@ -535,6 +535,26 @@ class BackendTest(unittest.TestCase):
             "id": "m2", "model": "claude-sonnet-4", "usage": usage, "content": []}})
         self.assertEqual(mon.snapshot()["model_calls"], 2)
 
+    def test_live_monitor_projects_turns_to_warn(self):
+        from mrtoken.watch import LiveMonitor
+        # context climbing ~10k/turn from 20k->90k; 200k window -> 140k warn -> ~5 turns
+        mon = LiveMonitor(emit=lambda _: None)
+        for i in range(8):
+            ctx = 20000 + i * 10000
+            mon.feed({"type": "assistant", "message": {"id": f"m{i}", "model": "claude-sonnet-4",
+                "usage": {"cache_read_input_tokens": ctx, "input_tokens": 0, "output_tokens": 1},
+                "content": []}})
+        ttw = mon.snapshot()["turns_to_warn"]
+        self.assertIsNotNone(ttw)
+        self.assertTrue(3 <= ttw <= 7, ttw)   # ~5 turns of lead time
+        # a flat session has no imminent wall
+        flat = LiveMonitor(emit=lambda _: None)
+        for i in range(8):
+            flat.feed({"type": "assistant", "message": {"id": f"f{i}", "model": "claude-sonnet-4",
+                "usage": {"cache_read_input_tokens": 50000, "input_tokens": 0, "output_tokens": 1},
+                "content": []}})
+        self.assertIsNone(flat.snapshot()["turns_to_warn"])
+
     def test_live_monitor_detects_re_read_loop(self):
         from mrtoken.watch import LiveMonitor
         out = []

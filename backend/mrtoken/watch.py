@@ -85,6 +85,7 @@ class LiveMonitor:
         self.model_calls = 0
         self.cum_cost = 0.0
         self._seen_msg_ids: set[str] = set()  # dedup usage per API response (msg.id)
+        self._ctx_history: list[int] = []     # recent per-response context sizes (trajectory)
         self.errors_recent: list[int] = []   # 1/0 per recent model call
         self.last_emit: dict[str, float] = {}
         self.last_cost_milestone = 0.0
@@ -183,6 +184,8 @@ class LiveMonitor:
                           + u.get("cache_creation_input_tokens", 0))
                 self._context_now = window
                 self._context_max = max(self._context_max, window)
+                self._ctx_history.append(window)
+                self._ctx_history = self._ctx_history[-12:]  # recent trajectory
                 win = context_window(self._context_max)   # sticky window (ratchets up)
                 if window >= win * CONTEXT_WARN_PCT / 100 and self._debounce("context"):
                     self.signals_fired.append("context")
@@ -247,6 +250,23 @@ class LiveMonitor:
                                       "stop and re-plan or reduce context")
 
 
+    def _turns_to_warn(self) -> int | None:
+        """Projected responses until context reaches the warn threshold, at the
+        recent growth rate — the lead-time nudge ('act before you hit the wall').
+        None if too little data, not climbing, or already past the threshold."""
+        hist = self._ctx_history
+        if len(hist) < 4:
+            return None
+        cur = hist[-1]
+        warn = context_window(self._context_max) * CONTEXT_WARN_PCT / 100
+        if cur >= warn:
+            return None  # already at/over warn — the 'context' signal covers it
+        recent = hist[-6:]
+        rate = (recent[-1] - recent[0]) / (len(recent) - 1)
+        if rate <= 0:
+            return None  # flat or shrinking — no imminent wall
+        return max(1, round((warn - cur) / rate))
+
     def snapshot(self) -> dict:
         """Return current monitor state (for statusline and other consumers)."""
         return {
@@ -255,6 +275,7 @@ class LiveMonitor:
             "profile": self.profile,
             "context_now": self._context_now,
             "context_max": self._context_max,
+            "turns_to_warn": self._turns_to_warn(),
             "signals_fired": list(self.signals_fired),
         }
 

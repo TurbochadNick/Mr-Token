@@ -108,7 +108,11 @@ def build_statusline_text(session_arg: str | None = None,
 
     if ctx_pct:
         flag = " ⚠" if ctx_pct >= CONTEXT_WARN_PCT else ""
-        parts.append(f"ctx {ctx_pct}%{flag}")
+        # lead-time trend: while still below the warn line but climbing toward it,
+        # show projected turns ('ctx 58% ↗~5t') so you can act before you hit it
+        ttw = snap.get("turns_to_warn")
+        trend = f" ↗~{ttw}t" if (ttw and ctx_pct < CONTEXT_WARN_PCT and ttw <= 12) else ""
+        parts.append(f"ctx {ctx_pct}%{flag}{trend}")
 
     if snap["cum_cost"] >= 0.01:
         parts.append(f"~${snap['cum_cost']:.2f}")
