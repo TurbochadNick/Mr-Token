@@ -362,6 +362,14 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(_plan_segment(0), "5h 0%")        # 0 is shown, not dropped
         self.assertIsNone(_plan_segment(None))             # absent payload -> nothing
 
+    def test_weekly_segment_only_when_close(self):
+        from mrtoken.statusline import _weekly_segment
+        self.assertIsNone(_weekly_segment(19))             # low -> hidden (no clutter)
+        self.assertIsNone(_weekly_segment(79))             # just under -> hidden
+        self.assertEqual(_weekly_segment(80), "7d 80%⚠")   # at threshold -> alert
+        self.assertEqual(_weekly_segment(93), "7d 93%⚠")
+        self.assertIsNone(_weekly_segment(None))
+
     def test_cli_reports_version(self):
         import io, contextlib
         from mrtoken.cli import main

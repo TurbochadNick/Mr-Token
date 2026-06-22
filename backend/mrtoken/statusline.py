@@ -21,6 +21,7 @@ import re
 CONTEXT_TIERS = (200_000, 1_000_000)  # known Claude context windows
 CONTEXT_WARN_PCT = 70                 # show ⚠ flag at this % of the window or above
 PLAN_WARN_PCT = 85                    # flag the 5h plan window at this % used or above
+WEEKLY_WARN_PCT = 80                  # surface the 7-day window only once it nears this
 
 
 def _config_context_max() -> int | None:
@@ -106,10 +107,21 @@ def _plan_segment(pct: int | None) -> str | None:
     return f"5h {pct}%{'⚠' if pct >= PLAN_WARN_PCT else ''}"
 
 
+def _weekly_segment(pct: int | None) -> str | None:
+    """7-day (weekly) window — surfaced ONLY when getting close. The weekly cap is
+    the painful one (a multi-day lockout, not a 5h cooldown), so it warrants an
+    early heads-up; below the threshold it stays hidden to keep the line clean.
+    From rate_limits.seven_day."""
+    if pct is None or pct < WEEKLY_WARN_PCT:
+        return None
+    return f"7d {pct}%⚠"
+
+
 def build_statusline_text(session_arg: str | None = None,
                           transcript_path: str | None = None,
                           model=None, effort: str | None = None,
-                          plan_5h: int | None = None) -> str | None:
+                          plan_5h: int | None = None,
+                          plan_7d: int | None = None) -> str | None:
     """Return the HUD string, or None if no active session found.
 
     If transcript_path is given (the statusLine protocol hands us the exact
@@ -168,6 +180,10 @@ def build_statusline_text(session_arg: str | None = None,
     if plan:
         parts.append(plan)
 
+    week = _weekly_segment(plan_7d)  # weekly window — only when getting close
+    if week:
+        parts.append(week)
+
     if snap["cum_cost"] >= 0.01:
         parts.append(f"~${snap['cum_cost']:.2f}")
 
@@ -200,6 +216,7 @@ def statusline_hud(session_arg: str | None = None) -> int:
     model = None
     effort = None
     plan_5h = None
+    plan_7d = None
     try:
         raw = sys.stdin.read() if not sys.stdin.isatty() else ""
         if raw.strip():
@@ -209,8 +226,8 @@ def statusline_hud(session_arg: str | None = None) -> int:
             eff = payload.get("effort")
             effort = eff.get("level") if isinstance(eff, dict) else None
             rl = payload.get("rate_limits") or {}
-            fh5 = rl.get("five_hour") or {}
-            plan_5h = fh5.get("used_percentage")
+            plan_5h = (rl.get("five_hour") or {}).get("used_percentage")
+            plan_7d = (rl.get("seven_day") or {}).get("used_percentage")
             cwd = (payload.get("cwd")
                    or (payload.get("workspace") or {}).get("current_dir"))
             if cwd and os.path.isdir(cwd):
@@ -218,6 +235,6 @@ def statusline_hud(session_arg: str | None = None) -> int:
     except Exception:
         pass
 
-    print(build_statusline_text(session_arg, transcript_path, model, effort, plan_5h)
+    print(build_statusline_text(session_arg, transcript_path, model, effort, plan_5h, plan_7d)
           or "mr · no session")
     return 0
