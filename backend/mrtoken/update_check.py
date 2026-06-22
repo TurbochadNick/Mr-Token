@@ -28,7 +28,7 @@ def update_nudge(local: str, latest: str | None) -> str | None:
         return None
     lv, rv = _semver(local), _semver(latest)
     if lv and rv and rv > lv:
-        return f"↑ update available: {latest} (you have v{local}) — run ./update.sh"
+        return f"↑ update available: {latest} (you have v{local}) — run `mrtoken-transcript update`"
     return None
 
 

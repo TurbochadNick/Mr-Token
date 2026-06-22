@@ -84,6 +84,40 @@ def cmd_uninstall(args):
                        remove_skills=not args.keep_skills))
 
 
+def cmd_update(args):
+    """Self-update: pull the latest into this git checkout, reinstall, re-sync hooks/skills.
+
+    The 'auto update' path for testers — no zip to send, no manual git dance. Runs
+    only on a git clone (collaborator access); silent no-op design on zip/no-git
+    installs. Fast-forward only, so it never clobbers local work or a dirty tree.
+    """
+    import os, subprocess
+    from mrtoken.update_check import _repo_root
+    root = _repo_root()
+    if not root:
+        print("mrtoken update: this install isn't a git checkout. Re-clone the repo "
+              "(git clone <url>) or grab a fresh build, then run `mrtoken-transcript init`.")
+        sys.exit(1)
+    print("▸ pulling latest…")
+    if subprocess.run(["git", "-C", root, "pull", "--ff-only"]).returncode != 0:
+        print("✗ couldn't fast-forward (local edits or diverged history). "
+              "Resolve in the repo, then retry — your install is unchanged.")
+        sys.exit(1)
+    print("▸ reinstalling backend + re-syncing hooks/skills…")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-e",
+                    os.path.join(root, "backend"), "-q"])
+    try:
+        from mrtoken.install import init
+        init(emit=lambda *a, **k: None)  # idempotent: refresh global hooks/skills
+    except Exception as e:
+        print(f"  (hook re-sync skipped: {e})")
+    # report the NEW version from a fresh interpreter (this process holds the old one)
+    ver = subprocess.run([sys.executable, "-c", "import mrtoken;print(mrtoken.__version__)"],
+                         capture_output=True, text=True).stdout.strip()
+    print(f"✓ updated — now on v{ver or '?'}")
+    sys.exit(0)
+
+
 def cmd_watch(args):
     from mrtoken.watch import watch
     sys.exit(watch(args.session, interval=args.interval, once=args.once))
@@ -215,6 +249,9 @@ def main(argv=None):
         help="print one-line HUD for Claude Code's statusLine setting (no DB write)")
     p_sl.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
 
+    sub.add_parser("update",
+        help="pull the latest release into this checkout, reinstall, re-sync hooks/skills")
+
     a = ap.parse_args(argv)
     if not a.cmd:
         ap.print_help(); return
@@ -228,7 +265,7 @@ def main(argv=None):
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,
-                "statusline": cmd_statusline}
+                "statusline": cmd_statusline, "update": cmd_update}
     dispatch[a.cmd](a)
 
 
