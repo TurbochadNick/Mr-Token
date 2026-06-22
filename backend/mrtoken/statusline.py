@@ -5,8 +5,8 @@ Reads the current session's live transcript, computes context %, cost,
 profile, and the highest-priority rule signal, then prints ONE line to stdout.
 
 Typical output:
-  mr · Opus 4.8·high · ctx 78% ⚠ · ~$1.20 · code · ⚠ retry loop
-  mr · Opus 4.8·medium · ctx 42% · ~$0.18 · research
+  mr · Opus 4.8·high · ctx 78% ⚠ · 5h 88%⚠ · ~$1.20 · code · ⚠ retry loop
+  mr · Opus 4.8·medium · ctx 42% · 5h 30% · ~$0.18 · research
   mr · no session
 
 Registered in Claude Code settings.json as `statusLine` (object form). NOTE:
@@ -20,6 +20,7 @@ import re
 
 CONTEXT_TIERS = (200_000, 1_000_000)  # known Claude context windows
 CONTEXT_WARN_PCT = 70                 # show ⚠ flag at this % of the window or above
+PLAN_WARN_PCT = 85                    # flag the 5h plan window at this % used or above
 
 
 def _config_context_max() -> int | None:
@@ -97,9 +98,18 @@ def _model_label(model) -> str | None:
     return disp or mid
 
 
+def _plan_segment(pct: int | None) -> str | None:
+    """5-hour subscription window usage, e.g. '5h 88%⚠' (⚠ when near the limit).
+    From the statusLine stdin payload's rate_limits.five_hour; absent otherwise."""
+    if pct is None:
+        return None
+    return f"5h {pct}%{'⚠' if pct >= PLAN_WARN_PCT else ''}"
+
+
 def build_statusline_text(session_arg: str | None = None,
                           transcript_path: str | None = None,
-                          model=None, effort: str | None = None) -> str | None:
+                          model=None, effort: str | None = None,
+                          plan_5h: int | None = None) -> str | None:
     """Return the HUD string, or None if no active session found.
 
     If transcript_path is given (the statusLine protocol hands us the exact
@@ -154,6 +164,10 @@ def build_statusline_text(session_arg: str | None = None,
         trend = f" ↗~{ttw}t" if (ttw and ctx_pct < CONTEXT_WARN_PCT and ttw <= 12) else ""
         parts.append(f"ctx {ctx_pct}%{flag}{trend}")
 
+    plan = _plan_segment(plan_5h)  # 5h subscription window (terminal/stdin only)
+    if plan:
+        parts.append(plan)
+
     if snap["cum_cost"] >= 0.01:
         parts.append(f"~${snap['cum_cost']:.2f}")
 
@@ -185,6 +199,7 @@ def statusline_hud(session_arg: str | None = None) -> int:
     transcript_path = None
     model = None
     effort = None
+    plan_5h = None
     try:
         raw = sys.stdin.read() if not sys.stdin.isatty() else ""
         if raw.strip():
@@ -193,6 +208,9 @@ def statusline_hud(session_arg: str | None = None) -> int:
             model = payload.get("model")
             eff = payload.get("effort")
             effort = eff.get("level") if isinstance(eff, dict) else None
+            rl = payload.get("rate_limits") or {}
+            fh5 = rl.get("five_hour") or {}
+            plan_5h = fh5.get("used_percentage")
             cwd = (payload.get("cwd")
                    or (payload.get("workspace") or {}).get("current_dir"))
             if cwd and os.path.isdir(cwd):
@@ -200,6 +218,6 @@ def statusline_hud(session_arg: str | None = None) -> int:
     except Exception:
         pass
 
-    print(build_statusline_text(session_arg, transcript_path, model, effort)
+    print(build_statusline_text(session_arg, transcript_path, model, effort, plan_5h)
           or "mr · no session")
     return 0

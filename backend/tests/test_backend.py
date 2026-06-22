@@ -355,6 +355,13 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(_model_label({"display_name": "Opus 4.8"}), "Opus 4.8")
         self.assertIsNone(_model_label(None))
 
+    def test_plan_segment_5h(self):
+        from mrtoken.statusline import _plan_segment
+        self.assertEqual(_plan_segment(5), "5h 5%")        # low -> no flag
+        self.assertEqual(_plan_segment(88), "5h 88%⚠")     # near limit -> flag
+        self.assertEqual(_plan_segment(0), "5h 0%")        # 0 is shown, not dropped
+        self.assertIsNone(_plan_segment(None))             # absent payload -> nothing
+
     def test_cli_reports_version(self):
         import io, contextlib
         from mrtoken.cli import main
