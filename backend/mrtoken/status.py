@@ -67,5 +67,12 @@ def print_status(db_path: str | None, session_arg: str | None) -> int:
         print(f"\n  next: [{s['top']['rule']}] {s['top']['message']}")
     else:
         print(f"\n  next: nothing flagged — burning clean.")
+    try:
+        from mrtoken.update_check import check_for_update
+        nudge = check_for_update()
+        if nudge:
+            print(f"\n  {nudge}")
+    except Exception:
+        pass  # never let an update check break status
     print()
     return 0

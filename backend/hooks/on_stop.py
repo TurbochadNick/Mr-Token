@@ -95,6 +95,14 @@ def main():
                 rec_line = f"  ·  [{rule}] {short}"
 
         message = (hud or f"mr · {totals['model_calls']} calls") + rec_line
+        # passive "update available" nudge (throttled once/day, silent on failure)
+        try:
+            from mrtoken.update_check import check_for_update
+            nudge = check_for_update()
+            if nudge:
+                message += "  ·  " + nudge
+        except Exception:
+            pass
         # Emit as a structured systemMessage (renders in the terminal CLI; the
         # desktop GUI app runs the hook for ingestion but does not surface this).
         print(json.dumps({"systemMessage": message}))

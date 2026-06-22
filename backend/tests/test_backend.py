@@ -335,6 +335,15 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(any(f.startswith("global-settings.json.mrtoken-bak")
                                 for f in os.listdir(tmp)))
 
+    def test_update_nudge_compares_versions(self):
+        from mrtoken.update_check import update_nudge
+        self.assertIsNone(update_nudge("0.4.2", "v0.4.2"))     # current -> quiet
+        self.assertIsNone(update_nudge("0.5.0", "v0.4.2"))     # ahead -> quiet
+        self.assertIsNone(update_nudge("0.4.1", None))         # no tag known -> quiet
+        nudge = update_nudge("0.4.1", "v0.4.2")                # behind -> nudge
+        self.assertIsNotNone(nudge)
+        self.assertIn("0.4.2", nudge)
+
     def test_cli_reports_version(self):
         import io, contextlib
         from mrtoken.cli import main
