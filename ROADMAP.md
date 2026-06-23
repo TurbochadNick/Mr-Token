@@ -153,7 +153,8 @@ task needs a human decision flagged with **⚑ decision**.
 
 ## Phase 4 — GTM / hardening *(parallelizable; first-run reliability is the real bottleneck)*
 
-- [ ] **4.1 — Install smoke test for the desktop-app path** *(regression guard)*
+- [x] **4.1 — Install smoke test for the desktop-app path** *(regression guard)*
+  → done: commit `5f8387d` on `feat/phase4-hardening`. Drives on_stop from an arbitrary cwd; asserts cwd-resolved DB ingest. 55 tests green.
   - **Why:** the global-Stop-hook bug + the empty-session noise both surfaced from real installs;
     lock the fixed behavior so it can't silently regress.
   - **Files:** `backend/tests/test_backend.py`. **Spec:** assert `init` registers the Stop hook
