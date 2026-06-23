@@ -356,23 +356,35 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("path", nargs="?", help="transcript .jsonl")
-    ap.add_argument("--all", action="store_true", help="ingest all ~/.claude/projects/**.jsonl")
+    ap.add_argument("--all", action="store_true",
+                    help="ingest every transcript under the projects root")
+    ap.add_argument("--backfill", action="store_true",
+                    help="ingest ALL local transcripts AND run the rule engine — build a "
+                         "corpus from your history in one shot (idempotent; safe to re-run)")
+    ap.add_argument("--projects-root", default=os.path.expanduser("~/.claude/projects"),
+                    help="root to scan for --all/--backfill (default: ~/.claude/projects)")
     ap.add_argument("--db", default=default_db_path())
     ap.add_argument("--rules", action="store_true", help="run rule engine after ingestion")
     a = ap.parse_args(argv)
+    scan_all = a.all or a.backfill        # backfill = scan everything…
+    run_rules = a.rules or a.backfill     # …and analyse it, so the corpus is queryable
     prices = load_prices()
     conn = connect(a.db)
     paths = []
-    if a.all:
+    if scan_all:
         # depth 2: main session transcripts  (<project>/<session>.jsonl)
         # depth 3: subagent transcripts       (<project>/<session>/subagents/agent-*.jsonl)
-        paths = (glob.glob(os.path.expanduser("~/.claude/projects/*/*.jsonl"))
-                 + glob.glob(os.path.expanduser("~/.claude/projects/*/*/subagents/agent-*.jsonl")))
+        root = a.projects_root
+        paths = (glob.glob(os.path.join(root, "*", "*.jsonl"))
+                 + glob.glob(os.path.join(root, "*", "*", "subagents", "agent-*.jsonl")))
     elif a.path:
         paths = [a.path]
     else:
-        ap.error("give a path or --all")
-    total = {"sessions": 0, "skipped": 0, "model_calls": 0, "tool_calls": 0, "recommendations": 0}
+        ap.error("give a path, --all, or --backfill")
+    # idempotent by construction: ingest_file replaces any prior rows for a session
+    # (trace.session_id is UNIQUE), so re-running converges to the same row counts.
+    total = {"seen": len(paths), "sessions": 0, "skipped": 0,
+             "model_calls": 0, "tool_calls": 0, "recommendations": 0}
     for p in paths:
         try:
             parent = p.split(os.sep)[-3] if "subagents" in p else None
@@ -383,7 +395,7 @@ def main(argv=None):
             total["sessions"] += 1
             total["model_calls"] += r["model_calls"]
             total["tool_calls"] += r["tool_calls"]
-            if a.rules:
+            if run_rules:
                 from mrtoken.rules import analyse
                 tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
                                    (r["session_id"],)).fetchone()[0]

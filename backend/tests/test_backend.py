@@ -547,6 +547,66 @@ class BackendTest(unittest.TestCase):
                 "WHERE source='claude_code' AND is_low_activity=0").fetchone()[0]
             self.assertEqual(sessions, 1)  # only 'real'
 
+    def test_backfill_idempotent_and_matches_single_file(self):
+        # `ingest --backfill --projects-root <root>` walks the history, honors the
+        # 1.1 low-activity rule, is idempotent on re-run, and a single-file ingest
+        # of the same transcript yields the same trace.
+        from mrtoken.ingest import main as ingest_main, connect, ingest_file, load_prices
+        import io, contextlib
+        def assistant(sid, mid, text):
+            return {"type": "assistant", "sessionId": sid, "uuid": sid + mid,
+                    "message": {"id": mid, "model": "claude-opus-4-8",
+                                "usage": {"input_tokens": 10, "output_tokens": 5},
+                                "content": [{"type": "text", "text": text}]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "projects")
+            # proj1/sess1: 2 calls (substantive)
+            os.makedirs(os.path.join(root, "proj1"))
+            write_jsonl(os.path.join(root, "proj1", "sess1.jsonl"),
+                        [assistant("sess1", "m1", "a"), assistant("sess1", "m2", "b")])
+            # proj2/sess2: 1 call (low-activity, still persisted)
+            os.makedirs(os.path.join(root, "proj2"))
+            write_jsonl(os.path.join(root, "proj2", "sess2.jsonl"), [assistant("sess2", "m1", "a")])
+            # proj3/emptyx: 0 calls (skipped, not persisted)
+            os.makedirs(os.path.join(root, "proj3"))
+            write_jsonl(os.path.join(root, "proj3", "emptyx.jsonl"),
+                        [{"type": "user", "message": {"content": "hi"}}])
+            # a subagent transcript (depth-3)
+            sub = os.path.join(root, "proj4", "parentsess", "subagents")
+            os.makedirs(sub)
+            write_jsonl(os.path.join(sub, "agent-1.jsonl"), [assistant("agent-1", "m1", "a")])
+
+            db = os.path.join(tmp, "corpus.db")
+            def run_backfill():
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    ingest_main(["--backfill", "--projects-root", root, "--db", db])
+                return json.loads(buf.getvalue())
+
+            summary = run_backfill()
+            self.assertEqual(summary["seen"], 4)      # 3 main + 1 subagent file seen
+            self.assertEqual(summary["skipped"], 1)   # the empty stub
+            self.assertEqual(summary["sessions"], 3)  # sess1, sess2, subagent persisted
+
+            conn = connect(db)
+            def counts():
+                return (conn.execute("SELECT COUNT(*) FROM trace").fetchone()[0],
+                        conn.execute("SELECT COUNT(*) FROM model_call").fetchone()[0])
+            first = counts()
+            self.assertEqual(first[0], 3)  # empty not persisted
+
+            # idempotent: a second backfill converges to identical row counts
+            run_backfill()
+            self.assertEqual(counts(), first)
+
+            # single-file ingest of sess1 matches the backfilled trace
+            single_db = os.path.join(tmp, "single.db")
+            sconn = connect(single_db)
+            ingest_file(sconn, os.path.join(root, "proj1", "sess1.jsonl"), load_prices())
+            self.assertEqual(
+                sconn.execute("SELECT model_calls FROM session_summary WHERE session_id='sess1'").fetchone()[0],
+                conn.execute("SELECT model_calls FROM session_summary WHERE session_id='sess1'").fetchone()[0])
+
     def test_ingest_extracts_title_and_export_redacts(self):
         from mrtoken.ingest import connect, ingest_file, load_prices
         from mrtoken.rules import analyse

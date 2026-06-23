@@ -31,12 +31,16 @@ def _open(db_path):
 def cmd_ingest(args):
     from mrtoken.ingest import main as _main
     argv = []
-    if args.all:
+    if getattr(args, "backfill", False):
+        argv += ["--backfill"]
+    elif args.all:
         argv += ["--all"]
     elif args.file:
         argv += [args.file]
     else:
-        print("mrtoken-transcript ingest: give a file or --all"); sys.exit(1)
+        print("mrtoken-transcript ingest: give a file, --all, or --backfill"); sys.exit(1)
+    if getattr(args, "projects_root", None):
+        argv += ["--projects-root", args.projects_root]
     argv += ["--db", args.db]
     if args.rules:
         argv += ["--rules"]
@@ -174,6 +178,9 @@ def main(argv=None):
     p_ingest = sub.add_parser("ingest", help="ingest Claude Code transcript(s)")
     p_ingest.add_argument("file", nargs="?", help="path to .jsonl transcript")
     p_ingest.add_argument("--all", action="store_true", help="ingest all ~/.claude/projects/**")
+    p_ingest.add_argument("--backfill", action="store_true",
+        help="ingest ALL local transcripts + run rules (build a corpus; idempotent)")
+    p_ingest.add_argument("--projects-root", help="root to scan (default ~/.claude/projects)")
     p_ingest.add_argument("--rules", action="store_true", help="run rule engine after ingestion")
     p_ingest.add_argument("--db", dest="db_sub")  # allow --db after subcommand too
 
