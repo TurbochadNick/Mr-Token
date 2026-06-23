@@ -68,10 +68,13 @@ def print_status(db_path: str | None, session_arg: str | None) -> int:
     else:
         print(f"\n  next: nothing flagged — burning clean.")
     try:
-        from mrtoken.update_check import check_for_update
+        from mrtoken.update_check import check_for_update, release_tag_warning
         nudge = check_for_update()
         if nudge:
             print(f"\n  {nudge}")
+        gap = release_tag_warning()  # maintainer-facing; silent on non-git installs
+        if gap:
+            print(f"\n  {gap}")
     except Exception:
         pass  # never let an update check break status
     print()

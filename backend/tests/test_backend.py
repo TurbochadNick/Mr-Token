@@ -598,6 +598,16 @@ class BackendTest(unittest.TestCase):
         self.assertIsNotNone(nudge)
         self.assertIn("0.4.2", nudge)
 
+    def test_release_tag_gap_flags_untagged_release(self):
+        # ROADMAP 4.2: warn when declared version is AHEAD of the latest tag.
+        from mrtoken.update_check import release_tag_gap
+        w = release_tag_gap("0.4.4", "v0.4.3")                 # code ahead of tag -> warn
+        self.assertIsNotNone(w)
+        self.assertIn("not tagged", w)
+        self.assertIsNone(release_tag_gap("0.4.3", "v0.4.3"))  # equal -> quiet
+        self.assertIsNone(release_tag_gap("0.4.3", "v0.4.4"))  # behind -> quiet (nudge's job)
+        self.assertIsNone(release_tag_gap("0.4.4", None))      # no tags -> quiet (no false positive)
+
     def test_model_label_for_hud(self):
         from mrtoken.statusline import _model_label
         # statusLine model object: terse display name -> enrich version from id
