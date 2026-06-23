@@ -348,6 +348,59 @@ class BackendTest(unittest.TestCase):
                                   "message": {"id": "m", "usage": {"input_tokens": 1}}}])
             self.assertFalse(_is_codex_transcript(claude))
 
+    def test_stop_hook_ingests_from_arbitrary_cwd(self):
+        # ROADMAP 4.1 (regression guard): the now-global Stop hook resolves the
+        # per-project DB from the session payload's cwd and ingests — the fix for
+        # desktop-app sessions started in any folder. Locks it so it can't regress.
+        import importlib.util, io, sys as _sys, mrtoken, mrtoken.ingest
+        backend = os.path.dirname(os.path.dirname(mrtoken.__file__))
+        spec = importlib.util.spec_from_file_location(
+            "on_stop_test", os.path.join(backend, "hooks", "on_stop.py"))
+        on_stop = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(on_stop)
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = os.path.join(tmp, "projects")
+            os.makedirs(os.path.join(projects, "p"))
+            sid = "sess-arb"
+            write_jsonl(os.path.join(projects, "p", f"{sid}.jsonl"), [
+                {"type": "assistant", "sessionId": sid, "uuid": "a1",
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "x"}]}},
+                {"type": "assistant", "sessionId": sid, "uuid": "a2",
+                 "message": {"id": "m2", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "y"}]}},
+            ])
+            db = os.path.join(tmp, "resolved.db")
+            seen = {}
+            def fake_default_db_path(cwd=None):
+                seen["cwd"] = cwd
+                return db
+            on_stop.PROJECTS = projects
+            orig = mrtoken.ingest.default_db_path
+            mrtoken.ingest.default_db_path = fake_default_db_path
+            orig_stdin = _sys.stdin
+            saved_env = os.environ.pop("MRTOKEN_DB", None)  # ensure cwd-resolution path
+            _sys.stdin = io.StringIO(json.dumps(
+                {"session_id": sid, "cwd": "/some/arbitrary/folder"}))
+            import contextlib
+            try:
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        on_stop.main()
+                except SystemExit:
+                    pass
+            finally:
+                mrtoken.ingest.default_db_path = orig
+                _sys.stdin = orig_stdin
+                if saved_env is not None:
+                    os.environ["MRTOKEN_DB"] = saved_env
+            self.assertEqual(seen.get("cwd"), "/some/arbitrary/folder")  # used the payload cwd
+            n = sqlite3.connect(db).execute(
+                "SELECT COUNT(*) FROM trace WHERE session_id=?", (sid,)).fetchone()[0]
+            self.assertEqual(n, 1)  # and a trace landed in the cwd-resolved DB
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
