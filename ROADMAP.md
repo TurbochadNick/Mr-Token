@@ -114,7 +114,8 @@ task needs a human decision flagged with **⚑ decision**.
 
 ## Phase 3 — Product *(unlock as rules prove out)*
 
-- [ ] **3.1 — New rule: step-count / runaway-loop**
+- [x] **3.1 — New rule: step-count / runaway-loop**
+  → done: commit `28e2444` on `fix/empty-session-noise`. `step_runaway` rule; corpus: 24 fires / 92% proxy. 50 tests green.
   - **Files:** `backend/mrtoken/rules.py`, tests. **Spec:** flag sessions whose model_call count
     per task is a clear outlier (the Stanford "30× by steps" failure mode). **Acceptance:**
     fires on a fabricated runaway trace, silent on a normal one; added to `validate`.
