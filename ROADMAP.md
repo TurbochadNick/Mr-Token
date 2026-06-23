@@ -126,7 +126,8 @@ task needs a human decision flagged with **⚑ decision**.
     sidechains, show whether the subagent saved or cost net tokens vs. inline. **Acceptance:**
     a session with a known-good subagent reads as positive ROI; a thrashing one reads negative.
 
-- [ ] **3.3 — Context-rot / degradation hint** *(soft signal only)*
+- [x] **3.3 — Context-rot / degradation hint** *(soft signal only)*
+  → done: commit `a491fb5` on `feat/phase3-product`. `context_rot` info-only rule; corpus: 18 fires, all info. 52 tests green.
   - **Files:** `backend/mrtoken/rules.py`. **Spec:** a *soft* hint when context grows large with
     falling cache efficiency / rising re-reads (quality risk, not a hard rule). Keep it a hint,
     per the brief. **Acceptance:** fires as a low-severity hint only; never high.
