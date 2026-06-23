@@ -49,6 +49,12 @@ def report(conn: sqlite3.Connection, prefix: str):
     total_tok = (inp or 0) + (out or 0)
     print(f"  total tokens        {fmt(total_tok):>12}")
 
+    # subagent ROI (only if this session spawned subagents)
+    from mrtoken.subagents import roi_summary_line
+    roi_line = roi_summary_line(conn, sid)
+    if roi_line:
+        print(f"  subagents           {roi_line}")
+
     # largest tool outputs
     tools = conn.execute("""SELECT tool_name, output_chars, is_error FROM tool_call
         WHERE trace_id=? AND output_chars IS NOT NULL ORDER BY output_chars DESC LIMIT 5""",

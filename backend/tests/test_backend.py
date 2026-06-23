@@ -221,6 +221,41 @@ class BackendTest(unittest.TestCase):
         self.assertIsNotNone(rep)                    # wired into validate
         self.assertEqual(rep["strong"], rep["fired"])  # churn → strong
 
+    def test_subagent_net_roi_positive_and_negative(self):
+        # ROADMAP 3.2: a focused subagent reads positive net vs inline; a thrashing
+        # one (returns more than it digested) reads negative.
+        from mrtoken.subagents import get_subagent_data, session_net_tokens, roi_summary_line
+        conn = connect(":memory:")
+        def trace(sid, source, parent=None, started="2026-06-01T00:00:00Z"):
+            return conn.execute(
+                "INSERT INTO trace(session_id,source,parent_session_id,started_at,ingested_at) "
+                "VALUES(?,?,?,?,?)", (sid, source, parent, started, started)).lastrowid
+        # GOOD: subagent digests ~50k, hands back ~100 tok → large positive net
+        p1 = trace("parent1", "claude_code")
+        s1 = trace("sub1", "claude_code_subagent", "parent1", "2026-06-01T00:10:00Z")
+        conn.execute("INSERT INTO model_call(trace_id,timestamp,input_tokens,output_tokens) "
+                     "VALUES(?,?,?,?)", (s1, "2026-06-01T00:10:00Z", 25000, 25000))
+        conn.execute("INSERT INTO tool_call(trace_id,tool_name,output_chars,ended_at) "
+                     "VALUES(?,?,?,?)", (p1, "Task", 400, "2026-06-01T00:10:01Z"))
+        # THRASHING: subagent does ~500 tok of work, result is ~2000 tok → negative net
+        p2 = trace("parent2", "claude_code")
+        s2 = trace("sub2", "claude_code_subagent", "parent2", "2026-06-02T00:10:00Z")
+        conn.execute("INSERT INTO model_call(trace_id,timestamp,input_tokens,output_tokens) "
+                     "VALUES(?,?,?,?)", (s2, "2026-06-02T00:10:00Z", 300, 200))
+        conn.execute("INSERT INTO tool_call(trace_id,tool_name,output_chars,ended_at) "
+                     "VALUES(?,?,?,?)", (p2, "Task", 8000, "2026-06-02T00:10:01Z"))
+        conn.commit()
+
+        good = get_subagent_data(conn, "parent1")
+        self.assertEqual(len(good), 1)
+        self.assertGreater(good[0]["net_tokens"], 0)
+        self.assertGreater(session_net_tokens(good), 0)
+        self.assertIn("saved", roi_summary_line(conn, "parent1"))
+
+        bad = get_subagent_data(conn, "parent2")
+        self.assertLess(bad[0]["net_tokens"], 0)
+        self.assertIn("ADDED", roi_summary_line(conn, "parent2"))
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
