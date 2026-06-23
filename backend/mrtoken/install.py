@@ -7,8 +7,11 @@ transcript-derived token data automatically:
 
   1. resolve the project root (git / package.json / pyproject.toml)
   2. create .token-tithe/token-tithe.db (the SHARED DB the TS CLI also uses)
-  3. install a project-local Stop hook into .claude/settings.local.json that
-     ingests each finished session into that DB and runs the rule engine
+  3. install the Stop hook into GLOBAL ~/.claude/settings.json — the same place
+     the statusLine, per-turn/PreCompact hooks, and skills go — so it fires for
+     sessions started from ANY folder (the desktop app runs sessions from many
+     directories). on_stop.py resolves the correct per-project DB from the
+     session payload's cwd, so global registration still lands data per project.
 
 Safe by design: backs up an existing settings file first, preserves all existing
 settings and hooks, and is idempotent (won't add our hook twice).
@@ -187,7 +190,7 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
     settings_path = settings_path or os.path.join(root, ".claude", "settings.local.json")
     global_settings_path = global_settings_path or os.path.expanduser("~/.claude/settings.json")
 
-    # project-local: the Stop hook
+    # project-local: a legacy Stop hook (newer installs register it globally below)
     settings = _load_settings(settings_path)
     if _already_installed(settings):
         _backup(settings_path)
@@ -198,9 +201,11 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
     else:
         emit("  · no project Stop hook found")
 
-    # global: statusLine + UserPromptSubmit + PreCompact
+    # global: Stop + statusLine + UserPromptSubmit + PreCompact
     g = _load_settings(global_settings_path)
-    changed = False
+    changed = bool(_strip_hooks(g, "Stop", HOOK_MARKER))
+    if changed:
+        emit("  ✓ removed global Stop hook")
     if statusline_command() in json.dumps(g.get("statusLine") or ""):
         g.pop("statusLine", None); changed = True
         emit("  ✓ removed statusLine HUD bar")
@@ -231,8 +236,12 @@ def init(project_root: str | None = None, settings_path: str | None = None,
          dry_run: bool = False, emit=print) -> int:
     root = find_project_root(project_root)
     db_path = resolve_db_path(root)  # shared contract (per-project for real projects)
-    settings_path = settings_path or os.path.join(root, ".claude", "settings.local.json")
     global_settings_path = global_settings_path or os.path.expanduser("~/.claude/settings.json")
+    # The Stop INGEST hook defaults to GLOBAL settings now (see module docstring).
+    # An explicit --settings still targets that file (legacy / advanced).
+    stop_hook_path = settings_path or global_settings_path
+    stop_hook_global = os.path.abspath(stop_hook_path) == os.path.abspath(global_settings_path)
+    legacy_local = os.path.join(root, ".claude", "settings.local.json")
 
     emit(f"mrtoken init ▸ project root: {root}")
 
@@ -245,13 +254,16 @@ def init(project_root: str | None = None, settings_path: str | None = None,
 
     if dry_run:
         emit(f"  would create DB:            {db_path}")
-        emit(f"  would edit settings:        {settings_path}")
-        emit(f"  would add Stop hook:        {hook_command()}")
         emit(f"  would install skills:       {', '.join('/'+s for s in skills) or '(none)'} → {skills_root}")
         emit(f"  would edit global settings: {global_settings_path}")
+        emit(f"    Stop hook command:        {hook_command()}"
+             + ("" if stop_hook_global else f"  (→ {stop_hook_path})"))
         emit(f"    statusLine command:       {statusline_command()}")
         emit(f"    UserPromptSubmit command: {prompt_hook_command()}")
         emit(f"    PreCompact command:       {compact_hook_command()}")
+        if stop_hook_global and legacy_local != global_settings_path \
+                and _already_installed(_load_settings(legacy_local)):
+            emit(f"  would remove legacy project-local Stop hook: {legacy_local}")
         return 0
 
     # 1 + 2: create the shared DB (connect() makes the dir, tables, view)
@@ -263,26 +275,46 @@ def init(project_root: str | None = None, settings_path: str | None = None,
     if installed:
         emit(f"  ✓ installed skills:    {', '.join('/'+s for s in installed)}  ({skills_root})")
 
-    # 4: install the Stop hook, preserving everything
-    settings = _load_settings(settings_path)
-    if _already_installed(settings):
-        emit("  ✓ Stop hook already installed")
-    else:
-        backup = _backup(settings_path)
-        if backup:
-            emit(f"  ✓ backed up settings:  {os.path.basename(backup)}")
-        _add_hook(settings)
-        os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-        with open(settings_path, "w", encoding="utf-8") as fh:
-            json.dump(settings, fh, indent=2)
-            fh.write("\n")
-        emit(f"  ✓ installed Stop hook: {settings_path}")
+    # 4 (legacy override only): if --settings points at a non-global file, install
+    # the Stop hook there, preserving everything. Default path is global (step 5).
+    if not stop_hook_global:
+        settings = _load_settings(stop_hook_path)
+        if _already_installed(settings):
+            emit("  ✓ Stop hook already installed")
+        else:
+            backup = _backup(stop_hook_path)
+            if backup:
+                emit(f"  ✓ backed up settings:  {os.path.basename(backup)}")
+            _add_hook(settings)
+            os.makedirs(os.path.dirname(stop_hook_path), exist_ok=True)
+            with open(stop_hook_path, "w", encoding="utf-8") as fh:
+                json.dump(settings, fh, indent=2)
+                fh.write("\n")
+            emit(f"  ✓ installed Stop hook: {stop_hook_path}")
 
-    # 5: set the statusLine (ambient HUD bar) + UserPromptSubmit/PreCompact hooks
-    # in global Claude Code settings (idempotent). statusLine is the primary
+    # 5: set the Stop hook (default), statusLine (ambient HUD bar), and the
+    # UserPromptSubmit/PreCompact hooks in global Claude Code settings (idempotent)
+    # so they fire for sessions started from any folder. statusLine is the primary
     # surface; the hooks are belt-and-suspenders for clients that render them.
     global_settings = _load_settings(global_settings_path)
     changed = False
+
+    if stop_hook_global:
+        if _already_installed(global_settings):
+            emit("  ✓ Stop hook already installed (global)")
+        else:
+            _add_hook(global_settings)
+            changed = True
+            emit("  ✓ Stop hook → global settings (fires for sessions in any folder)")
+        # migrate away a legacy project-local Stop hook so it can't double-fire
+        if legacy_local != global_settings_path:
+            local = _load_settings(legacy_local)
+            if _already_installed(local):
+                _backup(legacy_local)
+                _strip_hooks(local, "Stop", HOOK_MARKER)
+                with open(legacy_local, "w", encoding="utf-8") as fh:
+                    json.dump(local, fh, indent=2); fh.write("\n")
+                emit(f"  ✓ removed legacy project-local Stop hook (now global): {legacy_local}")
 
     desired_sl = statusline_block()
     existing_sl = global_settings.get("statusLine")
