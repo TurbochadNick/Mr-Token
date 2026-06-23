@@ -256,6 +256,33 @@ class BackendTest(unittest.TestCase):
         self.assertLess(bad[0]["net_tokens"], 0)
         self.assertIn("ADDED", roi_summary_line(conn, "parent2"))
 
+    def test_context_rot_soft_hint(self):
+        # ROADMAP 3.3: fires info-only when context is large AND cache efficiency
+        # falls; silent on short sessions; never high.
+        from mrtoken.rules import rule_context_rot
+        conn, tid = make_trace()
+        # 24 calls: first half heavily cached (large carry), second half cache falls
+        for i in range(24):
+            if i < 12:
+                inp, cr = 1000, 120_000   # ratio ~0.99, peak carry 120k
+            else:
+                inp, cr = 100_000, 20_000  # ratio ~0.17 → big drop
+            conn.execute("INSERT INTO model_call(trace_id,timestamp,input_tokens,"
+                         "cache_read_input_tokens) VALUES(?,?,?,?)",
+                         (tid, f"2026-06-01T00:{i:02d}:00Z", inp, cr))
+        conn.commit()
+        recs = rule_context_rot(conn, tid)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["rule"], "context_rot")
+        self.assertEqual(recs[0]["severity"], "info")  # never high — it's a soft hint
+
+        short, stid = make_trace()  # too few calls → silent
+        for i in range(5):
+            short.execute("INSERT INTO model_call(trace_id,timestamp,cache_read_input_tokens) "
+                          "VALUES(?,?,?)", (stid, f"2026-06-01T00:0{i}:00Z", 120_000))
+        short.commit()
+        self.assertEqual(rule_context_rot(short, stid), [])
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
