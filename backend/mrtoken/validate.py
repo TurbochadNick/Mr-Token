@@ -37,18 +37,27 @@ def _calls_after(conn, tid, ts) -> int:
 def _check_huge_tool_output(conn, tid, ev) -> tuple[str, str]:
     # A huge output only wastes tokens if it PERSISTS in context — i.e. many
     # model calls follow it. If it landed near the end, the advice is moot.
-    tuid = ev.get("tool_use_id")
-    row = conn.execute("""
-        SELECT mc.timestamp FROM tool_call tc
-        LEFT JOIN model_call mc ON mc.id = tc.model_call_id
-        WHERE tc.trace_id=? AND tc.tool_use_id=?""", (tid, tuid)).fetchone()
-    ts = row[0] if row else None
-    after = _calls_after(conn, tid, ts)
-    if after < 3:
-        return "moot", f"output landed near session end ({after} calls after) — not carried"
-    if after >= 10:
-        return "strong", f"output persisted in context for {after} subsequent calls"
-    return "weak", f"only {after} calls carried the output"
+    # The rule collapses possibly-many oversized outputs into ONE rec and records
+    # them under `offenders[]` (there is no top-level tool_use_id). Corroborate on
+    # the WORST-persisting offender: the rec is justified if ANY big output carried.
+    offenders = ev.get("offenders") or []
+    if not offenders and ev.get("tool_use_id"):  # tolerate an older single-id shape
+        offenders = [{"tool_use_id": ev["tool_use_id"]}]
+    best_after = 0
+    for off in offenders:
+        tuid = off.get("tool_use_id")
+        if not tuid:
+            continue
+        row = conn.execute("""
+            SELECT mc.timestamp FROM tool_call tc
+            LEFT JOIN model_call mc ON mc.id = tc.model_call_id
+            WHERE tc.trace_id=? AND tc.tool_use_id=?""", (tid, tuid)).fetchone()
+        best_after = max(best_after, _calls_after(conn, tid, row[0] if row else None))
+    if best_after < 3:
+        return "moot", f"largest output landed near session end ({best_after} calls after) — not carried"
+    if best_after >= 10:
+        return "strong", f"oversized output persisted in context for {best_after} subsequent calls"
+    return "weak", f"only {best_after} calls carried the output"
 
 
 def _check_retry_loop(conn, tid, ev) -> tuple[str, str]:

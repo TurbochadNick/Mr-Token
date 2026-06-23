@@ -175,6 +175,27 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rule_repeated_context(conn, tid), [],
                          "cached re-sends should not fire repeated_context")
 
+    def test_validate_huge_tool_output_reads_offenders(self):
+        # regression (ROADMAP 2.2): corroboration must locate the offending tool
+        # call via evidence offenders[], not a (nonexistent) top-level tool_use_id,
+        # else every huge_tool_output fire is wrongly scored "moot".
+        from mrtoken.rules import analyse
+        from mrtoken.validate import validate_db
+        conn, tid = make_trace()
+        cur = conn.execute("INSERT INTO model_call(trace_id, timestamp) VALUES(?,?)",
+                           (tid, "2026-06-01T00:00:00Z"))
+        mc0 = cur.lastrowid
+        conn.execute("INSERT INTO tool_call(trace_id, model_call_id, tool_use_id, tool_name, "
+                     "output_chars) VALUES(?,?,?,?,?)", (tid, mc0, "t1", "Bash", 60_000))
+        for s in range(1, 11):  # 10 calls AFTER the huge output → should corroborate strong
+            conn.execute("INSERT INTO model_call(trace_id, timestamp) VALUES(?,?)",
+                         (tid, f"2026-06-01T00:00:{s:02d}Z"))
+        conn.commit()
+        analyse(conn, tid)
+        rep = validate_db(conn)["rules"]["huge_tool_output"]
+        self.assertEqual(rep["strong"], 1)  # the fix located the offender
+        self.assertEqual(rep["moot"], 0)
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
