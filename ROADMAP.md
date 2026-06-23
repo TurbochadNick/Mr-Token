@@ -153,21 +153,26 @@ task needs a human decision flagged with **⚑ decision**.
 
 ## Phase 4 — GTM / hardening *(parallelizable; first-run reliability is the real bottleneck)*
 
-- [ ] **4.1 — Install smoke test for the desktop-app path** *(regression guard)*
+- [x] **4.1 — Install smoke test for the desktop-app path** *(regression guard)*
+  → done: commit `5f8387d` on `feat/phase4-hardening`. Drives on_stop from an arbitrary cwd; asserts cwd-resolved DB ingest. 55 tests green.
   - **Why:** the global-Stop-hook bug + the empty-session noise both surfaced from real installs;
     lock the fixed behavior so it can't silently regress.
   - **Files:** `backend/tests/test_backend.py`. **Spec:** assert `init` registers the Stop hook
     globally, migrates a legacy project-local hook, and that a simulated Stop from an arbitrary
     cwd ingests into the cwd-resolved DB. **Acceptance:** test added and green.
 
-- [ ] **4.2 — Release discipline: tag check in `doctor`/`update`**
+- [x] **4.2 — Release discipline: tag check in `doctor`/`update`**
+  → done: commit `53221f1` on `feat/phase4-hardening`. `release_tag_warning` in `status`; caught + fixed a
+    real 0.4.4 pyproject/`__init__` version drift. 56 tests green.
   - **Why:** we shipped `0.4.4` in `pyproject.toml` but the update-nudge keys off git tags, so
     an untagged bump reaches no one. Make the gap visible.
   - **Files:** `backend/mrtoken/update_check.py`, `doctor`/`status` surface. **Spec:** warn when
     the installed/declared version is ahead of the latest git tag ("release not tagged"). Don't
     auto-tag. **Acceptance:** with version > latest tag, the warning shows; when equal, quiet.
 
-- [ ] **4.3 — Positioning: rate-limit-first copy**
+- [x] **4.3 — Positioning: rate-limit-first copy**
+  → done: commit `97e6794` on `feat/phase4-hardening`. Backend copy (fresh_handoff nudge + BRIEF one-liner)
+    leads with limits/quality; HUD already did. README left to Nick with a suggested line (in commit msg). 56 tests green.
   - **Why:** most users are flat-rate and hitting plan caps; "do more within your limits" lands
     harder than "save money." **Files:** `README.md`, HUD/nudge copy. **Spec:** lead with the
     rate-limit + quality angle, keep the cost angle secondary. **Acceptance:** README one-liner

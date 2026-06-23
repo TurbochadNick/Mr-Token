@@ -32,6 +32,41 @@ def update_nudge(local: str, latest: str | None) -> str | None:
     return None
 
 
+def release_tag_gap(local: str, latest_tag: str | None) -> str | None:
+    """Pure: warn if the DECLARED version is AHEAD of the latest release tag — a
+    version bump shipped in code but was never tagged, so the update nudge (which
+    keys off tags) won't offer it to anyone. Quiet when equal or when no tags exist."""
+    lv, tv = _semver(local), (_semver(latest_tag) if latest_tag else None)
+    if lv and tv and lv > tv:
+        return (f"⚠ release not tagged: code is v{local} but latest tag is {latest_tag}. "
+                f"Tag + push it (git tag v{local} && git push --tags) so the update "
+                f"nudge can reach users.")
+    return None
+
+
+def _latest_local_tag(root: str) -> str | None:
+    try:
+        out = subprocess.run(["git", "-C", root, "tag"],
+                             capture_output=True, text=True, timeout=_NET_TIMEOUT).stdout
+    except Exception:
+        return None
+    best = None
+    for line in out.splitlines():
+        sv = _semver(line.strip())
+        if sv and (best is None or sv > best[0]):
+            best = (sv, line.strip())
+    return best[1] if best else None
+
+
+def release_tag_warning() -> str | None:
+    """Maintainer-facing: declared version ahead of the newest local tag? Uses local
+    `git tag` (fast, no network); silent on non-git installs, so users never see it."""
+    root = _repo_root()
+    if not root:
+        return None
+    return release_tag_gap(__version__, _latest_local_tag(root))
+
+
 def _repo_root() -> str | None:
     cur = os.path.dirname(os.path.abspath(__file__))
     for _ in range(6):
