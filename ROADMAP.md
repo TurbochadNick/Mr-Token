@@ -143,7 +143,9 @@ task needs a human decision flagged with **⚑ decision**.
     on, a high-waste session yields a suggestion and a low-waste one does not. **⚑ decision:**
     confirm the savings-vs-spend ratio before enabling by default.
 
-- [ ] **3.5 — Codex transcript ingestion (2nd agent)** *(gated: only after Phase 2 passes for Claude Code)*
+- [x] **3.5 — Codex transcript ingestion (2nd agent)** *(gated: only after Phase 2 passes for Claude Code)*
+  → done: commit `523269e` on `feat/phase3-product`. `ingest_codex.py` adapter (source='codex'), auto-routed.
+    Verified on a real rollout: 292 calls / 366 tools / 3 recs. 54 tests green. Codex-dir backfill → backlog.
   - **Files:** `backend/mrtoken/ingest.py` (source adapter), `schema.sql` (`source` already
     generic). **Spec:** parse Codex session logs into the same `trace → model_call/tool_call`
     model; reuse the rule engine. **Acceptance:** a sample Codex session ingests and reports
@@ -174,6 +176,8 @@ task needs a human decision flagged with **⚑ decision**.
 ---
 
 ## Backlog / not yet scheduled
+- **Codex-dir backfill** — extend `ingest --backfill` to also scan `~/.codex/sessions/**` via the
+  Codex adapter (today the adapter ingests one rollout at a time / auto-routed single files). Surfaced by 3.5.
 - **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
   same project shortly after a `fresh_handoff` fired, so the acted-vs-ignored split is real
   (current B is degenerate because the rule only fires on already-deep sessions). Surfaced by 2.1.
