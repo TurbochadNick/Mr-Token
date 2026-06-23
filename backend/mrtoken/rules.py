@@ -305,6 +305,27 @@ def rule_re_read_loop(conn, tid: int) -> list:
                  wasted or None)]
 
 
+STEP_RUNAWAY_WARN = 120   # model calls in ONE session — an unusually high step count
+STEP_RUNAWAY_HIGH = 250
+
+
+def rule_step_runaway(conn, tid: int) -> list:
+    """An extreme number of steps (model calls) in one session is itself a cost
+    driver — the same task can cost far more purely by taking more steps (Stanford
+    agent-spend study). Distinct from fresh_handoff (which keys on cost/cache growth):
+    this flags raw step-count outliers, where re-planning or a reset usually helps."""
+    n = conn.execute("SELECT COUNT(*) FROM model_call WHERE trace_id=?", (tid,)).fetchone()[0]
+    if n < STEP_RUNAWAY_WARN:
+        return []
+    tools = conn.execute("SELECT COUNT(*) FROM tool_call WHERE trace_id=?", (tid,)).fetchone()[0]
+    sev = "high" if n >= STEP_RUNAWAY_HIGH else "warn"
+    return [_rec("step_runaway", sev,
+                 f"{n} model calls in one session ({tools} tool calls) — an unusually high "
+                 f"step count. Steps compound token cost; consider /mr-handoff to reset or "
+                 f"re-planning the approach so the agent takes fewer, bigger steps.",
+                 {"model_calls": n, "tool_calls": tools})]
+
+
 ALL_RULES = [
     rule_repeated_context,
     rule_huge_tool_output,
@@ -312,6 +333,7 @@ ALL_RULES = [
     rule_low_cache,
     rule_fresh_handoff,
     rule_re_read_loop,
+    rule_step_runaway,
 ]
 
 

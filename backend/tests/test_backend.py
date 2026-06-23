@@ -196,6 +196,31 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rep["strong"], 1)  # the fix located the offender
         self.assertEqual(rep["moot"], 0)
 
+    def test_step_runaway_rule_and_validate(self):
+        # ROADMAP 3.1: flag extreme step counts; silent on normal sessions; corroborated.
+        from mrtoken.rules import rule_step_runaway, analyse
+        from mrtoken.validate import validate_db
+        normal, ntid = make_trace()
+        for i in range(10):
+            normal.execute("INSERT INTO model_call(trace_id,timestamp) VALUES(?,?)",
+                           (ntid, f"2026-06-01T00:00:{i:02d}Z"))
+        self.assertEqual(rule_step_runaway(normal, ntid), [])  # well under the floor
+
+        conn, tid = make_trace()
+        for i in range(130):  # runaway step count, with early churn (errored tools)
+            cur = conn.execute("INSERT INTO model_call(trace_id,timestamp) VALUES(?,?)",
+                               (tid, f"2026-06-01T{i//60:02d}:{i%60:02d}:00Z"))
+            if i < 6:
+                conn.execute("INSERT INTO tool_call(trace_id,model_call_id,tool_name,is_error) "
+                             "VALUES(?,?,?,1)", (tid, cur.lastrowid, "Bash"))
+        conn.commit()
+        recs = rule_step_runaway(conn, tid)
+        self.assertEqual(recs[0]["rule"], "step_runaway")
+        analyse(conn, tid)
+        rep = validate_db(conn)["rules"].get("step_runaway")
+        self.assertIsNotNone(rep)                    # wired into validate
+        self.assertEqual(rep["strong"], rep["fired"])  # churn → strong
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
