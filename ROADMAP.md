@@ -161,7 +161,9 @@ task needs a human decision flagged with **⚑ decision**.
     globally, migrates a legacy project-local hook, and that a simulated Stop from an arbitrary
     cwd ingests into the cwd-resolved DB. **Acceptance:** test added and green.
 
-- [ ] **4.2 — Release discipline: tag check in `doctor`/`update`**
+- [x] **4.2 — Release discipline: tag check in `doctor`/`update`**
+  → done: commit `53221f1` on `feat/phase4-hardening`. `release_tag_warning` in `status`; caught + fixed a
+    real 0.4.4 pyproject/`__init__` version drift. 56 tests green.
   - **Why:** we shipped `0.4.4` in `pyproject.toml` but the update-nudge keys off git tags, so
     an untagged bump reaches no one. Make the gap visible.
   - **Files:** `backend/mrtoken/update_check.py`, `doctor`/`status` surface. **Spec:** warn when
