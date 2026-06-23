@@ -14,7 +14,18 @@ honest about the difference. Metadata-only; it never stores raw content.
 from __future__ import annotations
 import json
 
+from mrtoken.ingest import MIN_ACTIVITY
+
 SCHEMA = "mrtoken.session_summary.v1"
+
+
+def _is_low_activity(session: dict) -> bool:
+    """Honor an explicit is_low_activity flag; fall back to model_calls for
+    pre-1.1 exports (e.g. a 0.4.1 tester file) that predate the flag."""
+    flag = session.get("is_low_activity")
+    if flag is not None:
+        return bool(flag)
+    return (session.get("model_calls") or 0) < MIN_ACTIVITY["model_calls"]
 
 
 def load_export(path: str) -> dict:
@@ -56,7 +67,7 @@ def summarize_exports(paths: list[str]) -> dict:
         if doc.get("tool_version"):
             agg["tool_versions"].add(doc["tool_version"])
         for s in doc["sessions"]:
-            if s.get("is_low_activity"):
+            if _is_low_activity(s):
                 agg["low_activity"] += 1
                 continue  # mirror fleet: low-activity stubs don't count as sessions
             agg["sessions"] += 1

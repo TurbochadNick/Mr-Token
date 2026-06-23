@@ -673,6 +673,19 @@ class BackendTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 print_corpus_report(agg)
 
+            # pre-1.1 export (no is_low_activity field): bucket stubs by model_calls
+            legacy = os.path.join(tmp, "legacy.json")
+            with open(legacy, "w") as fh:
+                json.dump({"schema": "mrtoken.session_summary.v1", "tool_version": "0.4.1",
+                           "sessions": [
+                               {"model_calls": 1, "total_tokens": 11},   # stub
+                               {"model_calls": 1, "total_tokens": 13},   # stub
+                               {"model_calls": 8, "total_tokens": 50000}],  # substantive
+                           }, fh)
+            lg = summarize_exports([legacy])
+            self.assertEqual(lg["sessions"], 1)        # only the 8-call session
+            self.assertEqual(lg["low_activity"], 2)    # the two 1-call stubs bucketed
+
     def test_roi_measure_projection_and_cohort(self):
         # fresh_handoff before/after (ROADMAP 2.1): a long, escalating session with
         # a fresh_handoff rec yields a non-negative projected saving and a cohort.
