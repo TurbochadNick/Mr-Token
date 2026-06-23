@@ -63,7 +63,8 @@ task needs a human decision flagged with **⚑ decision**.
     row; ingest a sub-floor transcript → row exists but `fleet` session count excludes it.
     Full suite green.
 
-- [ ] **1.2 — `ingest --backfill` over local transcript history**
+- [x] **1.2 — `ingest --backfill` over local transcript history**
+  → done: commit `e88267e` on `fix/empty-session-noise`. Real run: 153 sessions / 93 recs; idempotent. 46 tests green.
   - **Why:** capture is going-forward only (backfill was skipped), so real post-fix volume is
     thin. Backfill builds a real corpus *today* instead of waiting weeks — the single highest-
     leverage step for validation.
