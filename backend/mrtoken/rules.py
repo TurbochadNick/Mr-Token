@@ -305,6 +305,75 @@ def rule_re_read_loop(conn, tid: int) -> list:
                  wasted or None)]
 
 
+STEP_RUNAWAY_WARN = 120   # model calls in ONE session — an unusually high step count
+STEP_RUNAWAY_HIGH = 250
+
+
+def rule_step_runaway(conn, tid: int) -> list:
+    """An extreme number of steps (model calls) in one session is itself a cost
+    driver — the same task can cost far more purely by taking more steps (Stanford
+    agent-spend study). Distinct from fresh_handoff (which keys on cost/cache growth):
+    this flags raw step-count outliers, where re-planning or a reset usually helps."""
+    n = conn.execute("SELECT COUNT(*) FROM model_call WHERE trace_id=?", (tid,)).fetchone()[0]
+    if n < STEP_RUNAWAY_WARN:
+        return []
+    tools = conn.execute("SELECT COUNT(*) FROM tool_call WHERE trace_id=?", (tid,)).fetchone()[0]
+    sev = "high" if n >= STEP_RUNAWAY_HIGH else "warn"
+    return [_rec("step_runaway", sev,
+                 f"{n} model calls in one session ({tools} tool calls) — an unusually high "
+                 f"step count. Steps compound token cost; consider /mr-handoff to reset or "
+                 f"re-planning the approach so the agent takes fewer, bigger steps.",
+                 {"model_calls": n, "tool_calls": tools})]
+
+
+CONTEXT_ROT_MIN_CALLS = 20      # need enough calls to compare halves
+CONTEXT_ROT_CARRY = 100_000     # peak carried context (cache_read) to count as "large"
+CONTEXT_ROT_CACHE_DROP = 0.10   # first-half minus second-half cache hit ratio
+
+
+def rule_context_rot(conn, tid: int) -> list:
+    """SOFT quality hint (never high): when a session's context has grown large AND
+    its cache efficiency is falling (or re-reads rising), long-context attention can
+    degrade ('context rot'). This is a quality risk, not a cost rule — info only, so
+    it never crowds out actionable cost signals. Keep it a hint (per the brief)."""
+    rows = conn.execute(
+        "SELECT input_tokens, cache_read_input_tokens, cache_creation_input_tokens, timestamp "
+        "FROM model_call WHERE trace_id=? ORDER BY timestamp", (tid,)).fetchall()
+    n = len(rows)
+    if n < CONTEXT_ROT_MIN_CALLS:
+        return []
+    peak_carry = max((r[1] or 0) for r in rows)
+    if peak_carry < CONTEXT_ROT_CARRY:
+        return []
+
+    def cache_ratio(rs):
+        cr = sum(r[1] or 0 for r in rs)
+        base = sum((r[0] or 0) + (r[1] or 0) + (r[2] or 0) for r in rs)
+        return (cr / base) if base else 0.0
+
+    mid = n // 2
+    r1, r2 = cache_ratio(rows[:mid]), cache_ratio(rows[mid:])
+    drop = r1 - r2
+    rereads = conn.execute("""
+        SELECT COALESCE(SUM(c - 1), 0) FROM (
+          SELECT COUNT(*) c FROM tool_call
+          WHERE trace_id=? AND input_hash IS NOT NULL
+          GROUP BY LOWER(tool_name), input_hash HAVING c > 1)""", (tid,)).fetchone()[0] or 0
+    if drop < CONTEXT_ROT_CACHE_DROP and rereads < 3:
+        return []
+    reasons = []
+    if drop >= CONTEXT_ROT_CACHE_DROP:
+        reasons.append(f"cache efficiency fell {r1:.0%}→{r2:.0%}")
+    if rereads >= 3:
+        reasons.append(f"{rereads} re-reads")
+    return [_rec("context_rot", "info",
+                 f"Context has grown large (~{peak_carry:,} tok carried) and {'; '.join(reasons)} — "
+                 f"long contexts can degrade output quality ('context rot'). A fresh /mr-handoff "
+                 f"keeps the agent sharp. Soft hint — a quality risk, not a cost rule.",
+                 {"peak_carry_tokens": peak_carry, "cache_ratio_first": round(r1, 3),
+                  "cache_ratio_second": round(r2, 3), "re_reads": rereads, "calls": n})]
+
+
 ALL_RULES = [
     rule_repeated_context,
     rule_huge_tool_output,
@@ -312,6 +381,8 @@ ALL_RULES = [
     rule_low_cache,
     rule_fresh_handoff,
     rule_re_read_loop,
+    rule_step_runaway,
+    rule_context_rot,
 ]
 
 

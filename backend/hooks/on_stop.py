@@ -99,7 +99,21 @@ def main():
                 short = msg[:160] + "…" if len(msg) > 160 else msg
                 rec_line = f"  ·  [{rule}] {short}"
 
-        message = (hud or f"mr · {totals['model_calls']} calls") + rec_line
+        # cost-gated Assist suggestion (opt-in via MRTOKEN_ASSIST; silent otherwise)
+        assist_line = ""
+        try:
+            from mrtoken.assist import assist_suggestion
+            main = conn.execute(
+                "SELECT id FROM trace WHERE session_id=? AND source='claude_code'",
+                (session_id,)).fetchone()
+            if main:
+                s = assist_suggestion(conn, main[0])
+                if s:
+                    assist_line = "  ·  " + s
+        except Exception:
+            pass
+
+        message = (hud or f"mr · {totals['model_calls']} calls") + rec_line + assist_line
         # passive "update available" nudge (throttled once/day, silent on failure)
         try:
             from mrtoken.update_check import check_for_update

@@ -29,6 +29,22 @@ def _open(db_path):
 
 
 def cmd_ingest(args):
+    # auto-route a single Codex rollout to the Codex adapter (Claude path untouched)
+    if getattr(args, "file", None) and not getattr(args, "backfill", False) and not args.all:
+        from mrtoken.ingest_codex import _is_codex_transcript, ingest_codex_file
+        if _is_codex_transcript(args.file):
+            from mrtoken.ingest import connect
+            import json as _json
+            conn = connect(args.db)
+            r = ingest_codex_file(conn, args.file)
+            if args.rules and not r.get("skipped"):
+                from mrtoken.rules import analyse
+                tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
+                                   (r["session_id"],)).fetchone()[0]
+                r["recommendations"] = len(analyse(conn, tid))
+            print(_json.dumps({"db": args.db, "source": "codex", **r}, indent=2))
+            return
+
     from mrtoken.ingest import main as _main
     argv = []
     if getattr(args, "backfill", False):

@@ -93,7 +93,19 @@ def get_subagent_data(conn: sqlite3.Connection, parent_sid_prefix: str) -> list[
             """, (parent_tid, sub_end or sub_start or "")).fetchone()
         result_tok = (result_chars[0] // 4) if result_chars and result_chars[0] else None
 
-        ratio = (result_tok / sub_total) if (result_tok and sub_total) else None
+        # Net tokens vs doing the work inline (ESTIMATE). The work the parent avoided
+        # carrying is dominated by the subagent's TOOL OUTPUTS (big reads/fetches that
+        # never entered the parent's context) — not just its model in/out. Take the
+        # larger of the two as "work isolated" (max, not sum, to avoid double-counting
+        # tool output that re-enters as input). net = work isolated − result returned.
+        # Positive = parent spared net context; negative = it handed back more than it
+        # digested (poor ROI / thrashing). ratio + label use the same basis for coherence.
+        sub_tool_tok = conn.execute(
+            "SELECT COALESCE(SUM(COALESCE(output_tokens_est, output_chars/4)), 0) "
+            "FROM tool_call WHERE trace_id=?", (sub_tid,)).fetchone()[0] or 0
+        isolated_work = max(sub_total, sub_tool_tok)
+        ratio = (result_tok / isolated_work) if (result_tok and isolated_work) else None
+        net_tokens = (isolated_work - result_tok) if (result_tok is not None and isolated_work) else None
         largest_tool = conn.execute("""
             SELECT tool_name, output_chars FROM tool_call
             WHERE trace_id=? AND output_chars IS NOT NULL
@@ -111,10 +123,30 @@ def get_subagent_data(conn: sqlite3.Connection, parent_sid_prefix: str) -> list[
             "est_cost_usd": cost,
             "result_tokens_est": result_tok,
             "compression_ratio": ratio,
+            "net_tokens": net_tokens,
             "label": compression_label(ratio),
             "largest_tool": largest_tool,
         })
     return results
+
+
+def session_net_tokens(subs: list[dict]):
+    """Sum of per-subagent net tokens vs inline (ESTIMATE). None if unknown."""
+    vals = [s["net_tokens"] for s in subs if s.get("net_tokens") is not None]
+    return sum(vals) if vals else None
+
+
+def roi_summary_line(conn: sqlite3.Connection, parent_sid: str) -> str | None:
+    """One-line subagent ROI for a parent session, or None if it has no subagents."""
+    subs = get_subagent_data(conn, parent_sid)
+    if not subs:
+        return None
+    net = session_net_tokens(subs)
+    if net is None:
+        return f"{len(subs)} subagent(s) · ROI unknown (no result size captured)"
+    sign = "saved" if net >= 0 else "ADDED"
+    return (f"{len(subs)} subagent(s) · net ~{abs(net):,} tok {sign} vs inline "
+            f"(est: work kept out of parent context − result returned)")
 
 
 def verdict(subs: list[dict]) -> str:
@@ -172,17 +204,25 @@ def subagent_report(conn: sqlite3.Connection, prefix: str):
 
     total_sub_tokens = sum(s["sub_total_tokens"] for s in subs)
     print(f"  {len(subs)} subagent(s)  •  {fmt(total_sub_tokens)} total tokens consumed\n")
-    print(f"  {'AGENT':14}  {'CALLS':>5}  {'TOKENS':>10}  {'RESULT':>8}  {'RATIO':>6}  VERDICT")
-    print(f"  {'─'*14}  {'─'*5}  {'─'*10}  {'─'*8}  {'─'*6}  {'─'*20}")
+    print(f"  {'AGENT':14}  {'CALLS':>5}  {'TOKENS':>10}  {'RESULT':>8}  {'RATIO':>6}  {'NET':>9}  VERDICT")
+    print(f"  {'─'*14}  {'─'*5}  {'─'*10}  {'─'*8}  {'─'*6}  {'─'*9}  {'─'*16}")
 
     for s in subs:
         r = f"{s['compression_ratio']:.2f}" if s["compression_ratio"] is not None else "  ?"
         res = fmt(s["result_tokens_est"]) if s["result_tokens_est"] else "?"
+        net = s["net_tokens"]
+        net_s = (f"{net:+,}" if net is not None else "?")
         print(f"  {s['sub_sid'][:14]}  {s['model_calls']:>5}  "
-              f"{fmt(s['sub_total_tokens']):>10}  {res:>8}  {r:>6}  {s['label']}")
+              f"{fmt(s['sub_total_tokens']):>10}  {res:>8}  {r:>6}  {net_s:>9}  {s['label']}")
         if s["largest_tool"]:
             tname, toc = s["largest_tool"]
             print(f"  {'':14}  largest tool: {tname} ~{fmt(toc//4)} tok")
+
+    net_total = session_net_tokens(subs)
+    if net_total is not None:
+        sign = "saved vs inline" if net_total >= 0 else "ADDED vs inline (poor ROI)"
+        print(f"\n  net ~{net_total:+,} tok {sign}  ⚠ ESTIMATE — work isolated from the "
+              f"parent's context minus the result it returned")
 
     print(f"\n  verdict: {verdict(subs)}")
 

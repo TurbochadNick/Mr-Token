@@ -105,12 +105,31 @@ def _check_low_cache(conn, tid, ev) -> tuple[str, str]:
     return "weak", f"low cache but only {calls} calls — may be early-session"
 
 
+def _check_step_runaway(conn, tid, ev) -> tuple[str, str]:
+    # A high step count is corroborated when the steps show CHURN (tool errors +
+    # repeated reads) rather than steady progress — independent evidence that the
+    # run was inefficient, not just a genuinely large task.
+    n = ev.get("model_calls", 0)
+    errs = conn.execute(
+        "SELECT COUNT(*) FROM tool_call WHERE trace_id=? AND is_error=1", (tid,)).fetchone()[0]
+    rereads = conn.execute("""
+        SELECT COALESCE(SUM(c - 1), 0) FROM (
+          SELECT COUNT(*) c FROM tool_call
+          WHERE trace_id=? AND input_hash IS NOT NULL
+          GROUP BY LOWER(tool_name), input_hash HAVING c > 1)""", (tid,)).fetchone()[0]
+    churn = (errs or 0) + (rereads or 0)
+    if churn >= 5:
+        return "strong", f"{n} steps with {errs} tool errors + {rereads} re-reads — churn, not steady progress"
+    return "weak", f"{n} steps but little churn ({errs} errors, {rereads} re-reads) — may be a genuinely large task"
+
+
 _CHECKERS = {
     "huge_tool_output": _check_huge_tool_output,
     "retry_loop": _check_retry_loop,
     "fresh_handoff": _check_fresh_handoff,
     "repeated_context": _check_repeated_context,
     "low_cache": _check_low_cache,
+    "step_runaway": _check_step_runaway,
 }
 
 

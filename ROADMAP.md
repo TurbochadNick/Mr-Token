@@ -114,22 +114,27 @@ task needs a human decision flagged with **⚑ decision**.
 
 ## Phase 3 — Product *(unlock as rules prove out)*
 
-- [ ] **3.1 — New rule: step-count / runaway-loop**
+- [x] **3.1 — New rule: step-count / runaway-loop**
+  → done: commit `28e2444` on `fix/empty-session-noise`. `step_runaway` rule; corpus: 24 fires / 92% proxy. 50 tests green.
   - **Files:** `backend/mrtoken/rules.py`, tests. **Spec:** flag sessions whose model_call count
     per task is a clear outlier (the Stanford "30× by steps" failure mode). **Acceptance:**
     fires on a fabricated runaway trace, silent on a normal one; added to `validate`.
 
-- [ ] **3.2 — Surface subagent ROI in reports**
+- [x] **3.2 — Surface subagent ROI in reports**
+  → done: commit `03f258a`. Net-tokens-vs-inline per subagent (NET column + report one-liner); real corpus reads a WebFetch-isolating subagent at +21,538 saved. 51 tests green.
   - **Files:** `backend/mrtoken/subagents.py`, `report.py`. **Spec:** for sessions with
     sidechains, show whether the subagent saved or cost net tokens vs. inline. **Acceptance:**
     a session with a known-good subagent reads as positive ROI; a thrashing one reads negative.
 
-- [ ] **3.3 — Context-rot / degradation hint** *(soft signal only)*
+- [x] **3.3 — Context-rot / degradation hint** *(soft signal only)*
+  → done: commit `a491fb5` on `feat/phase3-product`. `context_rot` info-only rule; corpus: 18 fires, all info. 52 tests green.
   - **Files:** `backend/mrtoken/rules.py`. **Spec:** a *soft* hint when context grows large with
     falling cache efficiency / rising re-reads (quality risk, not a hard rule). Keep it a hint,
     per the brief. **Acceptance:** fires as a low-severity hint only; never high.
 
-- [ ] **3.4 — Cost-gated Assist auto-suggestion (opt-in LLM)**
+- [x] **3.4 — Cost-gated Assist auto-suggestion (opt-in LLM)**
+  → done: commit `6cf8040`. ⚑ decision: Zach's recommended default taken — opt-in OFF (MRTOKEN_ASSIST),
+    5× ratio (both tunable). Corpus: fires on 11/85 sessions. 53 tests green.
   - **Why:** `/mr-handoff` and `/mr-why` already do in-session LLM assist; the unbuilt piece is
     auto-suggesting an LLM action **only when expected token savings justify the spend**.
   - **Files:** `backend/mrtoken/` (new), skills under `backend/skills/`. **Spec:** opt-in,
@@ -138,7 +143,9 @@ task needs a human decision flagged with **⚑ decision**.
     on, a high-waste session yields a suggestion and a low-waste one does not. **⚑ decision:**
     confirm the savings-vs-spend ratio before enabling by default.
 
-- [ ] **3.5 — Codex transcript ingestion (2nd agent)** *(gated: only after Phase 2 passes for Claude Code)*
+- [x] **3.5 — Codex transcript ingestion (2nd agent)** *(gated: only after Phase 2 passes for Claude Code)*
+  → done: commit `523269e` on `feat/phase3-product`. `ingest_codex.py` adapter (source='codex'), auto-routed.
+    Verified on a real rollout: 292 calls / 366 tools / 3 recs. 54 tests green. Codex-dir backfill → backlog.
   - **Files:** `backend/mrtoken/ingest.py` (source adapter), `schema.sql` (`source` already
     generic). **Spec:** parse Codex session logs into the same `trace → model_call/tool_call`
     model; reuse the rule engine. **Acceptance:** a sample Codex session ingests and reports
@@ -169,6 +176,8 @@ task needs a human decision flagged with **⚑ decision**.
 ---
 
 ## Backlog / not yet scheduled
+- **Codex-dir backfill** — extend `ingest --backfill` to also scan `~/.codex/sessions/**` via the
+  Codex adapter (today the adapter ingests one rollout at a time / auto-routed single files). Surfaced by 3.5.
 - **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
   same project shortly after a `fresh_handoff` fired, so the acted-vs-ignored split is real
   (current B is degenerate because the rule only fires on already-deep sessions). Surfaced by 2.1.

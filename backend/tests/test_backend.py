@@ -196,6 +196,158 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rep["strong"], 1)  # the fix located the offender
         self.assertEqual(rep["moot"], 0)
 
+    def test_step_runaway_rule_and_validate(self):
+        # ROADMAP 3.1: flag extreme step counts; silent on normal sessions; corroborated.
+        from mrtoken.rules import rule_step_runaway, analyse
+        from mrtoken.validate import validate_db
+        normal, ntid = make_trace()
+        for i in range(10):
+            normal.execute("INSERT INTO model_call(trace_id,timestamp) VALUES(?,?)",
+                           (ntid, f"2026-06-01T00:00:{i:02d}Z"))
+        self.assertEqual(rule_step_runaway(normal, ntid), [])  # well under the floor
+
+        conn, tid = make_trace()
+        for i in range(130):  # runaway step count, with early churn (errored tools)
+            cur = conn.execute("INSERT INTO model_call(trace_id,timestamp) VALUES(?,?)",
+                               (tid, f"2026-06-01T{i//60:02d}:{i%60:02d}:00Z"))
+            if i < 6:
+                conn.execute("INSERT INTO tool_call(trace_id,model_call_id,tool_name,is_error) "
+                             "VALUES(?,?,?,1)", (tid, cur.lastrowid, "Bash"))
+        conn.commit()
+        recs = rule_step_runaway(conn, tid)
+        self.assertEqual(recs[0]["rule"], "step_runaway")
+        analyse(conn, tid)
+        rep = validate_db(conn)["rules"].get("step_runaway")
+        self.assertIsNotNone(rep)                    # wired into validate
+        self.assertEqual(rep["strong"], rep["fired"])  # churn → strong
+
+    def test_subagent_net_roi_positive_and_negative(self):
+        # ROADMAP 3.2: a focused subagent reads positive net vs inline; a thrashing
+        # one (returns more than it digested) reads negative.
+        from mrtoken.subagents import get_subagent_data, session_net_tokens, roi_summary_line
+        conn = connect(":memory:")
+        def trace(sid, source, parent=None, started="2026-06-01T00:00:00Z"):
+            return conn.execute(
+                "INSERT INTO trace(session_id,source,parent_session_id,started_at,ingested_at) "
+                "VALUES(?,?,?,?,?)", (sid, source, parent, started, started)).lastrowid
+        # GOOD: subagent digests ~50k, hands back ~100 tok → large positive net
+        p1 = trace("parent1", "claude_code")
+        s1 = trace("sub1", "claude_code_subagent", "parent1", "2026-06-01T00:10:00Z")
+        conn.execute("INSERT INTO model_call(trace_id,timestamp,input_tokens,output_tokens) "
+                     "VALUES(?,?,?,?)", (s1, "2026-06-01T00:10:00Z", 25000, 25000))
+        conn.execute("INSERT INTO tool_call(trace_id,tool_name,output_chars,ended_at) "
+                     "VALUES(?,?,?,?)", (p1, "Task", 400, "2026-06-01T00:10:01Z"))
+        # THRASHING: subagent does ~500 tok of work, result is ~2000 tok → negative net
+        p2 = trace("parent2", "claude_code")
+        s2 = trace("sub2", "claude_code_subagent", "parent2", "2026-06-02T00:10:00Z")
+        conn.execute("INSERT INTO model_call(trace_id,timestamp,input_tokens,output_tokens) "
+                     "VALUES(?,?,?,?)", (s2, "2026-06-02T00:10:00Z", 300, 200))
+        conn.execute("INSERT INTO tool_call(trace_id,tool_name,output_chars,ended_at) "
+                     "VALUES(?,?,?,?)", (p2, "Task", 8000, "2026-06-02T00:10:01Z"))
+        conn.commit()
+
+        good = get_subagent_data(conn, "parent1")
+        self.assertEqual(len(good), 1)
+        self.assertGreater(good[0]["net_tokens"], 0)
+        self.assertGreater(session_net_tokens(good), 0)
+        self.assertIn("saved", roi_summary_line(conn, "parent1"))
+
+        bad = get_subagent_data(conn, "parent2")
+        self.assertLess(bad[0]["net_tokens"], 0)
+        self.assertIn("ADDED", roi_summary_line(conn, "parent2"))
+
+    def test_context_rot_soft_hint(self):
+        # ROADMAP 3.3: fires info-only when context is large AND cache efficiency
+        # falls; silent on short sessions; never high.
+        from mrtoken.rules import rule_context_rot
+        conn, tid = make_trace()
+        # 24 calls: first half heavily cached (large carry), second half cache falls
+        for i in range(24):
+            if i < 12:
+                inp, cr = 1000, 120_000   # ratio ~0.99, peak carry 120k
+            else:
+                inp, cr = 100_000, 20_000  # ratio ~0.17 → big drop
+            conn.execute("INSERT INTO model_call(trace_id,timestamp,input_tokens,"
+                         "cache_read_input_tokens) VALUES(?,?,?,?)",
+                         (tid, f"2026-06-01T00:{i:02d}:00Z", inp, cr))
+        conn.commit()
+        recs = rule_context_rot(conn, tid)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["rule"], "context_rot")
+        self.assertEqual(recs[0]["severity"], "info")  # never high — it's a soft hint
+
+        short, stid = make_trace()  # too few calls → silent
+        for i in range(5):
+            short.execute("INSERT INTO model_call(trace_id,timestamp,cache_read_input_tokens) "
+                          "VALUES(?,?,?)", (stid, f"2026-06-01T00:0{i}:00Z", 120_000))
+        short.commit()
+        self.assertEqual(rule_context_rot(short, stid), [])
+
+    def test_assist_suggestion_gated_by_savings_and_optin(self):
+        # ROADMAP 3.4: off by default (behavior unchanged); when on, a high-waste
+        # session suggests, a low-waste one stays silent. Never auto-runs.
+        from mrtoken.assist import assist_suggestion, ASSIST_COST_TOKENS, ASSIST_SAVINGS_RATIO
+        conn, tid = make_trace()
+        big = ASSIST_SAVINGS_RATIO * ASSIST_COST_TOKENS + 1
+        conn.execute("INSERT INTO recommendation(trace_id,rule,severity,message,"
+                     "est_savings_tokens,created_at) VALUES(?,?,?,?,?,?)",
+                     (tid, "fresh_handoff", "high", "x", big, "2026-01-01"))
+        conn.commit()
+        self.assertIsNone(assist_suggestion(conn, tid, enabled=False))  # default off → silent
+        s = assist_suggestion(conn, tid, enabled=True)
+        self.assertIsNotNone(s)
+        self.assertIn("/mr-handoff", s)              # handoff-type rule → handoff assist
+
+        low, ltid = make_trace()
+        low.execute("INSERT INTO recommendation(trace_id,rule,severity,message,"
+                    "est_savings_tokens,created_at) VALUES(?,?,?,?,?,?)",
+                    (ltid, "re_read_loop", "info", "x", 1000, "2026-01-01"))
+        low.commit()
+        self.assertIsNone(assist_suggestion(low, ltid, enabled=True))  # below the gate → silent
+
+    def test_codex_adapter_ingests_into_shared_schema(self):
+        # ROADMAP 3.5: a Codex rollout ingests into the same trace/model_call/tool_call
+        # schema (source='codex') and the rule engine runs; Claude path unaffected.
+        from mrtoken.ingest_codex import ingest_codex_file, _is_codex_transcript
+        from mrtoken.ingest import connect, load_prices
+        from mrtoken.rules import analyse
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cx1", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.5"}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "response_item",
+                 "payload": {"type": "function_call", "call_id": "c1", "name": "exec_command",
+                             "arguments": "{\"cmd\":\"ls\"}"}},
+                {"timestamp": "2026-06-01T00:00:03Z", "type": "response_item",
+                 "payload": {"type": "function_call_output", "call_id": "c1",
+                             "output": "Exit code: 0\nfiles"}},
+                {"timestamp": "2026-06-01T00:00:04Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 5000, "cached_input_tokens": 4000,
+                     "output_tokens": 200, "reasoning_output_tokens": 50, "total_tokens": 5200}}}},
+            ])
+            self.assertTrue(_is_codex_transcript(codex))
+            conn = connect(os.path.join(tmp, "t.db"))
+            r = ingest_codex_file(conn, codex, load_prices())
+            self.assertEqual((r["model_calls"], r["tool_calls"]), (1, 1))
+            src, mc = conn.execute(
+                "SELECT source, model_calls FROM session_summary WHERE session_id='cx1'").fetchone()
+            self.assertEqual(src, "codex")
+            self.assertEqual(mc, 1)
+            tid = conn.execute("SELECT id FROM trace WHERE session_id='cx1'").fetchone()[0]
+            inp, cr = conn.execute("SELECT input_tokens, cache_read_input_tokens "
+                                   "FROM model_call WHERE trace_id=?", (tid,)).fetchone()
+            self.assertEqual((inp, cr), (1000, 4000))  # fresh = 5000-4000; cached → cache_read
+            analyse(conn, tid)  # rule engine runs on codex data without error
+            # a Claude transcript must NOT sniff as codex (Claude path unaffected)
+            claude = os.path.join(tmp, "claude.jsonl")
+            write_jsonl(claude, [{"type": "assistant", "sessionId": "s",
+                                  "message": {"id": "m", "usage": {"input_tokens": 1}}}])
+            self.assertFalse(_is_codex_transcript(claude))
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
