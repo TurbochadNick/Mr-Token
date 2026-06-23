@@ -57,9 +57,14 @@ def main():
         for path in paths:
             parent = path.split(os.sep)[-3] if "subagents" in path else None
             r = ingest_file(conn, path, prices, parent_session_id=parent)
-            tid = conn.execute(
+            if r.get("skipped"):
+                continue  # near-empty session not persisted; nothing to analyse
+            row = conn.execute(
                 "SELECT id FROM trace WHERE session_id=?", (r["session_id"],)
-            ).fetchone()[0]
+            ).fetchone()
+            if not row:
+                continue
+            tid = row[0]
             recs = analyse(conn, tid)
             totals["model_calls"] += r["model_calls"]
             totals["tool_calls"]  += r["tool_calls"]

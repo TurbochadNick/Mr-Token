@@ -20,9 +20,10 @@ import json, sqlite3
 SUMMARY_COLUMNS = [
     "trace_id", "session_id", "parent_session_id", "source", "profile",
     "profile_confidence", "project_path", "title", "started_at", "ended_at",
-    "model_calls", "input_tokens", "output_tokens", "cache_read_tokens",
-    "cache_write_tokens", "total_tokens", "est_cost_usd", "cache_hit_ratio",
-    "tool_calls", "tool_errors", "recommendation_count", "high_recommendations",
+    "model_calls", "is_low_activity", "input_tokens", "output_tokens",
+    "cache_read_tokens", "cache_write_tokens", "total_tokens", "est_cost_usd",
+    "cache_hit_ratio", "tool_calls", "tool_errors", "recommendation_count",
+    "high_recommendations",
 ]
 
 

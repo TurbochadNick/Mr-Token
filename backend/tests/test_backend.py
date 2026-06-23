@@ -486,6 +486,67 @@ class BackendTest(unittest.TestCase):
             tc = conn.execute("SELECT COUNT(*) FROM tool_call WHERE trace_id=?", (tid,)).fetchone()[0]
             self.assertEqual(tc, 1)  # tool_use on the 2nd line still captured despite dedup
 
+    def test_low_activity_floor_drops_empty_and_hides_substubs(self):
+        # The global Stop hook fires on every trivial desktop session. A
+        # zero-model-call transcript must NOT be persisted; a sub-floor one (< 2
+        # model calls) is kept but flagged low-activity and excluded from counts.
+        from mrtoken.ingest import connect, ingest_file, load_prices, MIN_ACTIVITY
+        import io, contextlib
+        from mrtoken.fleet import fleet_summary
+        self.assertEqual(MIN_ACTIVITY["model_calls"], 2)  # Zach's floor
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+            prices = load_prices()
+
+            # 0 model calls — only user lines → not persisted
+            empty = os.path.join(tmp, "empty.jsonl")
+            write_jsonl(empty, [{"type": "user", "message": {"content": "hi"}}])
+            r0 = ingest_file(conn, empty, prices)
+            self.assertTrue(r0.get("skipped"))
+            self.assertIsNone(conn.execute(
+                "SELECT id FROM trace WHERE session_id='empty'").fetchone())
+
+            # 1 model call — persisted but low-activity
+            tiny = os.path.join(tmp, "tiny.jsonl")
+            write_jsonl(tiny, [
+                {"type": "assistant", "sessionId": "tiny", "uuid": "u1",
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 5, "output_tokens": 3},
+                             "content": [{"type": "text", "text": "ok"}]}},
+            ])
+            ingest_file(conn, tiny, prices)
+            self.assertEqual(conn.execute(
+                "SELECT is_low_activity FROM session_summary WHERE session_id='tiny'"
+            ).fetchone()[0], 1)
+
+            # 2 model calls — substantive
+            real = os.path.join(tmp, "real.jsonl")
+            write_jsonl(real, [
+                {"type": "assistant", "sessionId": "real", "uuid": "a1",
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "one"}]}},
+                {"type": "assistant", "sessionId": "real", "uuid": "a2",
+                 "message": {"id": "m2", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "two"}]}},
+            ])
+            ingest_file(conn, real, prices)
+            self.assertEqual(conn.execute(
+                "SELECT is_low_activity FROM session_summary WHERE session_id='real'"
+            ).fetchone()[0], 0)
+
+            # fleet headline counts the substantive one, hides the stub
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                fleet_summary(conn)
+            out = buf.getvalue()
+            self.assertIn("low-activity", out)
+            sessions = conn.execute(
+                "SELECT COUNT(*) FROM session_summary "
+                "WHERE source='claude_code' AND is_low_activity=0").fetchone()[0]
+            self.assertEqual(sessions, 1)  # only 'real'
+
     def test_ingest_extracts_title_and_export_redacts(self):
         from mrtoken.ingest import connect, ingest_file, load_prices
         from mrtoken.rules import analyse

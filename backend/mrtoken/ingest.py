@@ -67,7 +67,14 @@ _MIGRATIONS = [
     ("trace", "profile_confidence", "REAL"),
 ]
 
-_SESSION_SUMMARY_VIEW = """
+# A "substantive" session is at least this many model calls (≈ request/response
+# rounds). The global Stop hook fires on every trivial desktop session, so we
+# (a) never persist a zero-model-call transcript and (b) flag anything below this
+# floor as low-activity so it stays queryable but is kept out of headline counts.
+# Tunable in one place. See ROADMAP.md 1.1.
+MIN_ACTIVITY = {"model_calls": 2}
+
+_SESSION_SUMMARY_VIEW = f"""
 DROP VIEW IF EXISTS session_summary;
 CREATE VIEW session_summary AS
 SELECT
@@ -82,6 +89,8 @@ SELECT
   t.started_at                  AS started_at,
   t.ended_at                    AS ended_at,
   COUNT(mc.id)                                          AS model_calls,
+  CASE WHEN COUNT(mc.id) < {MIN_ACTIVITY['model_calls']} THEN 1 ELSE 0 END
+                                                        AS is_low_activity,
   COALESCE(SUM(mc.input_tokens), 0)                     AS input_tokens,
   COALESCE(SUM(mc.output_tokens), 0)                    AS output_tokens,
   COALESCE(SUM(mc.cache_read_input_tokens), 0)          AS cache_read_tokens,
@@ -287,6 +296,14 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
     tool_calls.extend(pending_tools.values())
 
     # write
+    # Don't persist a no-activity session. The global Stop hook fires on every
+    # trivial desktop session; a zero-model-call transcript is pure noise with no
+    # possible signal and would inflate fleet counts. See ROADMAP.md 1.1.
+    if len(model_calls) == 0:
+        conn.commit()  # preserve the idempotent cleanup of any stale rows above
+        return {"session_id": sid, "lines": n_lines, "model_calls": 0,
+                "tool_calls": 0, "context_blocks": 0, "skipped": True}
+
     source = "claude_code_subagent" if is_subagent else "claude_code"
     cur.execute("""INSERT INTO trace(source,session_id,parent_session_id,project_path,git_branch,
                    cc_version,entrypoint,started_at,ended_at,title,ingested_at)
@@ -355,11 +372,14 @@ def main(argv=None):
         paths = [a.path]
     else:
         ap.error("give a path or --all")
-    total = {"sessions": 0, "model_calls": 0, "tool_calls": 0, "recommendations": 0}
+    total = {"sessions": 0, "skipped": 0, "model_calls": 0, "tool_calls": 0, "recommendations": 0}
     for p in paths:
         try:
             parent = p.split(os.sep)[-3] if "subagents" in p else None
             r = ingest_file(conn, p, prices, parent_session_id=parent)
+            if r.get("skipped"):
+                total["skipped"] += 1
+                continue  # near-empty session not persisted
             total["sessions"] += 1
             total["model_calls"] += r["model_calls"]
             total["tool_calls"] += r["tool_calls"]

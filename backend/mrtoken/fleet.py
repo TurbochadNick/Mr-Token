@@ -29,10 +29,22 @@ def fleet_summary(conn: sqlite3.Connection):
     (sessions, sub_sess, mc, tc, te, total_tok, inp, out, cr, cw, total_in, cost) = r
     cache_pct = (cr or 0) / (total_in or 1)
 
+    # Headline session counts exclude low-activity stubs (see ROADMAP.md 1.1): the
+    # global Stop hook records many near-empty desktop sessions, which would
+    # otherwise inflate the count. They remain queryable in session_summary.
+    sessions, low_activity, sub_sess = conn.execute("""
+        SELECT COUNT(CASE WHEN source='claude_code'           AND is_low_activity=0 THEN 1 END),
+               COUNT(CASE WHEN source='claude_code'           AND is_low_activity=1 THEN 1 END),
+               COUNT(CASE WHEN source='claude_code_subagent'                        THEN 1 END)
+        FROM session_summary
+    """).fetchone()
+
     print(f"\n{'─'*54}")
     print(f"  MR Token — Fleet Summary")
     print(f"{'─'*54}")
     print(f"  sessions          {fmt(sessions):>14}  ({fmt(sub_sess)} subagent)")
+    if low_activity:
+        print(f"  low-activity      {fmt(low_activity):>14}  (hidden from counts)")
     print(f"  model calls       {fmt(mc):>14}")
     print(f"  tool calls        {fmt(tc):>14}  (errors: {fmt(te)})")
     print(f"{'─'*54}")
