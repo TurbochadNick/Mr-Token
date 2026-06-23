@@ -120,7 +120,8 @@ task needs a human decision flagged with **⚑ decision**.
     per task is a clear outlier (the Stanford "30× by steps" failure mode). **Acceptance:**
     fires on a fabricated runaway trace, silent on a normal one; added to `validate`.
 
-- [ ] **3.2 — Surface subagent ROI in reports**
+- [x] **3.2 — Surface subagent ROI in reports**
+  → done: commit `03f258a`. Net-tokens-vs-inline per subagent (NET column + report one-liner); real corpus reads a WebFetch-isolating subagent at +21,538 saved. 51 tests green.
   - **Files:** `backend/mrtoken/subagents.py`, `report.py`. **Spec:** for sessions with
     sidechains, show whether the subagent saved or cost net tokens vs. inline. **Acceptance:**
     a session with a known-good subagent reads as positive ROI; a thrashing one reads negative.
