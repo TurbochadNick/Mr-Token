@@ -170,7 +170,9 @@ task needs a human decision flagged with **⚑ decision**.
     the installed/declared version is ahead of the latest git tag ("release not tagged"). Don't
     auto-tag. **Acceptance:** with version > latest tag, the warning shows; when equal, quiet.
 
-- [ ] **4.3 — Positioning: rate-limit-first copy**
+- [x] **4.3 — Positioning: rate-limit-first copy**
+  → done: commit `97e6794` on `feat/phase4-hardening`. Backend copy (fresh_handoff nudge + BRIEF one-liner)
+    leads with limits/quality; HUD already did. README left to Nick with a suggested line (in commit msg). 56 tests green.
   - **Why:** most users are flat-rate and hitting plan caps; "do more within your limits" lands
     harder than "save money." **Files:** `README.md`, HUD/nudge copy. **Spec:** lead with the
     rate-limit + quality angle, keep the cost angle secondary. **Acceptance:** README one-liner
