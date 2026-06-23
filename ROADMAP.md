@@ -100,7 +100,9 @@ task needs a human decision flagged with **⚑ decision**.
   → done: commit `ba0e59c`. Zach chose **C+B**. `roi --measure`; C projects ~$40.70 over 20 fired
     sessions; B degenerate on current data (needs cross-session linkage — see backlog). 48 tests green.
 
-- [ ] **2.2 — Rule calibration at volume**
+- [x] **2.2 — Rule calibration at volume**
+  → done: commit `381649b`. Found+fixed a validate corroboration bug (huge_tool_output was
+    all-moot → really 80%); no threshold changes warranted. Record in `docs/RULE-CALIBRATION.md`. 49 tests green.
   - **Why:** `validate` proxies look strong (huge_tool_output 91%, retry_loop 100%,
     fresh_handoff 94%, low_cache 100%) but several are low-n. Re-run after backfill, tune.
   - **Files:** `backend/mrtoken/validate.py`, `backend/mrtoken/rules.py`.
