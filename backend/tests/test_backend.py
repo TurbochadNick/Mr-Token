@@ -283,6 +283,28 @@ class BackendTest(unittest.TestCase):
         short.commit()
         self.assertEqual(rule_context_rot(short, stid), [])
 
+    def test_assist_suggestion_gated_by_savings_and_optin(self):
+        # ROADMAP 3.4: off by default (behavior unchanged); when on, a high-waste
+        # session suggests, a low-waste one stays silent. Never auto-runs.
+        from mrtoken.assist import assist_suggestion, ASSIST_COST_TOKENS, ASSIST_SAVINGS_RATIO
+        conn, tid = make_trace()
+        big = ASSIST_SAVINGS_RATIO * ASSIST_COST_TOKENS + 1
+        conn.execute("INSERT INTO recommendation(trace_id,rule,severity,message,"
+                     "est_savings_tokens,created_at) VALUES(?,?,?,?,?,?)",
+                     (tid, "fresh_handoff", "high", "x", big, "2026-01-01"))
+        conn.commit()
+        self.assertIsNone(assist_suggestion(conn, tid, enabled=False))  # default off → silent
+        s = assist_suggestion(conn, tid, enabled=True)
+        self.assertIsNotNone(s)
+        self.assertIn("/mr-handoff", s)              # handoff-type rule → handoff assist
+
+        low, ltid = make_trace()
+        low.execute("INSERT INTO recommendation(trace_id,rule,severity,message,"
+                    "est_savings_tokens,created_at) VALUES(?,?,?,?,?,?)",
+                    (ltid, "re_read_loop", "info", "x", 1000, "2026-01-01"))
+        low.commit()
+        self.assertIsNone(assist_suggestion(low, ltid, enabled=True))  # below the gate → silent
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
