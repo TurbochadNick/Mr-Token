@@ -8,6 +8,9 @@ coverage/
 # Local token-tithe runtime data
 .token-tithe/
 *.db
+
+# Shared exports dropped in for the validation corpus (testers' JSON)
+reports/
 *.db-shm
 *.db-wal
 

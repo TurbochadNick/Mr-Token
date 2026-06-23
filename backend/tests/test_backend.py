@@ -607,6 +607,51 @@ class BackendTest(unittest.TestCase):
                 sconn.execute("SELECT model_calls FROM session_summary WHERE session_id='sess1'").fetchone()[0],
                 conn.execute("SELECT model_calls FROM session_summary WHERE session_id='sess1'").fetchone()[0])
 
+    def test_corpus_aggregates_exports_and_handles_bad_files(self):
+        # A real v1 export round-trips through corpus intake; a malformed file is
+        # reported, not crashed.
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.rules import analyse
+        from mrtoken.export import export_report
+        from mrtoken.corpus import summarize_exports, print_corpus_report
+        import io, contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+            transcript = os.path.join(tmp, "real.jsonl")
+            write_jsonl(transcript, [
+                {"type": "assistant", "sessionId": "real", "uuid": "a1",
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 50, "output_tokens": 20,
+                                       "cache_read_input_tokens": 900},
+                             "content": [{"type": "text", "text": "one"}]}},
+                {"type": "assistant", "sessionId": "real", "uuid": "a2",
+                 "message": {"id": "m2", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 40, "output_tokens": 15},
+                             "content": [{"type": "text", "text": "two"}]}},
+            ])
+            r = ingest_file(conn, transcript, load_prices())
+            tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
+                               (r["session_id"],)).fetchone()[0]
+            analyse(conn, tid)
+            export_path = os.path.join(tmp, "tester.json")
+            with open(export_path, "w") as fh:
+                fh.write(export_report(conn, redact=True))
+
+            bad = os.path.join(tmp, "bad.json")
+            with open(bad, "w") as fh:
+                fh.write("{ not json")
+            missing = os.path.join(tmp, "nope.json")
+
+            agg = summarize_exports([export_path, bad, missing])
+            self.assertEqual(agg["files"], 1)               # only the good one combined
+            self.assertEqual(agg["sessions"], 1)
+            self.assertEqual(agg["total_tokens"], 50 + 20 + 40 + 15)
+            self.assertEqual(len(agg["errors"]), 2)         # bad + missing reported
+            self.assertIsNotNone(agg["cache_hit_ratio"])
+            # printing never raises
+            with contextlib.redirect_stdout(io.StringIO()):
+                print_corpus_report(agg)
+
     def test_ingest_extracts_title_and_export_redacts(self):
         from mrtoken.ingest import connect, ingest_file, load_prices
         from mrtoken.rules import analyse
