@@ -88,7 +88,7 @@ task needs a human decision flagged with **⚑ decision**.
 
 ## Phase 2 — Proof *(the brief's gate; do before new rules ship as trusted)*
 
-- [ ] **2.1 — ROI before/after measurement**
+- [x] **2.1 — ROI before/after measurement**
   - **Why:** `roi` currently *estimates* the lever (context carry). The real proof is "did
     acting on a recommendation actually reduce tokens on the next comparable session?"
   - **Files:** `backend/mrtoken/roi.py`, `backend/docs/ROI-EXPERIMENT.md`.
@@ -97,6 +97,8 @@ task needs a human decision flagged with **⚑ decision**.
     confounds. Output is evidence, not a guarantee.
   - **Acceptance:** runs against the backfilled corpus and produces a delta with an explicit
     n and confound note. **⚑ decision:** confirm the comparison design before trusting outputs.
+  → done: commit `ba0e59c`. Zach chose **C+B**. `roi --measure`; C projects ~$40.70 over 20 fired
+    sessions; B degenerate on current data (needs cross-session linkage — see backlog). 48 tests green.
 
 - [ ] **2.2 — Rule calibration at volume**
   - **Why:** `validate` proxies look strong (huge_tool_output 91%, retry_loop 100%,
@@ -165,6 +167,9 @@ task needs a human decision flagged with **⚑ decision**.
 ---
 
 ## Backlog / not yet scheduled
+- **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
+  same project shortly after a `fresh_handoff` fired, so the acted-vs-ignored split is real
+  (current B is degenerate because the rule only fires on already-deep sessions). Surfaced by 2.1.
 - `--since <iso>` incremental filter on `export` (Nick asked, for dashboard refresh).
 - `session_detail` per-model-call timeline view (drill-down panel for the dashboard).
 - Dashboard maturity (TS/`web/`) — Nick's lane; coordinate via the `session_summary.v1` contract.
