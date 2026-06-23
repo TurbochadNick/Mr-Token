@@ -305,6 +305,49 @@ class BackendTest(unittest.TestCase):
         low.commit()
         self.assertIsNone(assist_suggestion(low, ltid, enabled=True))  # below the gate → silent
 
+    def test_codex_adapter_ingests_into_shared_schema(self):
+        # ROADMAP 3.5: a Codex rollout ingests into the same trace/model_call/tool_call
+        # schema (source='codex') and the rule engine runs; Claude path unaffected.
+        from mrtoken.ingest_codex import ingest_codex_file, _is_codex_transcript
+        from mrtoken.ingest import connect, load_prices
+        from mrtoken.rules import analyse
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cx1", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.5"}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "response_item",
+                 "payload": {"type": "function_call", "call_id": "c1", "name": "exec_command",
+                             "arguments": "{\"cmd\":\"ls\"}"}},
+                {"timestamp": "2026-06-01T00:00:03Z", "type": "response_item",
+                 "payload": {"type": "function_call_output", "call_id": "c1",
+                             "output": "Exit code: 0\nfiles"}},
+                {"timestamp": "2026-06-01T00:00:04Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 5000, "cached_input_tokens": 4000,
+                     "output_tokens": 200, "reasoning_output_tokens": 50, "total_tokens": 5200}}}},
+            ])
+            self.assertTrue(_is_codex_transcript(codex))
+            conn = connect(os.path.join(tmp, "t.db"))
+            r = ingest_codex_file(conn, codex, load_prices())
+            self.assertEqual((r["model_calls"], r["tool_calls"]), (1, 1))
+            src, mc = conn.execute(
+                "SELECT source, model_calls FROM session_summary WHERE session_id='cx1'").fetchone()
+            self.assertEqual(src, "codex")
+            self.assertEqual(mc, 1)
+            tid = conn.execute("SELECT id FROM trace WHERE session_id='cx1'").fetchone()[0]
+            inp, cr = conn.execute("SELECT input_tokens, cache_read_input_tokens "
+                                   "FROM model_call WHERE trace_id=?", (tid,)).fetchone()
+            self.assertEqual((inp, cr), (1000, 4000))  # fresh = 5000-4000; cached → cache_read
+            analyse(conn, tid)  # rule engine runs on codex data without error
+            # a Claude transcript must NOT sniff as codex (Claude path unaffected)
+            claude = os.path.join(tmp, "claude.jsonl")
+            write_jsonl(claude, [{"type": "assistant", "sessionId": "s",
+                                  "message": {"id": "m", "usage": {"input_tokens": 1}}}])
+            self.assertFalse(_is_codex_transcript(claude))
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
