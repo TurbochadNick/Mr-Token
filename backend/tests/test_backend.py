@@ -652,6 +652,37 @@ class BackendTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 print_corpus_report(agg)
 
+    def test_roi_measure_projection_and_cohort(self):
+        # fresh_handoff before/after (ROADMAP 2.1): a long, escalating session with
+        # a fresh_handoff rec yields a non-negative projected saving and a cohort.
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.roi import roi_measure, print_roi_measure
+        import io, contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+            rows = []
+            for i in range(24):  # 24 calls; output (=> cost) escalates over time
+                rows.append({"type": "assistant", "sessionId": "long", "uuid": f"u{i}",
+                             "message": {"id": f"m{i}", "model": "claude-opus-4-8",
+                                         "usage": {"input_tokens": 10, "output_tokens": 10 + i * 20},
+                                         "content": [{"type": "text", "text": f"t{i}"}]}})
+            transcript = os.path.join(tmp, "long.jsonl")
+            write_jsonl(transcript, rows)
+            r = ingest_file(conn, transcript, load_prices())
+            tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
+                               (r["session_id"],)).fetchone()[0]
+            conn.execute("INSERT INTO recommendation(trace_id,rule,severity,message,created_at) "
+                         "VALUES(?,?,?,?,?)", (tid, "fresh_handoff", "high", "start fresh", "2026-01-01"))
+            conn.commit()
+
+            m = roi_measure(conn, horizon=10)
+            self.assertEqual(m["projection"]["n_sessions"], 1)
+            self.assertGreater(m["projection"]["projected_saving_usd"], 0)  # late burn > lean opening
+            self.assertEqual(m["cohort"]["acted"]["n"] + m["cohort"]["ignored"]["n"], 1)
+            self.assertEqual(m["cohort"]["ignored"]["n"], 1)  # 12 calls past midpoint ≥ horizon
+            with contextlib.redirect_stdout(io.StringIO()):
+                print_roi_measure(conn, horizon=10)
+
     def test_ingest_extracts_title_and_export_redacts(self):
         from mrtoken.ingest import connect, ingest_file, load_prices
         from mrtoken.rules import analyse

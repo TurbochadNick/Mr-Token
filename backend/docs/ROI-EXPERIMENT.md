@@ -240,3 +240,33 @@ Stopping paid runs on the current setup: it answers the boundary, not the claim.
 Design now (done). **Run gated on a pilot signal**: if the BYU TTO pilot says
 "interesting, but does it actually save money," we run it and return with a causal
 number. That spends the token budget exactly when it converts a maybe into a yes.
+
+---
+
+## Observational estimate — `roi --measure` (no budget; runs on the corpus)
+
+The controlled trial above is the gold standard but costs budget. As a free
+complement that runs on already-captured sessions, `mrtoken-transcript roi
+--measure` gives a before/after ESTIMATE for `fresh_handoff`. It is NOT causal and
+does not replace Exp 1 — it is the cheap "is this even worth a trial" read.
+
+Two methods, both honestly labelled (ROADMAP 2.1):
+
+- **C — counterfactual projection (headline; no behaviour assumed, no selection
+  bias).** For each session where `fresh_handoff` fired, project the next-`horizon`
+  calls at the session's late-stage per-call burn vs a **lean-restart baseline** =
+  mean est cost over the opening 5 calls across the whole corpus. Saving =
+  `max(0, late_per_call − lean_per_call) × horizon`, summed. It is a *marginal*
+  number (a fresh session re-accumulates), not a forever saving.
+- **B — acted vs ignored (corroboration; OBSERVATIONAL, selection-biased).** Split
+  fired sessions into "acted" (ended soon after the signal) vs "ignored"
+  (continued) and compare late-stage per-call cost.
+
+**First run on the 153-session backfill corpus (2026-06-23):** C projected
+~$40.70 across 20 fired sessions (lean baseline ~$0.057/call). **B was degenerate:
+all 20 fell in "ignored", zero "acted"** — because `fresh_handoff` only fires once
+a session is already deep, so a within-session midpoint split can never yield an
+"acted-early" cohort. **Refinement needed:** a real B must detect that a *separate
+fresh session* started in the same project shortly after the fire (cross-session
+linkage, ROADMAP backlog), not split a single session. Until then, treat C as the
+estimate and B as not-yet-informative.

@@ -86,6 +86,96 @@ def roi_fleet(conn: sqlite3.Connection) -> dict:
             "addressable_pct": (addressable / total_tok) if total_tok else 0}
 
 
+# ── before/after measurement (ROADMAP 2.1) ─────────────────────────────────────
+# Design C (headline) + B (corroboration). We cannot run a controlled A/B on
+# observed sessions, so neither number is causal proof. C is a counterfactual
+# PROJECTION (no behaviour assumed, no selection bias); B is an OBSERVATIONAL
+# split (subject to selection bias). See docs/ROI-EXPERIMENT.md.
+
+def _corpus_lean_per_call(conn: sqlite3.Connection, k: int = 5) -> tuple[float, int]:
+    """Mean est cost over the opening `k` calls of each session — a proxy for a
+    lean, cache-cold restart. Returns (per_call_usd, n_sessions sampled)."""
+    row = conn.execute(f"""
+        WITH ranked AS (
+          SELECT trace_id, est_cost_usd,
+                 ROW_NUMBER() OVER (PARTITION BY trace_id ORDER BY timestamp) AS rn
+          FROM model_call)
+        SELECT COALESCE(AVG(est_cost_usd), 0), COUNT(DISTINCT trace_id)
+        FROM ranked WHERE rn <= ?""", (k,)).fetchone()
+    return float(row[0] or 0.0), int(row[1] or 0)
+
+
+def _session_late_per_call(conn: sqlite3.Connection, tid: int):
+    """Mean est cost/call over a session's 2nd half (proxy for post-fire burn).
+    Returns (per_call_usd, calls_after_midpoint) or None if too few calls."""
+    rows = conn.execute(
+        "SELECT est_cost_usd FROM model_call WHERE trace_id=? ORDER BY timestamp", (tid,)
+    ).fetchall()
+    n = len(rows)
+    if n < 4:
+        return None
+    mid = n // 2
+    late = [(r[0] or 0) for r in rows[mid:]]
+    return (sum(late) / len(late), n - mid)
+
+
+def roi_measure(conn: sqlite3.Connection, horizon: int = 10, k: int = 5) -> dict:
+    """C: project the saving of acting on a fresh_handoff over the next `horizon`
+    calls (late-stage burn minus a lean-restart baseline). B: split fired sessions
+    into acted (ended soon after the signal) vs ignored (continued) and compare
+    their late-stage per-call cost."""
+    lean, lean_n = _corpus_lean_per_call(conn, k)
+    fired = [r[0] for r in conn.execute(
+        "SELECT DISTINCT trace_id FROM recommendation WHERE rule='fresh_handoff'")]
+    proj = {"horizon": horizon, "lean_per_call_usd": round(lean, 6),
+            "lean_baseline_sessions": lean_n, "n_sessions": 0,
+            "projected_saving_usd": 0.0}
+    acted = {"n": 0, "sum": 0.0}
+    ignored = {"n": 0, "sum": 0.0}
+    for tid in fired:
+        lp = _session_late_per_call(conn, tid)
+        if not lp:
+            continue
+        late_per_call, after = lp
+        proj["n_sessions"] += 1
+        proj["projected_saving_usd"] += max(0.0, late_per_call - lean) * horizon
+        bucket = acted if after < horizon else ignored
+        bucket["n"] += 1
+        bucket["sum"] += late_per_call
+    proj["projected_saving_usd"] = round(proj["projected_saving_usd"], 2)
+
+    def mean(b):
+        return round(b["sum"] / b["n"], 6) if b["n"] else None
+    return {"projection": proj,
+            "cohort": {"acted":   {"n": acted["n"],   "late_per_call_usd": mean(acted)},
+                       "ignored": {"n": ignored["n"], "late_per_call_usd": mean(ignored)}}}
+
+
+def print_roi_measure(conn: sqlite3.Connection, horizon: int = 10) -> None:
+    m = roi_measure(conn, horizon)
+    p, c = m["projection"], m["cohort"]
+    print(f"\n  MR Token — fresh_handoff before/after  ⚠ ESTIMATE + OBSERVATIONAL, not a controlled trial")
+    print(f"  {'─'*64}")
+    if p["n_sessions"] == 0:
+        print("  no fresh_handoff fired on a long-enough session yet — ingest/backfill more.\n")
+        return
+    print(f"  C · counterfactual projection (no behaviour assumed, no selection bias):")
+    print(f"    lean-restart baseline ~${p['lean_per_call_usd']:,.4f}/call "
+          f"(opening {5} calls across {p['lean_baseline_sessions']} sessions)")
+    print(f"    over {p['n_sessions']} fired session(s), continuing ~{horizon} more calls at late-stage")
+    print(f"    burn vs a lean restart projects ~${p['projected_saving_usd']:,.2f} saved (marginal, not forever)")
+    print(f"\n  B · acted vs ignored (OBSERVATIONAL — selection bias, not causal):")
+    a, ig = c["acted"], c["ignored"]
+    def ppc(x): return f"${x:,.4f}/call" if x is not None else "—"
+    print(f"    acted   (ended <{horizon} calls after signal): n={a['n']:<3} late cost {ppc(a['late_per_call_usd'])}")
+    print(f"    ignored (continued ≥{horizon} calls):           n={ig['n']:<3} late cost {ppc(ig['late_per_call_usd'])}")
+    if a["late_per_call_usd"] and ig["late_per_call_usd"]:
+        delta = ig["late_per_call_usd"] - a["late_per_call_usd"]
+        print(f"    → ignored sessions ran {ppc(abs(delta))} {'higher' if delta>0 else 'lower'} late-stage;")
+        print(f"      consistent with carry escalation, but confounded by task choice.")
+    print(f"  {'─'*64}\n")
+
+
 def print_roi(conn: sqlite3.Connection, prefix: str | None) -> None:
     print(f"\n  MR Token — ROI estimate  ⚠ data-grounded ESTIMATE, not a controlled-trial measurement")
     print(f"  {'─'*62}")

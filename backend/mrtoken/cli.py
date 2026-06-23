@@ -143,8 +143,12 @@ def cmd_why(args):
 
 
 def cmd_roi(args):
-    from mrtoken.roi import print_roi
-    print_roi(_open(args.db), args.session)
+    if getattr(args, "measure", False):
+        from mrtoken.roi import print_roi_measure
+        print_roi_measure(_open(args.db))
+    else:
+        from mrtoken.roi import print_roi
+        print_roi(_open(args.db), args.session)
 
 
 def cmd_status(args):
@@ -261,6 +265,8 @@ def main(argv=None):
     p_roi = sub.add_parser("roi",
         help="estimate addressable token waste (session or fleet) — estimate, not a trial")
     p_roi.add_argument("session", nargs="?", help="session ID prefix (omit for fleet-wide)")
+    p_roi.add_argument("--measure", action="store_true",
+        help="fresh_handoff before/after: counterfactual projection + acted-vs-ignored cohort")
     p_roi.add_argument("--db", dest="db_sub")
 
     p_status = sub.add_parser("status",
