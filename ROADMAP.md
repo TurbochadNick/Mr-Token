@@ -76,7 +76,8 @@ task needs a human decision flagged with **⚑ decision**.
   - **Acceptance:** running it twice over a temp projects dir yields identical row counts
     (idempotent); a known transcript produces the same trace as a single-file ingest.
 
-- [ ] **1.3 — Validation corpus intake for shared exports**
+- [x] **1.3 — Validation corpus intake for shared exports**
+  → done: commit `37834a3` on `fix/empty-session-noise`. New `corpus` command; 47 tests green.
   - **Why:** beta testers (Theron) can send redacted `export` JSON; we need a place to land it
     and compare against our own fleet without re-deriving by hand.
   - **Files:** new `backend/mrtoken/` helper or extend `validate.py`; a `reports/` dir (gitignored).
