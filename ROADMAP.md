@@ -132,7 +132,9 @@ task needs a human decision flagged with **⚑ decision**.
     falling cache efficiency / rising re-reads (quality risk, not a hard rule). Keep it a hint,
     per the brief. **Acceptance:** fires as a low-severity hint only; never high.
 
-- [ ] **3.4 — Cost-gated Assist auto-suggestion (opt-in LLM)**
+- [x] **3.4 — Cost-gated Assist auto-suggestion (opt-in LLM)**
+  → done: commit `6cf8040`. ⚑ decision: Zach's recommended default taken — opt-in OFF (MRTOKEN_ASSIST),
+    5× ratio (both tunable). Corpus: fires on 11/85 sessions. 53 tests green.
   - **Why:** `/mr-handoff` and `/mr-why` already do in-session LLM assist; the unbuilt piece is
     auto-suggesting an LLM action **only when expected token savings justify the spend**.
   - **Files:** `backend/mrtoken/` (new), skills under `backend/skills/`. **Spec:** opt-in,
