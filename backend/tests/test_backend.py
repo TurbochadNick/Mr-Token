@@ -175,6 +175,27 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rule_repeated_context(conn, tid), [],
                          "cached re-sends should not fire repeated_context")
 
+    def test_validate_huge_tool_output_reads_offenders(self):
+        # regression (ROADMAP 2.2): corroboration must locate the offending tool
+        # call via evidence offenders[], not a (nonexistent) top-level tool_use_id,
+        # else every huge_tool_output fire is wrongly scored "moot".
+        from mrtoken.rules import analyse
+        from mrtoken.validate import validate_db
+        conn, tid = make_trace()
+        cur = conn.execute("INSERT INTO model_call(trace_id, timestamp) VALUES(?,?)",
+                           (tid, "2026-06-01T00:00:00Z"))
+        mc0 = cur.lastrowid
+        conn.execute("INSERT INTO tool_call(trace_id, model_call_id, tool_use_id, tool_name, "
+                     "output_chars) VALUES(?,?,?,?,?)", (tid, mc0, "t1", "Bash", 60_000))
+        for s in range(1, 11):  # 10 calls AFTER the huge output → should corroborate strong
+            conn.execute("INSERT INTO model_call(trace_id, timestamp) VALUES(?,?)",
+                         (tid, f"2026-06-01T00:00:{s:02d}Z"))
+        conn.commit()
+        analyse(conn, tid)
+        rep = validate_db(conn)["rules"]["huge_tool_output"]
+        self.assertEqual(rep["strong"], 1)  # the fix located the offender
+        self.assertEqual(rep["moot"], 0)
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
@@ -485,6 +506,216 @@ class BackendTest(unittest.TestCase):
             self.assertAlmostEqual(cost, round(100/1e6*5 + 50/1e6*25 + 1000/1e6*0.5, 6), places=6)
             tc = conn.execute("SELECT COUNT(*) FROM tool_call WHERE trace_id=?", (tid,)).fetchone()[0]
             self.assertEqual(tc, 1)  # tool_use on the 2nd line still captured despite dedup
+
+    def test_low_activity_floor_drops_empty_and_hides_substubs(self):
+        # The global Stop hook fires on every trivial desktop session. A
+        # zero-model-call transcript must NOT be persisted; a sub-floor one (< 2
+        # model calls) is kept but flagged low-activity and excluded from counts.
+        from mrtoken.ingest import connect, ingest_file, load_prices, MIN_ACTIVITY
+        import io, contextlib
+        from mrtoken.fleet import fleet_summary
+        self.assertEqual(MIN_ACTIVITY["model_calls"], 2)  # Zach's floor
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+            prices = load_prices()
+
+            # 0 model calls — only user lines → not persisted
+            empty = os.path.join(tmp, "empty.jsonl")
+            write_jsonl(empty, [{"type": "user", "message": {"content": "hi"}}])
+            r0 = ingest_file(conn, empty, prices)
+            self.assertTrue(r0.get("skipped"))
+            self.assertIsNone(conn.execute(
+                "SELECT id FROM trace WHERE session_id='empty'").fetchone())
+
+            # 1 model call — persisted but low-activity
+            tiny = os.path.join(tmp, "tiny.jsonl")
+            write_jsonl(tiny, [
+                {"type": "assistant", "sessionId": "tiny", "uuid": "u1",
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 5, "output_tokens": 3},
+                             "content": [{"type": "text", "text": "ok"}]}},
+            ])
+            ingest_file(conn, tiny, prices)
+            self.assertEqual(conn.execute(
+                "SELECT is_low_activity FROM session_summary WHERE session_id='tiny'"
+            ).fetchone()[0], 1)
+
+            # 2 model calls — substantive
+            real = os.path.join(tmp, "real.jsonl")
+            write_jsonl(real, [
+                {"type": "assistant", "sessionId": "real", "uuid": "a1",
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "one"}]}},
+                {"type": "assistant", "sessionId": "real", "uuid": "a2",
+                 "message": {"id": "m2", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "two"}]}},
+            ])
+            ingest_file(conn, real, prices)
+            self.assertEqual(conn.execute(
+                "SELECT is_low_activity FROM session_summary WHERE session_id='real'"
+            ).fetchone()[0], 0)
+
+            # fleet headline counts the substantive one, hides the stub
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                fleet_summary(conn)
+            out = buf.getvalue()
+            self.assertIn("low-activity", out)
+            sessions = conn.execute(
+                "SELECT COUNT(*) FROM session_summary "
+                "WHERE source='claude_code' AND is_low_activity=0").fetchone()[0]
+            self.assertEqual(sessions, 1)  # only 'real'
+
+    def test_backfill_idempotent_and_matches_single_file(self):
+        # `ingest --backfill --projects-root <root>` walks the history, honors the
+        # 1.1 low-activity rule, is idempotent on re-run, and a single-file ingest
+        # of the same transcript yields the same trace.
+        from mrtoken.ingest import main as ingest_main, connect, ingest_file, load_prices
+        import io, contextlib
+        def assistant(sid, mid, text):
+            return {"type": "assistant", "sessionId": sid, "uuid": sid + mid,
+                    "message": {"id": mid, "model": "claude-opus-4-8",
+                                "usage": {"input_tokens": 10, "output_tokens": 5},
+                                "content": [{"type": "text", "text": text}]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "projects")
+            # proj1/sess1: 2 calls (substantive)
+            os.makedirs(os.path.join(root, "proj1"))
+            write_jsonl(os.path.join(root, "proj1", "sess1.jsonl"),
+                        [assistant("sess1", "m1", "a"), assistant("sess1", "m2", "b")])
+            # proj2/sess2: 1 call (low-activity, still persisted)
+            os.makedirs(os.path.join(root, "proj2"))
+            write_jsonl(os.path.join(root, "proj2", "sess2.jsonl"), [assistant("sess2", "m1", "a")])
+            # proj3/emptyx: 0 calls (skipped, not persisted)
+            os.makedirs(os.path.join(root, "proj3"))
+            write_jsonl(os.path.join(root, "proj3", "emptyx.jsonl"),
+                        [{"type": "user", "message": {"content": "hi"}}])
+            # a subagent transcript (depth-3)
+            sub = os.path.join(root, "proj4", "parentsess", "subagents")
+            os.makedirs(sub)
+            write_jsonl(os.path.join(sub, "agent-1.jsonl"), [assistant("agent-1", "m1", "a")])
+
+            db = os.path.join(tmp, "corpus.db")
+            def run_backfill():
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    ingest_main(["--backfill", "--projects-root", root, "--db", db])
+                return json.loads(buf.getvalue())
+
+            summary = run_backfill()
+            self.assertEqual(summary["seen"], 4)      # 3 main + 1 subagent file seen
+            self.assertEqual(summary["skipped"], 1)   # the empty stub
+            self.assertEqual(summary["sessions"], 3)  # sess1, sess2, subagent persisted
+
+            conn = connect(db)
+            def counts():
+                return (conn.execute("SELECT COUNT(*) FROM trace").fetchone()[0],
+                        conn.execute("SELECT COUNT(*) FROM model_call").fetchone()[0])
+            first = counts()
+            self.assertEqual(first[0], 3)  # empty not persisted
+
+            # idempotent: a second backfill converges to identical row counts
+            run_backfill()
+            self.assertEqual(counts(), first)
+
+            # single-file ingest of sess1 matches the backfilled trace
+            single_db = os.path.join(tmp, "single.db")
+            sconn = connect(single_db)
+            ingest_file(sconn, os.path.join(root, "proj1", "sess1.jsonl"), load_prices())
+            self.assertEqual(
+                sconn.execute("SELECT model_calls FROM session_summary WHERE session_id='sess1'").fetchone()[0],
+                conn.execute("SELECT model_calls FROM session_summary WHERE session_id='sess1'").fetchone()[0])
+
+    def test_corpus_aggregates_exports_and_handles_bad_files(self):
+        # A real v1 export round-trips through corpus intake; a malformed file is
+        # reported, not crashed.
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.rules import analyse
+        from mrtoken.export import export_report
+        from mrtoken.corpus import summarize_exports, print_corpus_report
+        import io, contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+            transcript = os.path.join(tmp, "real.jsonl")
+            write_jsonl(transcript, [
+                {"type": "assistant", "sessionId": "real", "uuid": "a1",
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 50, "output_tokens": 20,
+                                       "cache_read_input_tokens": 900},
+                             "content": [{"type": "text", "text": "one"}]}},
+                {"type": "assistant", "sessionId": "real", "uuid": "a2",
+                 "message": {"id": "m2", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 40, "output_tokens": 15},
+                             "content": [{"type": "text", "text": "two"}]}},
+            ])
+            r = ingest_file(conn, transcript, load_prices())
+            tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
+                               (r["session_id"],)).fetchone()[0]
+            analyse(conn, tid)
+            export_path = os.path.join(tmp, "tester.json")
+            with open(export_path, "w") as fh:
+                fh.write(export_report(conn, redact=True))
+
+            bad = os.path.join(tmp, "bad.json")
+            with open(bad, "w") as fh:
+                fh.write("{ not json")
+            missing = os.path.join(tmp, "nope.json")
+
+            agg = summarize_exports([export_path, bad, missing])
+            self.assertEqual(agg["files"], 1)               # only the good one combined
+            self.assertEqual(agg["sessions"], 1)
+            self.assertEqual(agg["total_tokens"], 50 + 20 + 40 + 15)
+            self.assertEqual(len(agg["errors"]), 2)         # bad + missing reported
+            self.assertIsNotNone(agg["cache_hit_ratio"])
+            # printing never raises
+            with contextlib.redirect_stdout(io.StringIO()):
+                print_corpus_report(agg)
+
+            # pre-1.1 export (no is_low_activity field): bucket stubs by model_calls
+            legacy = os.path.join(tmp, "legacy.json")
+            with open(legacy, "w") as fh:
+                json.dump({"schema": "mrtoken.session_summary.v1", "tool_version": "0.4.1",
+                           "sessions": [
+                               {"model_calls": 1, "total_tokens": 11},   # stub
+                               {"model_calls": 1, "total_tokens": 13},   # stub
+                               {"model_calls": 8, "total_tokens": 50000}],  # substantive
+                           }, fh)
+            lg = summarize_exports([legacy])
+            self.assertEqual(lg["sessions"], 1)        # only the 8-call session
+            self.assertEqual(lg["low_activity"], 2)    # the two 1-call stubs bucketed
+
+    def test_roi_measure_projection_and_cohort(self):
+        # fresh_handoff before/after (ROADMAP 2.1): a long, escalating session with
+        # a fresh_handoff rec yields a non-negative projected saving and a cohort.
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.roi import roi_measure, print_roi_measure
+        import io, contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+            rows = []
+            for i in range(24):  # 24 calls; output (=> cost) escalates over time
+                rows.append({"type": "assistant", "sessionId": "long", "uuid": f"u{i}",
+                             "message": {"id": f"m{i}", "model": "claude-opus-4-8",
+                                         "usage": {"input_tokens": 10, "output_tokens": 10 + i * 20},
+                                         "content": [{"type": "text", "text": f"t{i}"}]}})
+            transcript = os.path.join(tmp, "long.jsonl")
+            write_jsonl(transcript, rows)
+            r = ingest_file(conn, transcript, load_prices())
+            tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
+                               (r["session_id"],)).fetchone()[0]
+            conn.execute("INSERT INTO recommendation(trace_id,rule,severity,message,created_at) "
+                         "VALUES(?,?,?,?,?)", (tid, "fresh_handoff", "high", "start fresh", "2026-01-01"))
+            conn.commit()
+
+            m = roi_measure(conn, horizon=10)
+            self.assertEqual(m["projection"]["n_sessions"], 1)
+            self.assertGreater(m["projection"]["projected_saving_usd"], 0)  # late burn > lean opening
+            self.assertEqual(m["cohort"]["acted"]["n"] + m["cohort"]["ignored"]["n"], 1)
+            self.assertEqual(m["cohort"]["ignored"]["n"], 1)  # 12 calls past midpoint ≥ horizon
+            with contextlib.redirect_stdout(io.StringIO()):
+                print_roi_measure(conn, horizon=10)
 
     def test_ingest_extracts_title_and_export_redacts(self):
         from mrtoken.ingest import connect, ingest_file, load_prices

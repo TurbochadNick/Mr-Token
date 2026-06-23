@@ -31,12 +31,16 @@ def _open(db_path):
 def cmd_ingest(args):
     from mrtoken.ingest import main as _main
     argv = []
-    if args.all:
+    if getattr(args, "backfill", False):
+        argv += ["--backfill"]
+    elif args.all:
         argv += ["--all"]
     elif args.file:
         argv += [args.file]
     else:
-        print("mrtoken-transcript ingest: give a file or --all"); sys.exit(1)
+        print("mrtoken-transcript ingest: give a file, --all, or --backfill"); sys.exit(1)
+    if getattr(args, "projects_root", None):
+        argv += ["--projects-root", args.projects_root]
     argv += ["--db", args.db]
     if args.rules:
         argv += ["--rules"]
@@ -139,8 +143,12 @@ def cmd_why(args):
 
 
 def cmd_roi(args):
-    from mrtoken.roi import print_roi
-    print_roi(_open(args.db), args.session)
+    if getattr(args, "measure", False):
+        from mrtoken.roi import print_roi_measure
+        print_roi_measure(_open(args.db))
+    else:
+        from mrtoken.roi import print_roi
+        print_roi(_open(args.db), args.session)
 
 
 def cmd_status(args):
@@ -156,6 +164,16 @@ def cmd_validate(args):
         print(json.dumps(report, indent=2))
     else:
         print_report(report)
+
+
+def cmd_corpus(args):
+    from mrtoken.corpus import summarize_exports, print_corpus_report
+    import json
+    agg = summarize_exports(args.files)
+    if getattr(args, "json", False):
+        print(json.dumps(agg, indent=2))
+    else:
+        print_corpus_report(agg)
 
 
 def cmd_statusline(args):
@@ -174,6 +192,9 @@ def main(argv=None):
     p_ingest = sub.add_parser("ingest", help="ingest Claude Code transcript(s)")
     p_ingest.add_argument("file", nargs="?", help="path to .jsonl transcript")
     p_ingest.add_argument("--all", action="store_true", help="ingest all ~/.claude/projects/**")
+    p_ingest.add_argument("--backfill", action="store_true",
+        help="ingest ALL local transcripts + run rules (build a corpus; idempotent)")
+    p_ingest.add_argument("--projects-root", help="root to scan (default ~/.claude/projects)")
     p_ingest.add_argument("--rules", action="store_true", help="run rule engine after ingestion")
     p_ingest.add_argument("--db", dest="db_sub")  # allow --db after subcommand too
 
@@ -202,6 +223,11 @@ def main(argv=None):
         help="corroborate fired recommendations (precision proxy, not labels)")
     p_validate.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_validate.add_argument("--db", dest="db_sub")
+
+    p_corpus = sub.add_parser("corpus",
+        help="aggregate shared export JSON files (e.g. from a beta tester) into one summary")
+    p_corpus.add_argument("files", nargs="+", help="one or more session_summary.v1 export JSON files")
+    p_corpus.add_argument("--json", action="store_true", help="emit JSON instead of a table")
 
     p_uninstall = sub.add_parser("uninstall",
         help="remove MR Token's hooks + statusLine + skills (reverse of init)")
@@ -239,6 +265,8 @@ def main(argv=None):
     p_roi = sub.add_parser("roi",
         help="estimate addressable token waste (session or fleet) — estimate, not a trial")
     p_roi.add_argument("session", nargs="?", help="session ID prefix (omit for fleet-wide)")
+    p_roi.add_argument("--measure", action="store_true",
+        help="fresh_handoff before/after: counterfactual projection + acted-vs-ignored cohort")
     p_roi.add_argument("--db", dest="db_sub")
 
     p_status = sub.add_parser("status",
@@ -262,7 +290,8 @@ def main(argv=None):
 
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
-                "export": cmd_export, "validate": cmd_validate, "watch": cmd_watch,
+                "export": cmd_export, "validate": cmd_validate, "corpus": cmd_corpus,
+                "watch": cmd_watch,
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,
