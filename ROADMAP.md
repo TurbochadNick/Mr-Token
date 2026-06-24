@@ -220,12 +220,16 @@ to see *why* a signal fired and whether it was actually *right* — the cheap, o
 then pause for explicit go? (2) 5B.2 — draft the Nick note now? Recommended path: **5D first** (zero budget,
 continuous proof), then 5A.1–5A.3, gate 5A.4 on budget; 5B.1 + 5C.1 docs in parallel.
 
-## Shipped after the roadmap (v0.4.5)
+## Shipped after the roadmap (v0.4.5–0.4.7)
 - [x] **Codex-dir backfill** — `ingest --backfill` now also sweeps `~/.codex/sessions/**` (+ archived_sessions)
-  via the Codex adapter. Real run: 119 rollouts ingested. (`--codex-root` to override.)
-- [x] **`export --since <iso>`** — incremental dashboard refresh (Nick-requested).
+  via the Codex adapter. Real run: 119 rollouts ingested. (`--codex-root` to override.) *(v0.4.5)*
+- [x] **`export --since <iso>`** — incremental dashboard refresh (Nick-requested). *(v0.4.5)*
 - [x] **`session_detail` view + `export --detail <session>`** — per-model-call timeline (Nick-requested),
-  schema `mrtoken.session_detail.v1`.
+  schema `mrtoken.session_detail.v1`. *(v0.4.5)*
+- [x] **Internal feedback & observability** — `explain` / `feedback` / golden regression. *(v0.4.6, ROADMAP 5D)*
+- [x] **Codex live integration** — the Stop hook is now agent-aware: `~/.codex/hooks.json` auto-ingests each
+  Codex session on end (`source='codex'`) with a Codex HUD. Verified offline; live confirm needs a real Codex
+  session (+ possible hook-trust approval). *(v0.4.7)*
 
 ## Backlog / not yet scheduled
 - **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
