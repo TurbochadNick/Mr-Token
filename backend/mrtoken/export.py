@@ -27,16 +27,47 @@ SUMMARY_COLUMNS = [
 ]
 
 
-def session_summaries(conn: sqlite3.Connection, prefix: str | None = None) -> list[dict]:
-    """Return per-session accurate metrics from the session_summary view."""
+def session_summaries(conn: sqlite3.Connection, prefix: str | None = None,
+                      since: str | None = None) -> list[dict]:
+    """Return per-session accurate metrics from the session_summary view.
+    `since` (ISO timestamp) keeps only sessions started at/after it — for an
+    incremental dashboard refresh that pulls just what's new."""
     sql = f"SELECT {', '.join(SUMMARY_COLUMNS)} FROM session_summary"
-    params: tuple = ()
+    clauses, params = [], []
     if prefix:
-        sql += " WHERE session_id LIKE ?"
-        params = (prefix + "%",)
+        clauses.append("session_id LIKE ?"); params.append(prefix + "%")
+    if since:
+        clauses.append("started_at >= ?"); params.append(since)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY started_at DESC"
-    rows = conn.execute(sql, params).fetchall()
+    rows = conn.execute(sql, tuple(params)).fetchall()
     return [dict(zip(SUMMARY_COLUMNS, row)) for row in rows]
+
+
+DETAIL_COLUMNS = [
+    "session_id", "trace_id", "model_call_id", "timestamp", "model",
+    "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
+    "reasoning_tokens", "est_cost_usd", "tool_calls", "tool_errors",
+]
+
+
+def session_detail(conn: sqlite3.Connection, prefix: str) -> list[dict]:
+    """Per-model-call timeline for one session (drill-down panel). Metadata only —
+    token/cost/tool counts per call, no content."""
+    sql = (f"SELECT {', '.join(DETAIL_COLUMNS)} FROM session_detail "
+           "WHERE session_id LIKE ? ORDER BY timestamp")
+    rows = conn.execute(sql, (prefix + "%",)).fetchall()
+    return [dict(zip(DETAIL_COLUMNS, row)) for row in rows]
+
+
+def export_detail(conn: sqlite3.Connection, prefix: str) -> str:
+    """JSON timeline of one session's model calls (schema mrtoken.session_detail.v1)."""
+    from mrtoken import __version__
+    return json.dumps({"schema": "mrtoken.session_detail.v1",
+                       "tool_version": __version__,
+                       "session_prefix": prefix,
+                       "calls": session_detail(conn, prefix)}, indent=2)
 
 
 # the only fields that reveal WHAT/WHERE you work; --redact nulls these so the
@@ -45,13 +76,14 @@ IDENTIFYING_FIELDS = ("project_path", "title")
 
 
 def export_report(conn: sqlite3.Connection, prefix: str | None = None,
-                  redact: bool = False) -> str:
+                  redact: bool = False, since: str | None = None) -> str:
     """Return a JSON document of session summaries + their recommendations.
 
     redact=True drops project_path and title (the only work-revealing fields),
     keeping every metric, the generic rule messages, and session_id (so a
-    recipient can still dedupe) — making the file safe to hand to anyone."""
-    summaries = session_summaries(conn, prefix)
+    recipient can still dedupe) — making the file safe to hand to anyone.
+    since (ISO) limits to sessions started at/after it (incremental refresh)."""
+    summaries = session_summaries(conn, prefix, since)
     for s in summaries:
         if redact:
             for f in IDENTIFYING_FIELDS:

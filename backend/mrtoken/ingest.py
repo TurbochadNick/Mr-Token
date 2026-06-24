@@ -117,6 +117,27 @@ GROUP BY t.id;
 """
 
 
+_SESSION_DETAIL_VIEW = """
+DROP VIEW IF EXISTS session_detail;
+CREATE VIEW session_detail AS
+SELECT
+  t.session_id                  AS session_id,
+  mc.trace_id                   AS trace_id,
+  mc.id                         AS model_call_id,
+  mc.timestamp                  AS timestamp,
+  mc.model                      AS model,
+  mc.input_tokens               AS input_tokens,
+  mc.output_tokens              AS output_tokens,
+  mc.cache_read_input_tokens    AS cache_read_tokens,
+  mc.cache_creation_input_tokens AS cache_write_tokens,
+  mc.reasoning_tokens           AS reasoning_tokens,
+  mc.est_cost_usd               AS est_cost_usd,
+  (SELECT COUNT(*) FROM tool_call tc WHERE tc.model_call_id = mc.id)                   AS tool_calls,
+  (SELECT COUNT(*) FROM tool_call tc WHERE tc.model_call_id = mc.id AND tc.is_error=1) AS tool_errors
+FROM model_call mc JOIN trace t ON t.id = mc.trace_id;
+"""
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     """Idempotently add columns to existing DBs (CREATE TABLE IF NOT EXISTS won't)."""
     for table, col, decl in _MIGRATIONS:
@@ -135,6 +156,7 @@ def connect(db_path: str) -> sqlite3.Connection:
         conn.executescript(f.read())   # tables + indexes
     _migrate(conn)                     # add columns to pre-existing tables
     conn.executescript(_SESSION_SUMMARY_VIEW)  # view references migrated columns
+    conn.executescript(_SESSION_DETAIL_VIEW)   # per-model-call timeline (drill-down)
     conn.commit()
     return conn
 
@@ -363,6 +385,9 @@ def main(argv=None):
                          "corpus from your history in one shot (idempotent; safe to re-run)")
     ap.add_argument("--projects-root", default=os.path.expanduser("~/.claude/projects"),
                     help="root to scan for --all/--backfill (default: ~/.claude/projects)")
+    ap.add_argument("--codex-root", default=os.path.expanduser("~/.codex/sessions"),
+                    help="Codex rollout dir to also sweep on --backfill (default: ~/.codex/sessions); "
+                         "skipped if absent")
     ap.add_argument("--db", default=default_db_path())
     ap.add_argument("--rules", action="store_true", help="run rule engine after ingestion")
     a = ap.parse_args(argv)
@@ -403,6 +428,37 @@ def main(argv=None):
                 total["recommendations"] += len(recs)
         except Exception as e:
             print(f"SKIP {os.path.basename(p)}: {e}", file=sys.stderr)
+
+    # backfill also sweeps the Codex rollout dir (+ sibling archived_sessions),
+    # routing each through the Codex adapter into the same schema (source='codex').
+    if a.backfill:
+        from mrtoken.ingest_codex import ingest_codex_file
+        croot = a.codex_root
+        cpaths = (glob.glob(os.path.join(croot, "**", "*.jsonl"), recursive=True)
+                  if os.path.isdir(croot) else [])
+        arch = os.path.join(os.path.dirname(croot), "archived_sessions")
+        if os.path.isdir(arch):
+            cpaths += glob.glob(os.path.join(arch, "*.jsonl"))
+        total["codex_seen"] = len(cpaths)
+        total["codex_sessions"] = 0
+        total["codex_skipped"] = 0
+        for cp in cpaths:
+            try:
+                r = ingest_codex_file(conn, cp, prices)
+                if r.get("skipped"):
+                    total["codex_skipped"] += 1
+                    continue
+                total["codex_sessions"] += 1
+                total["model_calls"] += r["model_calls"]
+                total["tool_calls"] += r["tool_calls"]
+                if run_rules:
+                    from mrtoken.rules import analyse
+                    tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
+                                       (r["session_id"],)).fetchone()[0]
+                    total["recommendations"] += len(analyse(conn, tid))
+            except Exception as e:
+                print(f"SKIP codex {os.path.basename(cp)}: {e}", file=sys.stderr)
+
     print(json.dumps({"db": a.db, **total}, indent=2))
 
 
