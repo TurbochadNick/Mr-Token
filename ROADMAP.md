@@ -180,9 +180,14 @@ task needs a human decision flagged with **⚑ decision**.
 
 ---
 
+## Shipped after the roadmap (v0.4.5)
+- [x] **Codex-dir backfill** — `ingest --backfill` now also sweeps `~/.codex/sessions/**` (+ archived_sessions)
+  via the Codex adapter. Real run: 119 rollouts ingested. (`--codex-root` to override.)
+- [x] **`export --since <iso>`** — incremental dashboard refresh (Nick-requested).
+- [x] **`session_detail` view + `export --detail <session>`** — per-model-call timeline (Nick-requested),
+  schema `mrtoken.session_detail.v1`.
+
 ## Backlog / not yet scheduled
-- **Codex-dir backfill** — extend `ingest --backfill` to also scan `~/.codex/sessions/**` via the
-  Codex adapter (today the adapter ingests one rollout at a time / auto-routed single files). Surfaced by 3.5.
 - **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
   same project shortly after a `fresh_handoff` fired, so the acted-vs-ignored split is real
   (current B is degenerate because the rule only fires on already-deep sessions). Surfaced by 2.1.

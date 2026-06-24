@@ -813,10 +813,12 @@ class BackendTest(unittest.TestCase):
             write_jsonl(os.path.join(sub, "agent-1.jsonl"), [assistant("agent-1", "m1", "a")])
 
             db = os.path.join(tmp, "corpus.db")
+            empty_codex = os.path.join(tmp, "no-codex")  # absent → codex sweep is a no-op
             def run_backfill():
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
-                    ingest_main(["--backfill", "--projects-root", root, "--db", db])
+                    ingest_main(["--backfill", "--projects-root", root,
+                                 "--codex-root", empty_codex, "--db", db])
                 return json.loads(buf.getvalue())
 
             summary = run_backfill()
@@ -931,6 +933,72 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(m["cohort"]["ignored"]["n"], 1)  # 12 calls past midpoint ≥ horizon
             with contextlib.redirect_stdout(io.StringIO()):
                 print_roi_measure(conn, horizon=10)
+
+    def test_backfill_sweeps_codex_dir(self):
+        # Codex-dir backfill: --backfill also routes ~/.codex rollouts through the
+        # Codex adapter into the same DB (source='codex').
+        from mrtoken.ingest import main as ingest_main, connect
+        import io, contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            claude_root = os.path.join(tmp, "claude"); os.makedirs(claude_root)  # empty Claude side
+            codex_root = os.path.join(tmp, "codex", "2026", "06", "24")
+            os.makedirs(codex_root)
+            write_jsonl(os.path.join(codex_root, "rollout-x.jsonl"), [
+                {"timestamp": "2026-06-24T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cxbf", "cwd": "/proj"}},
+                {"timestamp": "2026-06-24T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.5"}},
+                {"timestamp": "2026-06-24T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 5000, "cached_input_tokens": 4000,
+                     "output_tokens": 200, "total_tokens": 5200}}}},
+            ])
+            db = os.path.join(tmp, "c.db")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ingest_main(["--backfill", "--projects-root", claude_root,
+                             "--codex-root", os.path.join(tmp, "codex"), "--db", db])
+            summary = json.loads(buf.getvalue())
+            self.assertEqual(summary["codex_seen"], 1)
+            self.assertEqual(summary["codex_sessions"], 1)
+            src = connect(db).execute(
+                "SELECT source FROM trace WHERE session_id='cxbf'").fetchone()[0]
+            self.assertEqual(src, "codex")
+
+    def test_export_since_filter_and_session_detail(self):
+        # ROADMAP backlog: --since (incremental refresh) + session_detail timeline.
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.export import export_report, export_detail
+        def sess(sid, ts0, ts1):
+            return [
+                {"type": "assistant", "sessionId": sid, "uuid": sid + "1", "timestamp": ts0,
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "a"}]}},
+                {"type": "assistant", "sessionId": sid, "uuid": sid + "2", "timestamp": ts1,
+                 "message": {"id": "m2", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "b"}]}},
+            ]
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+            old = os.path.join(tmp, "old.jsonl"); new = os.path.join(tmp, "new.jsonl")
+            write_jsonl(old, sess("old", "2026-06-01T00:00:00Z", "2026-06-01T00:01:00Z"))
+            write_jsonl(new, sess("new", "2026-06-20T00:00:00Z", "2026-06-20T00:01:00Z"))
+            ingest_file(conn, old, load_prices())
+            ingest_file(conn, new, load_prices())
+
+            # --since keeps only the newer session
+            d = json.loads(export_report(conn, since="2026-06-10T00:00:00Z"))
+            sids = {s["session_id"] for s in d["sessions"]}
+            self.assertEqual(sids, {"new"})
+
+            # session_detail timeline: one row per model call, ordered
+            det = json.loads(export_detail(conn, "new"))
+            self.assertEqual(det["schema"], "mrtoken.session_detail.v1")
+            self.assertEqual(len(det["calls"]), 2)
+            self.assertEqual(det["calls"][0]["session_id"], "new")
+            self.assertEqual(det["calls"][0]["timestamp"], "2026-06-20T00:00:00Z")
 
     def test_ingest_extracts_title_and_export_redacts(self):
         from mrtoken.ingest import connect, ingest_file, load_prices

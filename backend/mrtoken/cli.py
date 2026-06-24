@@ -88,8 +88,15 @@ def cmd_fleet(args):
 
 
 def cmd_export(args):
+    if getattr(args, "detail", False):
+        if not args.session:
+            print("mrtoken-transcript export --detail: give a session prefix"); sys.exit(1)
+        from mrtoken.export import export_detail
+        print(export_detail(_open(args.db), args.session))
+        return
     from mrtoken.export import export_report
-    print(export_report(_open(args.db), args.session, redact=getattr(args, "redact", False)))
+    print(export_report(_open(args.db), args.session, redact=getattr(args, "redact", False),
+                        since=getattr(args, "since", None)))
 
 
 def cmd_init(args):
@@ -234,6 +241,10 @@ def main(argv=None):
     p_export.add_argument("--db", dest="db_sub")
     p_export.add_argument("--redact", action="store_true",
         help="drop project_path + title so the export is safe to share")
+    p_export.add_argument("--since", help="ISO timestamp; only sessions started at/after it "
+        "(incremental dashboard refresh)")
+    p_export.add_argument("--detail", action="store_true",
+        help="emit a per-model-call timeline for the given session (drill-down)")
 
     p_validate = sub.add_parser("validate",
         help="corroborate fired recommendations (precision proxy, not labels)")
