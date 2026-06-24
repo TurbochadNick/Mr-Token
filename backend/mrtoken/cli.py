@@ -199,6 +199,26 @@ def cmd_corpus(args):
         print_corpus_report(agg)
 
 
+def cmd_explain(args):
+    from mrtoken.feedback import print_explain
+    print_explain(_open(args.db), args.session or "")
+
+
+def cmd_feedback(args):
+    from mrtoken.feedback import record_feedback, print_feedback_summary
+    conn = _open(args.db)
+    if getattr(args, "summary", False) or not args.session:
+        print_feedback_summary(conn); return
+    if not args.rule or not args.verdict:
+        print("usage: mrtoken-transcript feedback <session> <rule> right|wrong|unsure [--note ...]\n"
+              "   or: mrtoken-transcript feedback --summary"); sys.exit(1)
+    try:
+        r = record_feedback(conn, args.session, args.rule, args.verdict, getattr(args, "note", None))
+    except ValueError as e:
+        print(f"mrtoken feedback: {e}"); sys.exit(1)
+    print(f"✓ recorded: {r['session_id'][:8]} · {r['rule']} → {r['verdict']}")
+
+
 def cmd_statusline(args):
     from mrtoken.statusline import statusline_hud
     sys.exit(statusline_hud(getattr(args, "session", None)))
@@ -255,6 +275,20 @@ def main(argv=None):
         help="aggregate shared export JSON files (e.g. from a beta tester) into one summary")
     p_corpus.add_argument("files", nargs="+", help="one or more session_summary.v1 export JSON files")
     p_corpus.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+
+    p_explain = sub.add_parser("explain",
+        help="decode why each signal fired for a session (evidence behind the HUD)")
+    p_explain.add_argument("session", nargs="?", help="session id or prefix (default: newest)")
+    p_explain.add_argument("--db", dest="db_sub")
+
+    p_feedback = sub.add_parser("feedback",
+        help="record a right/wrong/unsure verdict on a fired rule (real-usage precision)")
+    p_feedback.add_argument("session", nargs="?", help="session id or prefix")
+    p_feedback.add_argument("rule", nargs="?", help="rule name (e.g. huge_tool_output)")
+    p_feedback.add_argument("verdict", nargs="?", help="right | wrong | unsure")
+    p_feedback.add_argument("--note", help="optional free-text note")
+    p_feedback.add_argument("--summary", action="store_true", help="show labelled precision per rule")
+    p_feedback.add_argument("--db", dest="db_sub")
 
     p_uninstall = sub.add_parser("uninstall",
         help="remove MR Token's hooks + statusLine + skills (reverse of init)")
@@ -318,6 +352,7 @@ def main(argv=None):
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "corpus": cmd_corpus,
+                "explain": cmd_explain, "feedback": cmd_feedback,
                 "watch": cmd_watch,
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
