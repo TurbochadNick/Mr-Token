@@ -32,10 +32,12 @@ def fleet_summary(conn: sqlite3.Connection):
     # Headline session counts exclude low-activity stubs (see ROADMAP.md 1.1): the
     # global Stop hook records many near-empty desktop sessions, which would
     # otherwise inflate the count. They remain queryable in session_summary.
+    # main sessions = Claude Code + Codex (both are top-level agent sessions);
+    # subagents are counted separately.
     sessions, low_activity, sub_sess = conn.execute("""
-        SELECT COUNT(CASE WHEN source='claude_code'           AND is_low_activity=0 THEN 1 END),
-               COUNT(CASE WHEN source='claude_code'           AND is_low_activity=1 THEN 1 END),
-               COUNT(CASE WHEN source='claude_code_subagent'                        THEN 1 END)
+        SELECT COUNT(CASE WHEN source IN ('claude_code','codex') AND is_low_activity=0 THEN 1 END),
+               COUNT(CASE WHEN source IN ('claude_code','codex') AND is_low_activity=1 THEN 1 END),
+               COUNT(CASE WHEN source='claude_code_subagent'                          THEN 1 END)
         FROM session_summary
     """).fetchone()
 
@@ -76,7 +78,7 @@ def fleet_summary(conn: sqlite3.Connection):
                SUM(mc.input_tokens+mc.output_tokens) total,
                (SELECT COUNT(*) FROM recommendation r WHERE r.trace_id=t.id AND r.severity='high') highs
         FROM trace t JOIN model_call mc ON mc.trace_id=t.id
-        WHERE t.source='claude_code'
+        WHERE t.source IN ('claude_code','codex')
         GROUP BY t.id ORDER BY total DESC LIMIT 5
     """).fetchall()
     for sid, title, ts, total, highs in top:

@@ -87,7 +87,14 @@ def main():
         from mrtoken.rules import analyse
 
         prices = load_prices()
-        conn = connect(os.environ.get("MRTOKEN_DB") or default_db_path(payload.get("cwd")))
+        # Codex sessions sprawl across many working dirs → aggregate them in ONE
+        # central DB; Claude stays per-project. MRTOKEN_DB overrides either.
+        if codex_path:
+            from mrtoken.datadir import codex_db_path
+            db = os.environ.get("MRTOKEN_DB") or codex_db_path()
+        else:
+            db = os.environ.get("MRTOKEN_DB") or default_db_path(payload.get("cwd"))
+        conn = connect(db)
         totals = {"model_calls": 0, "tool_calls": 0, "recs": 0, "high": 0}
 
         if codex_path:

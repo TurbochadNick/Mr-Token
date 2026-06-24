@@ -378,9 +378,10 @@ class BackendTest(unittest.TestCase):
             db = os.path.join(tmp, "codex.db")
             on_stop.PROJECTS = os.path.join(tmp, "no-claude")  # no Claude transcript match
             on_stop.CODEX_DIRS = (os.path.join(tmp, "codex"),)
-            orig = mrtoken.ingest.default_db_path
-            mrtoken.ingest.default_db_path = lambda cwd=None: db
-            orig_stdin, saved = _sys.stdin, os.environ.pop("MRTOKEN_DB", None)
+            # Codex branch writes to MRTOKEN_DB (overrides the central Codex DB);
+            # point it at the temp DB so the test doesn't touch the real central store.
+            orig_stdin, saved = _sys.stdin, os.environ.get("MRTOKEN_DB")
+            os.environ["MRTOKEN_DB"] = db
             _sys.stdin = io.StringIO(json.dumps({"session_id": sid, "cwd": "/proj"}))
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -389,10 +390,11 @@ class BackendTest(unittest.TestCase):
                     except SystemExit:
                         pass
             finally:
-                mrtoken.ingest.default_db_path = orig
                 _sys.stdin = orig_stdin
                 if saved is not None:
                     os.environ["MRTOKEN_DB"] = saved
+                else:
+                    os.environ.pop("MRTOKEN_DB", None)
             src = sqlite3.connect(db).execute(
                 "SELECT source FROM trace WHERE session_id=?", (sid,)).fetchone()
             self.assertIsNotNone(src)
@@ -1077,9 +1079,40 @@ class BackendTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 print_roi_measure(conn, horizon=10)
 
+    def test_fleet_counts_codex_sessions(self):
+        # fleet must count Codex sessions (source='codex'), not just claude_code.
+        from mrtoken.ingest import connect
+        from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.fleet import fleet_summary
+        import io, contextlib, re
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout-x.jsonl")
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-24T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cxf", "cwd": "/proj"}},
+                {"timestamp": "2026-06-24T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.5"}},
+                {"timestamp": "2026-06-24T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 5000, "cached_input_tokens": 4000, "output_tokens": 200,
+                     "total_tokens": 5200}}}},
+                {"timestamp": "2026-06-24T00:00:03Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 6000, "cached_input_tokens": 5000, "output_tokens": 150,
+                     "total_tokens": 6150}}}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            ingest_codex_file(conn, codex)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                fleet_summary(conn)
+            m = re.search(r"sessions\s+(\d+)", buf.getvalue())
+            self.assertIsNotNone(m)
+            self.assertGreaterEqual(int(m.group(1)), 1)  # the codex session is counted
+
     def test_backfill_sweeps_codex_dir(self):
-        # Codex-dir backfill: --backfill also routes ~/.codex rollouts through the
-        # Codex adapter into the same DB (source='codex').
+        # Codex-dir backfill routes ~/.codex rollouts to the CENTRAL Codex DB
+        # (--codex-db), NOT the per-project Claude --db.
         from mrtoken.ingest import main as ingest_main, connect
         import io, contextlib
         with tempfile.TemporaryDirectory() as tmp:
@@ -1096,17 +1129,22 @@ class BackendTest(unittest.TestCase):
                      "input_tokens": 5000, "cached_input_tokens": 4000,
                      "output_tokens": 200, "total_tokens": 5200}}}},
             ])
-            db = os.path.join(tmp, "c.db")
+            db = os.path.join(tmp, "c.db")           # Claude DB
+            codex_db = os.path.join(tmp, "codex.db")  # central Codex DB
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 ingest_main(["--backfill", "--projects-root", claude_root,
-                             "--codex-root", os.path.join(tmp, "codex"), "--db", db])
+                             "--codex-root", os.path.join(tmp, "codex"),
+                             "--codex-db", codex_db, "--db", db])
             summary = json.loads(buf.getvalue())
             self.assertEqual(summary["codex_seen"], 1)
             self.assertEqual(summary["codex_sessions"], 1)
-            src = connect(db).execute(
-                "SELECT source FROM trace WHERE session_id='cxbf'").fetchone()[0]
-            self.assertEqual(src, "codex")
+            self.assertEqual(summary["codex_db"], codex_db)
+            # codex landed in the central Codex DB, not the Claude --db
+            self.assertEqual(connect(codex_db).execute(
+                "SELECT source FROM trace WHERE session_id='cxbf'").fetchone()[0], "codex")
+            self.assertIsNone(connect(db).execute(
+                "SELECT 1 FROM trace WHERE session_id='cxbf'").fetchone())
 
     def test_export_since_filter_and_session_detail(self):
         # ROADMAP backlog: --since (incremental refresh) + session_detail timeline.

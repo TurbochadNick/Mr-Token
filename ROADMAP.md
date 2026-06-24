@@ -228,8 +228,11 @@ continuous proof), then 5A.1–5A.3, gate 5A.4 on budget; 5B.1 + 5C.1 docs in pa
   schema `mrtoken.session_detail.v1`. *(v0.4.5)*
 - [x] **Internal feedback & observability** — `explain` / `feedback` / golden regression. *(v0.4.6, ROADMAP 5D)*
 - [x] **Codex live integration** — the Stop hook is now agent-aware: `~/.codex/hooks.json` auto-ingests each
-  Codex session on end (`source='codex'`) with a Codex HUD. Verified offline; live confirm needs a real Codex
-  session (+ possible hook-trust approval). *(v0.4.7)*
+  Codex session on end (`source='codex'`) with a Codex HUD. Confirmed live (a real session captured). *(v0.4.7)*
+- [x] **Central Codex DB** — Codex sessions sprawl across dirs, so per-project DBs scattered them. Now they
+  aggregate in one central `~/.mrtoken/data/codex.db`; `--codex` shortcut on fleet/report/explain/export/
+  validate/roi/why; `ingest --backfill` routes Codex there. fleet now counts Codex sessions. Backfilled 122
+  sessions (165M tok, $1,059 API-eq). *(v0.4.8)*
 
 ## Backlog / not yet scheduled
 - **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
