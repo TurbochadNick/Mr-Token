@@ -348,6 +348,56 @@ class BackendTest(unittest.TestCase):
                                   "message": {"id": "m", "usage": {"input_tokens": 1}}}])
             self.assertFalse(_is_codex_transcript(claude))
 
+    def test_stop_hook_ingests_codex_rollout(self):
+        # Codex live integration: the SAME Stop hook, given a session with no Claude
+        # transcript, finds the matching Codex rollout and ingests it (source='codex').
+        import importlib.util, io, contextlib, sys as _sys, mrtoken, mrtoken.ingest
+        backend = os.path.dirname(os.path.dirname(mrtoken.__file__))
+        spec = importlib.util.spec_from_file_location(
+            "on_stop_codex", os.path.join(backend, "hooks", "on_stop.py"))
+        on_stop = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(on_stop)
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_dir = os.path.join(tmp, "codex", "2026", "06")
+            os.makedirs(codex_dir)
+            sid = "019efb64-cafe-7b80-8c75-deadbeef0001"
+            write_jsonl(os.path.join(codex_dir, f"rollout-2026-06-24T00-00-00-{sid}.jsonl"), [
+                {"timestamp": "2026-06-24T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": sid, "cwd": "/proj"}},
+                {"timestamp": "2026-06-24T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.5"}},
+                {"timestamp": "2026-06-24T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 5000, "cached_input_tokens": 4000, "output_tokens": 200,
+                     "total_tokens": 5200}}}},
+                {"timestamp": "2026-06-24T00:00:03Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 6000, "cached_input_tokens": 5000, "output_tokens": 150,
+                     "total_tokens": 6150}}}},
+            ])
+            db = os.path.join(tmp, "codex.db")
+            on_stop.PROJECTS = os.path.join(tmp, "no-claude")  # no Claude transcript match
+            on_stop.CODEX_DIRS = (os.path.join(tmp, "codex"),)
+            orig = mrtoken.ingest.default_db_path
+            mrtoken.ingest.default_db_path = lambda cwd=None: db
+            orig_stdin, saved = _sys.stdin, os.environ.pop("MRTOKEN_DB", None)
+            _sys.stdin = io.StringIO(json.dumps({"session_id": sid, "cwd": "/proj"}))
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    try:
+                        on_stop.main()
+                    except SystemExit:
+                        pass
+            finally:
+                mrtoken.ingest.default_db_path = orig
+                _sys.stdin = orig_stdin
+                if saved is not None:
+                    os.environ["MRTOKEN_DB"] = saved
+            src = sqlite3.connect(db).execute(
+                "SELECT source FROM trace WHERE session_id=?", (sid,)).fetchone()
+            self.assertIsNotNone(src)
+            self.assertEqual(src[0], "codex")  # routed to the Codex adapter
+
     def test_stop_hook_ingests_from_arbitrary_cwd(self):
         # ROADMAP 4.1 (regression guard): the now-global Stop hook resolves the
         # per-project DB from the session payload's cwd and ingests — the fix for
