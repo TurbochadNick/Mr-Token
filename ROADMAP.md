@@ -180,6 +180,46 @@ task needs a human decision flagged with **⚑ decision**.
 
 ---
 
+## Phase 5 — Prove · Show · Grow *(next; spans lanes — read the notes)*
+
+### A — Prove it (ROI experiment → a causal number) *(backend mine; live runs SPEND BUDGET)*
+The harness exists (`backend/experiments/`, continue+handoff arms live, oracle+recorder working).
+Pilots 1–2 were inconclusive because the fixtures didn't reliably bloat past the 100k reset point
+and used a turn-count proxy. Pilot 3 fixes exactly that.
+- [ ] **5A.1 Reliably-bloating fixture** — a task whose seed forces the agent past ~100k input-side
+  tokens before it can finish (large multi-file repo / forced reads). Pilot once to confirm it crosses
+  the threshold. *(build only; ~1 cheap confirm run)*
+- [ ] **5A.2 Token-threshold reset** — replace the turn-count proxy with a reset fired when input-side
+  context crosses 100k, via transcript-watching (reuse `watch`'s tracking — avoids needing the Agent SDK).
+- [ ] **5A.3 Wire the `compact` arm** (currently deferred in `drive_agent`).
+- [ ] **5A.4 Run the matrix** — continue/compact/handoff × pilot-3 × K=5–10, interleaved. **⚑ decision/SPEND:**
+  needs explicit budget greenlight (doc estimates a few M tokens / tens of $). Hard budget cap in the harness.
+- [ ] **5A.5 Analyze + record** — apply the pre-registered rule (≥5% signal, ≥10–15% win vs BOTH arms at
+  equal completion), write the result into `docs/ROI-EXPERIMENT.md`.
+
+### B — Show it (dashboard — Nick's TS/web lane) *(I provide the contract, do NOT build)*
+- [ ] **5B.1 Data-surface spec for Nick** — `session_summary.v1` + `session_detail.v1` + `--since`, with the
+  estimated↔actual join and example queries. (backend doc — in lane)
+- [ ] **5B.2 Coordination note to Nick** — what's ready + his two open questions now answered (draft; Zach sends).
+
+### C — Grow it (pilots / GTM) *(materials in lane; outreach is Zach's)*
+- [ ] **5C.1 Pilot one-pager / onboarding** — from `INTERVIEW-KIT.md` + the v0.4.5 capabilities (draft).
+- [ ] **5C.2 BYU TTO pilot framing / weekly report** — Zach-driven; I can draft.
+
+### D — Internal feedback & observability *(backend mine; ~zero budget; do BEFORE 5A.4)*
+We've validated Mr Token ad hoc (dogfood + the `validate` *proxy*). This adds a continuous internal loop
+to see *why* a signal fired and whether it was actually *right* — the cheap, ongoing cousin of 5A.
+- [x] **5D.1 Explain-on-signal** — `explain <session>` decodes each fired rec's `evidence_json` into readable
+  "what triggered it" lines. Done (v0.4.6); dogfood: explains a 597-call session's signals incl. 36 offenders.
+- [x] **5D.2 Feedback capture** — `feedback <session> <rule> right|wrong|unsure [--note]` + `feedback --summary`
+  (new `feedback` table → labelled precision). Done (v0.4.6).
+- [x] **5D.3 Golden regression** — whole-session fixtures + expected fired-signal sets; `test_golden_session_signals`
+  flags drift. Done (v0.4.6).
+
+**Decisions needed:** (1) 5A.4 spends budget — greenlight the full matrix, or build 5A.1–5A.3 + one smoke-run
+then pause for explicit go? (2) 5B.2 — draft the Nick note now? Recommended path: **5D first** (zero budget,
+continuous proof), then 5A.1–5A.3, gate 5A.4 on budget; 5B.1 + 5C.1 docs in parallel.
+
 ## Shipped after the roadmap (v0.4.5)
 - [x] **Codex-dir backfill** — `ingest --backfill` now also sweeps `~/.codex/sessions/**` (+ archived_sessions)
   via the Codex adapter. Real run: 119 rollouts ingested. (`--codex-root` to override.)

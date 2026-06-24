@@ -401,6 +401,99 @@ class BackendTest(unittest.TestCase):
                 "SELECT COUNT(*) FROM trace WHERE session_id=?", (sid,)).fetchone()[0]
             self.assertEqual(n, 1)  # and a trace landed in the cwd-resolved DB
 
+    def test_explain_and_feedback_loop(self):
+        # ROADMAP 5D.1 + 5D.2 — explain a fired signal's evidence; capture a verdict
+        # and summarise labelled precision.
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.rules import analyse
+        from mrtoken.feedback import (explain_session, record_feedback,
+                                      feedback_summary)
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+            path = os.path.join(tmp, "fb.jsonl")  # session_id derives from the filename
+            write_jsonl(path, [
+                {"type": "assistant", "sessionId": "fb", "uuid": "a1", "timestamp": "2026-06-01T00:00:00Z",
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}},
+                {"type": "user", "message": {"content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "x" * 200_000}]}},
+                {"type": "assistant", "sessionId": "fb", "uuid": "a2", "timestamp": "2026-06-01T00:00:01Z",
+                 "message": {"id": "m2", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "ok"}]}},
+            ])
+            r = ingest_file(conn, path, load_prices())
+            tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
+                               (r["session_id"],)).fetchone()[0]
+            analyse(conn, tid)
+
+            # explain: huge_tool_output fired, with decoded evidence
+            ex = explain_session(conn, "fb")
+            rules = {e["rule"] for e in ex}
+            self.assertIn("huge_tool_output", rules)
+            hto = next(e for e in ex if e["rule"] == "huge_tool_output")
+            self.assertTrue(hto["evidence"])  # evidence decoded, not empty
+
+            # feedback: bad verdict rejected; good one persists + summarises
+            with self.assertRaises(ValueError):
+                record_feedback(conn, "fb", "huge_tool_output", "maybe")
+            record_feedback(conn, "fb", "huge_tool_output", "right", "real waste")
+            record_feedback(conn, "fb", "huge_tool_output", "wrong")
+            summ = feedback_summary(conn)["huge_tool_output"]
+            self.assertEqual((summ["right"], summ["wrong"]), (1, 1))
+            self.assertEqual(summ["labelled_precision"], 0.5)
+
+    def test_golden_session_signals(self):
+        # ROADMAP 5D.3 — golden regression: whole-session fixtures with their
+        # EXPECTED fired-signal sets. Catches drift when a threshold changes.
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.rules import analyse
+
+        def a(sid, mid, ts, text="ok", usage=None, tool=None):
+            content = [{"type": "text", "text": text}]
+            if tool:
+                content = [{"type": "tool_use", "id": tool, "name": "Read", "input": {"file_path": "/x"}}]
+            return {"type": "assistant", "sessionId": sid, "uuid": sid + mid, "timestamp": ts,
+                    "message": {"id": mid, "model": "claude-opus-4-8",
+                                "usage": usage or {"input_tokens": 10, "output_tokens": 5},
+                                "content": content}}
+
+        def tool_result(tuid, chars):
+            return {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": tuid, "content": "x" * chars}]}}
+
+        def build_huge():  # huge tool output carried across later calls
+            return [a("g1", "m1", "2026-06-01T00:00:00Z", tool="t1"),
+                    tool_result("t1", 200_000),
+                    a("g1", "m2", "2026-06-01T00:00:01Z"),
+                    a("g1", "m3", "2026-06-01T00:00:02Z"),
+                    a("g1", "m4", "2026-06-01T00:00:03Z")]
+
+        def build_clean():  # short, well-cached → nothing should fire
+            u = {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 5000}
+            return [a("g2", "m1", "2026-06-02T00:00:00Z", usage=u),
+                    a("g2", "m2", "2026-06-02T00:00:01Z", usage=u)]
+
+        golden = [
+            {"name": "huge_output_carried", "build": build_huge, "expect_contains": {"huge_tool_output"}},
+            {"name": "clean_short", "build": build_clean, "expect_exact": set()},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            for g in golden:
+                conn = connect(os.path.join(tmp, g["name"] + ".db"))
+                path = os.path.join(tmp, g["name"] + ".jsonl")
+                write_jsonl(path, g["build"]())
+                r = ingest_file(conn, path, load_prices())
+                tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
+                                   (r["session_id"],)).fetchone()[0]
+                fired = {rec["rule"] for rec in analyse(conn, tid)}
+                if "expect_exact" in g:
+                    self.assertEqual(fired, g["expect_exact"], f"golden '{g['name']}' drift: {fired}")
+                else:
+                    self.assertTrue(g["expect_contains"] <= fired,
+                                    f"golden '{g['name']}' missing {g['expect_contains'] - fired}")
+
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()

@@ -86,7 +86,20 @@ CREATE TABLE IF NOT EXISTS recommendation (
   created_at         TEXT NOT NULL
 );
 
+-- internal feedback: human labels on fired recommendations (ROADMAP 5D.2).
+-- Upgrades validate's automated proxy into real precision/recall from real usage.
+CREATE TABLE IF NOT EXISTS feedback (
+  id          INTEGER PRIMARY KEY,
+  trace_id    INTEGER,
+  session_id  TEXT NOT NULL,
+  rule        TEXT NOT NULL,
+  verdict     TEXT NOT NULL,        -- right | wrong | unsure
+  note        TEXT,
+  created_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_mc_trace   ON model_call(trace_id);
+CREATE INDEX IF NOT EXISTS idx_fb_session ON feedback(session_id);
 CREATE INDEX IF NOT EXISTS idx_tc_trace   ON tool_call(trace_id);
 CREATE INDEX IF NOT EXISTS idx_cb_trace   ON context_block(trace_id);
 CREATE INDEX IF NOT EXISTS idx_rec_trace  ON recommendation(trace_id);
