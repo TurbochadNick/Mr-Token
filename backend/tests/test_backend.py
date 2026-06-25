@@ -496,6 +496,66 @@ class BackendTest(unittest.TestCase):
             self.assertEqual((summ["right"], summ["wrong"]), (1, 1))
             self.assertEqual(summ["labelled_precision"], 0.5)
 
+    def test_offload_stashes_and_summarizes(self):
+        # ROADMAP 6.1: offload writes full content to disk, returns a compact summary
+        # + stash path, and keeps the bulk out of context.
+        from mrtoken.offload import offload_content
+        with tempfile.TemporaryDirectory() as tmp:
+            big = "\n".join(f"line {i} lorem ipsum dolor" for i in range(500))
+            r = offload_content(content=big, max_lines=20, stash_dir=tmp)
+            self.assertEqual(r["lines"], 500)
+            self.assertTrue(os.path.exists(r["stash_path"]))
+            with open(r["stash_path"]) as fh:
+                self.assertEqual(fh.read(), big)            # full content retrievable
+            self.assertLess(len(r["summary"].splitlines()), 60)  # summary is compact
+            self.assertGreater(r["est_tokens_saved"], 0)
+            # query mode greps
+            rq = offload_content(content="apple\nbanana\napricot", query="ap",
+                                 stash_dir=tmp)
+            self.assertIn("apple", rq["summary"])
+            self.assertIn("apricot", rq["summary"])
+            self.assertNotIn("banana", rq["summary"])
+            # path mode reads a file
+            p = os.path.join(tmp, "f.txt"); open(p, "w").write("a\nb\nc\n")
+            rp = offload_content(path=p, stash_dir=tmp)
+            self.assertEqual(rp["lines"], 3)
+
+    def test_mcp_server_lists_and_calls_offload(self):
+        # ROADMAP 6.1: the MCP server exposes + dispatches the toolbox (both agents
+        # speak MCP, so this equips Claude and Codex from one server).
+        import mrtoken.offload as offmod
+        from mrtoken import mcp_server
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = offmod.central_default
+            offmod.central_default = lambda: tmp   # keep stash out of the real central store
+            try:
+                init = mcp_server.handle_request(
+                    {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                     "params": {"protocolVersion": "2025-06-18"}})
+                self.assertEqual(init["result"]["serverInfo"]["name"], "mrtoken")
+                self.assertEqual(init["result"]["protocolVersion"], "2025-06-18")  # echoes client
+
+                self.assertIsNone(mcp_server.handle_request(
+                    {"jsonrpc": "2.0", "method": "notifications/initialized"}))  # notification
+
+                tl = mcp_server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+                self.assertIn("offload", [t["name"] for t in tl["result"]["tools"]])
+
+                call = mcp_server.handle_request(
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": "offload",
+                                "arguments": {"content": "x\n" * 300, "max_lines": 10}}})
+                res = call["result"]
+                self.assertFalse(res["isError"])
+                self.assertIn("kept out of context", res["content"][0]["text"])
+
+                bad = mcp_server.handle_request(
+                    {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                     "params": {"name": "nope", "arguments": {}}})
+                self.assertTrue(bad["result"]["isError"])
+            finally:
+                offmod.central_default = orig
+
     def test_golden_session_signals(self):
         # ROADMAP 5D.3 — golden regression: whole-session fixtures with their
         # EXPECTED fired-signal sets. Catches drift when a threshold changes.
