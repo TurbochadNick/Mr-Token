@@ -220,6 +220,38 @@ to see *why* a signal fired and whether it was actually *right* — the cheap, o
 then pause for explicit go? (2) 5B.2 — draft the Nick note now? Recommended path: **5D first** (zero budget,
 continuous proof), then 5A.1–5A.3, gate 5A.4 on budget; 5B.1 + 5C.1 docs in parallel.
 
+## Phase 6 — The intervention engine *(the v2 vision; see `backend/docs/BRIEF.md`)*
+
+Goal: stop the agent running out of context on junk, by **teaching** it (the manual),
+**equipping** it (the toolbox), and **acting in the moment** (the proc engine) — consented,
+toggleable, measured. **Cross-cutting requirements for every task:** works for **both Claude
+Code and Codex**; every tool/tweak individually toggleable; nothing auto-acts (L1/L2 only)
+until 6.7's measurement proves it helps. **Locked defaults** (Zach): toolbox = MCP tools +
+a manual skill; approval = hook-driven first; AFK default = warn-only.
+
+- [ ] **6.1 Toolbox foundation — MCP server + `mr_offload`** — stand up a Mr Token MCP server and
+  ship the first tool: `offload(content/ref)` writes a large tool output to disk and returns a
+  compact summary/reference, so it stops filling context. Register for Claude Code **and** Codex
+  (both support MCP). Toggleable. **Acceptance:** the agent can call it in both agents; offloaded
+  content leaves context, a summary returns; unit test.
+- [ ] **6.2 More tools — `mr_handoff`, `mr_compact`** — expose the existing handoff logic + a compact
+  trigger as MCP tools. **Acceptance:** callable in both agents; each individually toggleable; tests.
+- [ ] **6.3 The manual — a context-efficiency skill** the agent consults (the "teach" half): how to
+  avoid/repair context bloat, when to reach for which tool. Installed globally for both agents.
+- [ ] **6.4 Proc engine — turn-boundary trigger** — at the turn boundary (Claude UserPromptSubmit /
+  Codex equivalent), fire when **pressure** (predictive turns-to-full) **and** **reclaimability**
+  (rules find fixable junk) both trip. Debounced; points the agent at the manual/tool. **Acceptance:**
+  fires on a fabricated pressure+junk session, silent on a clean one; both agents.
+- [ ] **6.5 Config + kill switch** — per-tool autonomy level (`off|tell|ask|do`) + a global kill
+  switch; default **warn-only**. **Acceptance:** a tool set to `off` never fires; kill switch silences all.
+- [ ] **6.6 L2 Ask + AFK escalation** — hook-driven approval (reply = approve; AFK = next-turn
+  escalation per config). **Acceptance:** ask shown; inaction escalates to the configured action (or warn).
+- [ ] **6.7 Measure-don't-degrade** — every tool action logs before/after (tokens, ctx %, task still
+  succeeded?); a tool whose outcome trends negative **auto-disables and says so**. Builds on
+  `feedback`/`explain`. **Acceptance:** a fabricated "made it worse" history auto-disables that tool.
+- [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
+  help, at equal quality. **⚑ decision per tool** before it defaults to auto.
+
 ## Shipped after the roadmap (v0.4.5–0.4.7)
 - [x] **Codex-dir backfill** — `ingest --backfill` now also sweeps `~/.codex/sessions/**` (+ archived_sessions)
   via the Codex adapter. Real run: 119 rollouts ingested. (`--codex-root` to override.) *(v0.4.5)*
