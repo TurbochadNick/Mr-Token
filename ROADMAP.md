@@ -251,9 +251,9 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
 - [x] **6.6 L2 Ask + AFK escalation**
   → done: commit `db67c31`. `ask` level proposes + waits (reply=approve); inaction on a later turn
     (same tool, ctx not improved) escalates to a firmer nudge (auto-action plugs in at 6.8). 70 tests green.
-- [ ] **6.7 Measure-don't-degrade** — every tool action logs before/after (tokens, ctx %, task still
-  succeeded?); a tool whose outcome trends negative **auto-disables and says so**. Builds on
-  `feedback`/`explain`. **Acceptance:** a fabricated "made it worse" history auto-disables that tool.
+- [x] **6.7 Measure-don't-degrade**
+  → done: commit `7a397d8`. `outcomes.py` central store; proc engine auto-captures ctx-delta effect per
+    tool; a tool trending negative auto-disables via policy (→ off) + says how to re-enable. 71 tests green.
 - [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
   help, at equal quality. **⚑ decision per tool** before it defaults to auto.
 
