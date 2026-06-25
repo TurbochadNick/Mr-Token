@@ -556,6 +556,38 @@ class BackendTest(unittest.TestCase):
             finally:
                 offmod.central_default = orig
 
+    def test_toolbox_handoff_compact_and_toggle(self):
+        # ROADMAP 6.2: handoff (real) + compact (advisory) tools, each toggleable.
+        from mrtoken import toolbox
+        self.assertEqual(set(toolbox.TOOL_REGISTRY), {"offload", "handoff", "compact"})
+
+        orig_h = toolbox.build_handoff
+        toolbox.build_handoff = lambda db, s: "# Handoff (stub)"
+        try:
+            txt, err = toolbox.call_tool("handoff", {"session": "x"})
+            self.assertFalse(err)
+            self.assertIn("Handoff", txt)
+        finally:
+            toolbox.build_handoff = orig_h
+
+        ctxt, cerr = toolbox.call_tool("compact", {})
+        self.assertFalse(cerr)
+        self.assertIn("compact", ctxt.lower())
+
+        # toggle: disable offload → hidden from tools/list + rejected on call
+        os.environ["MRTOKEN_TOOLS_OFF"] = "offload"
+        try:
+            names = [t["name"] for t in toolbox.enabled_tool_schemas()]
+            self.assertNotIn("offload", names)
+            self.assertIn("handoff", names)
+            _, derr = toolbox.call_tool("offload", {"content": "x"})
+            self.assertTrue(derr)
+        finally:
+            os.environ.pop("MRTOKEN_TOOLS_OFF", None)
+
+        _, uerr = toolbox.call_tool("bogus", {})
+        self.assertTrue(uerr)
+
     def test_golden_session_signals(self):
         # ROADMAP 5D.3 — golden regression: whole-session fixtures with their
         # EXPECTED fired-signal sets. Catches drift when a threshold changes.

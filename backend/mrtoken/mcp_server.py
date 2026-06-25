@@ -17,9 +17,8 @@ from __future__ import annotations
 import json, sys
 
 from mrtoken import __version__
-from mrtoken.offload import OFFLOAD_TOOL, offload_content
+from mrtoken.toolbox import enabled_tool_schemas, call_tool
 
-TOOLS = [OFFLOAD_TOOL]
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -32,18 +31,9 @@ def _error(mid, code, message):
 
 
 def _call_tool(name: str, args: dict) -> dict:
-    """Dispatch a tools/call to the right toolbox function → MCP result shape."""
-    if name == "offload":
-        try:
-            r = offload_content(content=args.get("content"), path=args.get("path"),
-                                query=args.get("query"), max_lines=args.get("max_lines", 40))
-        except Exception as e:
-            return {"content": [{"type": "text", "text": f"offload error: {e}"}], "isError": True}
-        text = (r["summary"] +
-                f"\n\n[stashed full output → {r['stash_path']} · "
-                f"~{r['est_tokens_saved']:,} tokens kept out of context]")
-        return {"content": [{"type": "text", "text": text}], "isError": False}
-    return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
+    """Dispatch a tools/call through the toolbox registry → MCP result shape."""
+    text, is_error = call_tool(name, args)
+    return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
 def handle_request(req: dict):
@@ -62,7 +52,7 @@ def handle_request(req: dict):
     if method == "ping":
         return _result(mid, {})
     if method == "tools/list":
-        return _result(mid, {"tools": TOOLS})
+        return _result(mid, {"tools": enabled_tool_schemas()})
     if method == "tools/call":
         name = params.get("name")
         return _result(mid, _call_tool(name, params.get("arguments") or {}))

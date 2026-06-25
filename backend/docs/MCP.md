@@ -7,8 +7,13 @@ speak MCP, so one server equips both agents.
 ## Tools (Phase 6 — growing)
 - **`offload`** — stash a large tool output or file *out of context*: writes the full
   content to disk, returns a compact summary + a stash path you can grep/read later.
-  Use it instead of reading a big file/output into context, so you don't run out.
-- *(coming: `handoff`, `compact` — ROADMAP 6.2)*
+- **`handoff`** — generate a compact handoff for the current session so you can start a
+  fresh one and drop the accumulated context.
+- **`compact`** — *advisory*: returns the situation + the instruction to run your host's
+  compaction (the actual compaction is a host action you perform).
+
+Each tool is individually toggleable via `MRTOKEN_TOOLS_OFF` (comma-separated names);
+full per-tool autonomy (off/tell/ask/do) lands in ROADMAP 6.5.
 
 ## Register it
 
