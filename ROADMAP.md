@@ -229,11 +229,10 @@ Code and Codex**; every tool/tweak individually toggleable; nothing auto-acts (L
 until 6.7's measurement proves it helps. **Locked defaults** (Zach): toolbox = MCP tools +
 a manual skill; approval = hook-driven first; AFK default = warn-only.
 
-- [ ] **6.1 Toolbox foundation — MCP server + `mr_offload`** — stand up a Mr Token MCP server and
-  ship the first tool: `offload(content/ref)` writes a large tool output to disk and returns a
-  compact summary/reference, so it stops filling context. Register for Claude Code **and** Codex
-  (both support MCP). Toggleable. **Acceptance:** the agent can call it in both agents; offloaded
-  content leaves context, a summary returns; unit test.
+- [x] **6.1 Toolbox foundation — MCP server + `mr_offload`**
+  → done: commit `3025bcb` on `feat/mcp-offload`. Zero-dep MCP stdio server (`mrtoken-transcript mcp`)
+    exposing `offload`; works for Claude + Codex (both speak MCP); `docs/MCP.md` registration. 64 tests
+    green, verified over real stdio. Live in-agent confirm = register + call in a session.
 - [ ] **6.2 More tools — `mr_handoff`, `mr_compact`** — expose the existing handoff logic + a compact
   trigger as MCP tools. **Acceptance:** callable in both agents; each individually toggleable; tests.
 - [ ] **6.3 The manual — a context-efficiency skill** the agent consults (the "teach" half): how to
