@@ -257,6 +257,14 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
 - [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
   help, at equal quality. **⚑ decision per tool** before it defaults to auto.
 
+## Shipped: Phase 6 — the intervention engine (v0.5.0)
+The v2 vision realized — the agent's manual + toolbox + report card. MCP server +
+`offload`/`handoff`/`compact` tools (both agents); the `mr-context` manual; the proc
+engine (pressure ∧ reclaimable-junk → in-the-moment nudge, Claude live); per-tool
+policy + kill switch; L2 ask + AFK escalation; measure-don't-degrade auto-disable.
+Default warn-only. Remaining: **6.8 L3 auto-act** (open — gated on outcome/experiment
+evidence, per-tool ⚑ decision) and the **Codex live-pressure tracker** (backlog).
+
 ## Shipped after the roadmap (v0.4.5–0.4.7)
 - [x] **Codex-dir backfill** — `ingest --backfill` now also sweeps `~/.codex/sessions/**` (+ archived_sessions)
   via the Codex adapter. Real run: 119 rollouts ingested. (`--codex-root` to override.) *(v0.4.5)*
