@@ -248,8 +248,9 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
 - [x] **6.5 Config + kill switch**
   → done: commit `4a8fe01`. `policy.py` (config + env), proc engine gates on `autonomy()`, default
     warn-only; `mrtoken-transcript config` to view/set; global kill switch. 69 tests green.
-- [ ] **6.6 L2 Ask + AFK escalation** — hook-driven approval (reply = approve; AFK = next-turn
-  escalation per config). **Acceptance:** ask shown; inaction escalates to the configured action (or warn).
+- [x] **6.6 L2 Ask + AFK escalation**
+  → done: commit `db67c31`. `ask` level proposes + waits (reply=approve); inaction on a later turn
+    (same tool, ctx not improved) escalates to a firmer nudge (auto-action plugs in at 6.8). 70 tests green.
 - [ ] **6.7 Measure-don't-degrade** — every tool action logs before/after (tokens, ctx %, task still
   succeeded?); a tool whose outcome trends negative **auto-disables and says so**. Builds on
   `feedback`/`explain`. **Acceptance:** a fabricated "made it worse" history auto-disables that tool.
