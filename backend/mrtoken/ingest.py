@@ -388,6 +388,8 @@ def main(argv=None):
     ap.add_argument("--codex-root", default=os.path.expanduser("~/.codex/sessions"),
                     help="Codex rollout dir to also sweep on --backfill (default: ~/.codex/sessions); "
                          "skipped if absent")
+    ap.add_argument("--codex-db", default=None,
+                    help="where backfilled Codex sessions land (default: the central Codex DB)")
     ap.add_argument("--db", default=default_db_path())
     ap.add_argument("--rules", action="store_true", help="run rule engine after ingestion")
     a = ap.parse_args(argv)
@@ -429,33 +431,36 @@ def main(argv=None):
         except Exception as e:
             print(f"SKIP {os.path.basename(p)}: {e}", file=sys.stderr)
 
-    # backfill also sweeps the Codex rollout dir (+ sibling archived_sessions),
-    # routing each through the Codex adapter into the same schema (source='codex').
+    # backfill also sweeps the Codex rollout dir (+ sibling archived_sessions) via
+    # the Codex adapter — into the CENTRAL Codex DB (Codex sprawls across dirs, so
+    # we aggregate it in one place; Claude stays per-project). --codex-db overrides.
     if a.backfill:
         from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.datadir import codex_db_path
         croot = a.codex_root
         cpaths = (glob.glob(os.path.join(croot, "**", "*.jsonl"), recursive=True)
                   if os.path.isdir(croot) else [])
         arch = os.path.join(os.path.dirname(croot), "archived_sessions")
         if os.path.isdir(arch):
             cpaths += glob.glob(os.path.join(arch, "*.jsonl"))
+        cdb = a.codex_db or codex_db_path()
+        cconn = connect(cdb)
+        total["codex_db"] = cdb
         total["codex_seen"] = len(cpaths)
         total["codex_sessions"] = 0
         total["codex_skipped"] = 0
         for cp in cpaths:
             try:
-                r = ingest_codex_file(conn, cp, prices)
+                r = ingest_codex_file(cconn, cp, prices)
                 if r.get("skipped"):
                     total["codex_skipped"] += 1
                     continue
                 total["codex_sessions"] += 1
-                total["model_calls"] += r["model_calls"]
-                total["tool_calls"] += r["tool_calls"]
                 if run_rules:
                     from mrtoken.rules import analyse
-                    tid = conn.execute("SELECT id FROM trace WHERE session_id=?",
-                                       (r["session_id"],)).fetchone()[0]
-                    total["recommendations"] += len(analyse(conn, tid))
+                    tid = cconn.execute("SELECT id FROM trace WHERE session_id=?",
+                                        (r["session_id"],)).fetchone()[0]
+                    total["recommendations"] += len(analyse(cconn, tid))
             except Exception as e:
                 print(f"SKIP codex {os.path.basename(cp)}: {e}", file=sys.stderr)
 

@@ -244,9 +244,11 @@ def main(argv=None):
     p_report = sub.add_parser("report", help="show report for a session")
     p_report.add_argument("session", nargs="?", help="session ID prefix")
     p_report.add_argument("--db", dest="db_sub")
+    p_report.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_list = sub.add_parser("list", help="list all sessions")
     p_list.add_argument("--db", dest="db_sub")
+    p_list.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_sub = sub.add_parser("subagents", help="subagent ROI breakdown")
     p_sub.add_argument("session", nargs="?", help="parent session ID prefix")
@@ -254,6 +256,7 @@ def main(argv=None):
 
     p_fleet = sub.add_parser("fleet", help="cross-session summary")
     p_fleet.add_argument("--db", dest="db_sub")
+    p_fleet.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_export = sub.add_parser("export",
         help="emit accurate per-session metrics as JSON (integration surface for the UI)")
@@ -265,11 +268,13 @@ def main(argv=None):
         "(incremental dashboard refresh)")
     p_export.add_argument("--detail", action="store_true",
         help="emit a per-model-call timeline for the given session (drill-down)")
+    p_export.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_validate = sub.add_parser("validate",
         help="corroborate fired recommendations (precision proxy, not labels)")
     p_validate.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_validate.add_argument("--db", dest="db_sub")
+    p_validate.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_corpus = sub.add_parser("corpus",
         help="aggregate shared export JSON files (e.g. from a beta tester) into one summary")
@@ -280,6 +285,7 @@ def main(argv=None):
         help="decode why each signal fired for a session (evidence behind the HUD)")
     p_explain.add_argument("session", nargs="?", help="session id or prefix (default: newest)")
     p_explain.add_argument("--db", dest="db_sub")
+    p_explain.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_feedback = sub.add_parser("feedback",
         help="record a right/wrong/unsure verdict on a fired rule (real-usage precision)")
@@ -322,6 +328,7 @@ def main(argv=None):
     p_why = sub.add_parser("why", help="diagnose where a session's cost went + the main fuel leak")
     p_why.add_argument("session", nargs="?", help="session ID prefix (default: newest)")
     p_why.add_argument("--db", dest="db_sub")
+    p_why.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_roi = sub.add_parser("roi",
         help="estimate addressable token waste (session or fleet) — estimate, not a trial")
@@ -329,6 +336,7 @@ def main(argv=None):
     p_roi.add_argument("--measure", action="store_true",
         help="fresh_handoff before/after: counterfactual projection + acted-vs-ignored cohort")
     p_roi.add_argument("--db", dest="db_sub")
+    p_roi.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_status = sub.add_parser("status",
         help="one-glance snapshot of the current session + the top next action")
@@ -348,6 +356,10 @@ def main(argv=None):
     # subcommand --db overrides global --db
     if hasattr(a, "db_sub") and a.db_sub:
         a.db = a.db_sub
+    # --codex: read from the central Codex DB (where all Codex sessions aggregate)
+    if getattr(a, "codex", False):
+        from mrtoken.datadir import codex_db_path
+        a.db = codex_db_path()
 
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,

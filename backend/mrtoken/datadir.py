@@ -65,6 +65,14 @@ def _db_env_override() -> str | None:
     return os.environ.get("TOKEN_TITHE_DB") or os.environ.get("MRTOKEN_DB")
 
 
+def codex_db_path() -> str:
+    """ONE central DB for all Codex sessions. Unlike Claude (you usually live in one
+    repo, so per-project is fine), Codex sessions sprawl across many working dirs —
+    a per-project DB scatters them and no single `fleet` ever sees them together. So
+    aggregate Codex centrally instead. (MRTOKEN_DB still overrides where set.)"""
+    return os.path.join(central_default(), "codex.db")
+
+
 def resolve_data_dir(cwd: str | None = None) -> str:
     """Directory holding token-tithe.db + events.jsonl for this cwd (per contract)."""
     data_dir_env = os.environ.get("MRTOKEN_DATA_DIR")
