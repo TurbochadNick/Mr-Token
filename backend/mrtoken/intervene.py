@@ -49,8 +49,12 @@ def evaluate(ctx_pct, turns_to_full, signals_fired, *,
 
 
 def intervention_for_session(transcript_path: str | None = None,
-                             session_arg: str | None = None) -> dict | None:
-    """Build the live snapshot from a Claude transcript and evaluate it."""
+                             session_id: str = "", session_arg: str | None = None) -> dict | None:
+    """Build the live snapshot from a Claude transcript, evaluate, apply policy +
+    debounce + ask-phase. Returns the intervention to surface, or None.
+
+    Owns the full decision so the hook just renders iv['message']:
+      evaluate → autonomy gate → debounce → ask-phase (first-ask vs AFK-escalation)."""
     from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
     from mrtoken.statusline import context_window
     path = transcript_path if (transcript_path and os.path.isfile(transcript_path)) \
@@ -69,12 +73,66 @@ def intervention_for_session(transcript_path: str | None = None,
     win = context_window(snap.get("context_max") or ctx_now)
     ctx_pct = min(99, int(ctx_now / win * 100)) if (ctx_now and win) else 0
     iv = evaluate(ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"))
-    if iv:
-        from mrtoken.policy import autonomy  # per-tool autonomy / global kill switch
-        level = autonomy(iv["tool"])
-        if level == "off":
-            return None
-        iv["level"] = level  # tell | ask | do — the wiring acts on this (6.6/6.8)
+    if not iv:
+        return None
+    from mrtoken.policy import autonomy  # per-tool autonomy / global kill switch
+    level = autonomy(iv["tool"])
+    if level == "off" or not should_fire(session_id, iv["ctx_pct"]):
+        return None
+    iv["level"] = level
+    if level in ("ask", "do"):
+        iv = apply_ask_policy(session_id, iv)  # first-ask vs AFK-escalation (+ act in 6.8)
+    return iv
+
+
+# ── L2 ask + AFK escalation (ROADMAP 6.6) ───────────────────────────────────────
+# When a tool's autonomy is "ask", the first fire PROPOSES the action and waits for
+# approval (the user's reply). If context stays critical on a later turn (the user
+# didn't act = AFK), we ESCALATE: with the default warn-only that's a firmer nudge;
+# when a tool is at "do" (6.8), escalation is where the auto-action plugs in.
+
+def _ask_path(session_id: str) -> str:
+    from mrtoken.datadir import central_default
+    return os.path.join(central_default(), "state", f"ask-{session_id}.json")
+
+
+def _read_ask(session_id: str) -> dict:
+    try:
+        with open(_ask_path(session_id)) as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_ask(session_id: str, data: dict) -> None:
+    p = _ask_path(session_id)
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as fh:
+            json.dump(data, fh)
+    except OSError:
+        pass
+
+
+def apply_ask_policy(session_id: str, iv: dict, *, improved_drop: int = 5) -> dict:
+    """Decide first-ask vs AFK-escalation for an ask/do-level intervention, and set
+    iv['phase'] + iv['message'] accordingly. Persists ask-state per session."""
+    tool, ctx = iv["tool"], iv.get("ctx_pct") or 0
+    prior = _read_ask(session_id) if session_id else {}
+    inaction = bool(prior and prior.get("tool") == tool
+                    and ctx >= prior.get("ctx_pct", 0) - improved_drop)
+    if inaction:
+        iv["phase"] = "escalate"
+        iv["message"] = (f"⚠ STILL critical — context {ctx}% and the {tool}-able junk is unaddressed. "
+                         f"Run `{tool}` now (see the mr-context manual).")
+        if iv.get("level") == "do":
+            iv["message"] += "  [auto-action pending — ROADMAP 6.8]"
+    else:
+        iv["phase"] = "ask"
+        action = "on the big output" if tool == "offload" else "to start fresh"
+        iv["message"] = (f"{iv['message']}  → Reply `go` to run `{tool}` {action}, or it escalates "
+                         f"next turn if context stays critical.")
+    _write_ask(session_id, {"tool": tool, "ctx_pct": ctx})
     return iv
 
 

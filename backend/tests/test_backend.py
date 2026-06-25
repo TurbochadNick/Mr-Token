@@ -615,6 +615,29 @@ class BackendTest(unittest.TestCase):
         self.assertIsNone(evaluate(30, 20, ["huge_tool_output"]))  # junk but no pressure
         self.assertIsNone(evaluate(10, None, []))           # clean → silent
 
+    def test_ask_policy_first_then_afk_escalation(self):
+        # ROADMAP 6.6: first fire ASKS (propose + wait); inaction on a later turn
+        # (same tool, context not improved) ESCALATES.
+        import mrtoken.datadir as dd
+        from mrtoken.intervene import apply_ask_policy
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = dd.central_default
+            dd.central_default = lambda: tmp
+            try:
+                iv1 = apply_ask_policy("s1", {"tool": "offload", "ctx_pct": 80,
+                                              "level": "ask", "message": "base"})
+                self.assertEqual(iv1["phase"], "ask")
+                self.assertIn("Reply `go`", iv1["message"])
+                iv2 = apply_ask_policy("s1", {"tool": "offload", "ctx_pct": 82,
+                                              "level": "ask", "message": "base"})
+                self.assertEqual(iv2["phase"], "escalate")     # AFK / inaction
+                self.assertIn("STILL", iv2["message"])
+                iv3 = apply_ask_policy("s1", {"tool": "handoff", "ctx_pct": 82,
+                                              "level": "ask", "message": "base"})
+                self.assertEqual(iv3["phase"], "ask")          # different tool → fresh ask
+            finally:
+                dd.central_default = orig
+
     def test_proc_engine_debounces(self):
         # ROADMAP 6.4: fire once per rising pressure band, not every turn.
         import mrtoken.datadir as dd

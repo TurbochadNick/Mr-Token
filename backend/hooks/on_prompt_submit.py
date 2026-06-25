@@ -27,12 +27,13 @@ def main():
         os.chdir(cwd)
 
     tpath = payload.get("transcript_path")
-    # proc engine (ROADMAP 6.4): if context-pressure + reclaimable junk both trip,
-    # fire an actionable intervention (debounced) instead of the passive HUD line.
+    # proc engine (ROADMAP 6.4–6.6): pressure + reclaimable junk → an actionable
+    # intervention (tell, or ask w/ AFK escalation), debounced + policy-gated.
     try:
-        from mrtoken.intervene import intervention_for_session, should_fire
-        iv = intervention_for_session(transcript_path=tpath)
-        if iv and should_fire(payload.get("session_id", ""), iv["ctx_pct"]):
+        from mrtoken.intervene import intervention_for_session
+        iv = intervention_for_session(transcript_path=tpath,
+                                      session_id=payload.get("session_id", ""))
+        if iv:
             print(json.dumps({"systemMessage": "mr · " + iv["message"]}))
             sys.exit(0)
     except Exception:
