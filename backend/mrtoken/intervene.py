@@ -80,6 +80,21 @@ def intervention_for_session(transcript_path: str | None = None,
     if level == "off" or not should_fire(session_id, iv["ctx_pct"]):
         return None
     iv["level"] = level
+    # measure-don't-degrade (6.7): did the PRIOR recommendation for this session help?
+    # Record the outcome (ctx delta) and let a degrading tool auto-disable itself.
+    if session_id:
+        try:
+            from mrtoken import outcomes
+            prior = _read_ask(session_id)
+            if prior and prior.get("tool"):
+                outcomes.record(prior["tool"],
+                                outcomes.helped_from_ctx(prior.get("ctx_pct", 0), iv["ctx_pct"]),
+                                session_id)
+                outcomes.enforce()
+                if autonomy(iv["tool"]) == "off":   # this tool just auto-disabled
+                    return None
+        except Exception:
+            pass
     if level in ("ask", "do"):
         iv = apply_ask_policy(session_id, iv)  # first-ask vs AFK-escalation (+ act in 6.8)
     return iv

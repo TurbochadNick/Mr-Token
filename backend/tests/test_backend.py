@@ -615,6 +615,33 @@ class BackendTest(unittest.TestCase):
         self.assertIsNone(evaluate(30, 20, ["huge_tool_output"]))  # junk but no pressure
         self.assertIsNone(evaluate(10, None, []))           # clean → silent
 
+    def test_outcomes_auto_disable_a_degrading_tool(self):
+        # ROADMAP 6.7: a tool whose outcomes trend negative auto-disables (policy off);
+        # a healthy tool stays enabled. The "don't let it degrade me" guardrail.
+        import mrtoken.policy as policy
+        from mrtoken import outcomes
+        with tempfile.TemporaryDirectory() as tmp:
+            o_cd, p_cp = outcomes.central_default, policy._config_path
+            outcomes.central_default = lambda: tmp
+            policy._config_path = lambda: os.path.join(tmp, "config.json")
+            saved = os.environ.pop("MRTOKEN_INTERVENE", None)
+            try:
+                self.assertEqual(policy.autonomy("offload"), "tell")   # default: on
+                for _ in range(5):
+                    outcomes.record("offload", -1)                     # consistently not helping
+                self.assertTrue(outcomes.health("offload")["disable"])
+                self.assertIn("offload", outcomes.enforce())
+                self.assertEqual(policy.autonomy("offload"), "off")    # auto-disabled
+                for _ in range(5):
+                    outcomes.record("handoff", 1)                      # healthy
+                self.assertNotIn("handoff", outcomes.enforce())
+                self.assertEqual(policy.autonomy("handoff"), "tell")
+            finally:
+                outcomes.central_default = o_cd
+                policy._config_path = p_cp
+                if saved is not None:
+                    os.environ["MRTOKEN_INTERVENE"] = saved
+
     def test_ask_policy_first_then_afk_escalation(self):
         # ROADMAP 6.6: first fire ASKS (propose + wait); inaction on a later turn
         # (same tool, context not improved) ESCALATES.
