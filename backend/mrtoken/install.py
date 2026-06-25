@@ -232,7 +232,7 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
 
 
 def init(project_root: str | None = None, settings_path: str | None = None,
-         global_settings_path: str | None = None,
+         global_settings_path: str | None = None, codex_skills_root: str | None = None,
          dry_run: bool = False, emit=print) -> int:
     root = find_project_root(project_root)
     db_path = resolve_db_path(root)  # shared contract (per-project for real projects)
@@ -249,12 +249,17 @@ def init(project_root: str | None = None, settings_path: str | None = None,
         n for n in (os.listdir(SKILLS_SRC) if os.path.isdir(SKILLS_SRC) else [])
         if os.path.isfile(os.path.join(SKILLS_SRC, n, "SKILL.md")))
     # skills go next to the global settings (~/.claude/skills) so /mr-* shows up
-    # in every project, not only where init ran
+    # in every project, not only where init ran — AND into ~/.codex/skills so the
+    # Codex agent gets the same manual + tools (install only if Codex is present).
     skills_root = os.path.join(os.path.dirname(global_settings_path), "skills")
+    codex_skills_root = codex_skills_root or os.path.expanduser("~/.codex/skills")
+    install_codex_skills = os.path.isdir(os.path.dirname(codex_skills_root))  # ~/.codex exists
 
     if dry_run:
         emit(f"  would create DB:            {db_path}")
         emit(f"  would install skills:       {', '.join('/'+s for s in skills) or '(none)'} → {skills_root}")
+        if install_codex_skills:
+            emit(f"  would install Codex skills: {', '.join('/'+s for s in skills) or '(none)'} → {codex_skills_root}")
         emit(f"  would edit global settings: {global_settings_path}")
         emit(f"    Stop hook command:        {hook_command()}"
              + ("" if stop_hook_global else f"  (→ {stop_hook_path})"))
@@ -274,6 +279,10 @@ def init(project_root: str | None = None, settings_path: str | None = None,
     installed = install_skills(skills_root)
     if installed:
         emit(f"  ✓ installed skills:    {', '.join('/'+s for s in installed)}  ({skills_root})")
+    if install_codex_skills:
+        c = install_skills(codex_skills_root)
+        if c:
+            emit(f"  ✓ installed Codex skills: {', '.join('/'+s for s in c)}  ({codex_skills_root})")
 
     # 4 (legacy override only): if --settings points at a non-global file, install
     # the Stop hook there, preserving everything. Default path is global (step 5).

@@ -556,6 +556,22 @@ class BackendTest(unittest.TestCase):
             finally:
                 offmod.central_default = orig
 
+    def test_manual_skill_installs_to_both_agents(self):
+        # ROADMAP 6.3: the context-efficiency manual is a bundled skill, installed to
+        # BOTH ~/.claude/skills and ~/.codex/skills (when Codex is present).
+        from mrtoken.install import init, SKILLS_SRC
+        self.assertTrue(os.path.isfile(os.path.join(SKILLS_SRC, "mr-context", "SKILL.md")))
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, "package.json"), "w").write("{}")
+            gpath = os.path.join(tmp, "global-settings.json")
+            os.makedirs(os.path.join(tmp, ".codex"))            # Codex present
+            codex_skills = os.path.join(tmp, ".codex", "skills")
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_skills_root=codex_skills, emit=lambda *_: None)
+            claude_skills = os.path.join(tmp, "skills")          # next to global-settings.json
+            self.assertTrue(os.path.isfile(os.path.join(claude_skills, "mr-context", "SKILL.md")))
+            self.assertTrue(os.path.isfile(os.path.join(codex_skills, "mr-context", "SKILL.md")))
+
     def test_toolbox_handoff_compact_and_toggle(self):
         # ROADMAP 6.2: handoff (real) + compact (advisory) tools, each toggleable.
         from mrtoken import toolbox
@@ -707,7 +723,7 @@ class BackendTest(unittest.TestCase):
                                {"type": "command", "command": "echo existing"}]}]}}, h)
 
             init(project_root=tmp, global_settings_path=global_settings_path,
-                 emit=lambda *_: None)
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=lambda *_: None)
             # the user's OWN project-local Stop hook + other settings preserved;
             # ours is NOT added project-local (it goes global now so it fires for
             # sessions started from any folder, e.g. the desktop app)
@@ -734,7 +750,7 @@ class BackendTest(unittest.TestCase):
 
             # idempotent: second run adds nothing extra
             init(project_root=tmp, global_settings_path=global_settings_path,
-                 emit=lambda *_: None)
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=lambda *_: None)
             gs2 = _load_settings(global_settings_path)
             g_stop2 = [hh["command"] for e in gs2["hooks"]["Stop"] for hh in e["hooks"]]
             self.assertEqual(len(g_stop2), len(g_stop))  # Stop not duplicated
@@ -758,7 +774,8 @@ class BackendTest(unittest.TestCase):
                     {"matcher": "", "hooks": [{"type": "command", "command": "echo mine"}]},
                 ]}}, h)
             gpath = os.path.join(tmp, "global-settings.json")
-            init(project_root=tmp, global_settings_path=gpath, emit=lambda *_: None)
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=lambda *_: None)
 
             self.assertTrue(_already_installed(_load_settings(gpath)))   # moved to global
             s = _load_settings(local)
@@ -792,7 +809,8 @@ class BackendTest(unittest.TestCase):
                            "hooks": {"Stop": [{"matcher": "", "hooks": [
                                {"type": "command", "command": "echo keepme"}]}]}}, h)
             gpath = os.path.join(tmp, "global-settings.json")
-            init(project_root=tmp, global_settings_path=gpath, emit=lambda *_: None)
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=lambda *_: None)
             skills = os.path.join(os.path.dirname(gpath), "skills")
             self.assertTrue(_already_installed(_load_settings(gpath)))     # Stop hook is global now
             self.assertTrue(os.path.exists(os.path.join(skills, "mr-handoff", "SKILL.md")))
@@ -817,7 +835,8 @@ class BackendTest(unittest.TestCase):
             with open(gpath, "w") as h:  # user already has their own statusLine
                 json.dump({"statusLine": {"type": "command", "command": "my-bar"}}, h)
             out = []
-            init(project_root=tmp, global_settings_path=gpath, emit=out.append)
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=out.append)
             joined = "\n".join(out)
             self.assertIn("replacing your existing statusLine", joined)
             gs = _load_settings(gpath)
