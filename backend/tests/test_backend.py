@@ -572,6 +572,37 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(claude_skills, "mr-context", "SKILL.md")))
             self.assertTrue(os.path.isfile(os.path.join(codex_skills, "mr-context", "SKILL.md")))
 
+    def test_intervention_policy_autonomy_and_kill_switch(self):
+        # ROADMAP 6.5: per-tool autonomy (off|tell|ask|do) + global kill switch; default warn-only.
+        import mrtoken.policy as policy
+        with tempfile.TemporaryDirectory() as tmp:
+            cfgp = os.path.join(tmp, "config.json")
+            orig = policy._config_path
+            policy._config_path = lambda: cfgp
+            saved = os.environ.pop("MRTOKEN_INTERVENE", None)
+            try:
+                self.assertEqual(policy.autonomy("offload"), "tell")   # default = warn-only
+                self.assertTrue(policy.kill_switch_on())
+                policy.set_autonomy("offload", "ask")
+                self.assertEqual(policy.autonomy("offload"), "ask")
+                self.assertEqual(policy.autonomy("handoff"), "tell")   # untouched → default
+                policy.set_autonomy("handoff", "off")
+                self.assertEqual(policy.autonomy("handoff"), "off")
+                with self.assertRaises(ValueError):
+                    policy.set_autonomy("offload", "maybe")
+                policy.set_enabled(False)                              # global kill switch
+                self.assertEqual(policy.autonomy("offload"), "off")
+                self.assertFalse(policy.kill_switch_on())
+                policy.set_enabled(True)
+                self.assertEqual(policy.autonomy("offload"), "ask")    # restored
+                os.environ["MRTOKEN_INTERVENE"] = "off"                # env kill switch
+                self.assertEqual(policy.autonomy("offload"), "off")
+            finally:
+                policy._config_path = orig
+                os.environ.pop("MRTOKEN_INTERVENE", None)
+                if saved is not None:
+                    os.environ["MRTOKEN_INTERVENE"] = saved
+
     def test_proc_engine_fires_on_pressure_plus_junk(self):
         # ROADMAP 6.4: fire only when pressure AND reclaimable junk both trip.
         from mrtoken.intervene import evaluate

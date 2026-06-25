@@ -68,7 +68,14 @@ def intervention_for_session(transcript_path: str | None = None,
     ctx_now = snap.get("context_now") or 0
     win = context_window(snap.get("context_max") or ctx_now)
     ctx_pct = min(99, int(ctx_now / win * 100)) if (ctx_now and win) else 0
-    return evaluate(ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"))
+    iv = evaluate(ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"))
+    if iv:
+        from mrtoken.policy import autonomy  # per-tool autonomy / global kill switch
+        level = autonomy(iv["tool"])
+        if level == "off":
+            return None
+        iv["level"] = level  # tell | ask | do — the wiring acts on this (6.6/6.8)
+    return iv
 
 
 # ── debounce: fire once per rising pressure band, not every turn ────────────────
