@@ -237,8 +237,9 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
   → done: commit `d5a5da4`. Toolbox registry; `handoff` (real), `compact` (advisory — host op), per-tool
     toggle via MRTOKEN_TOOLS_OFF. 65 tests green; stdio lists offload/handoff/compact. *(Note: compact is
     advisory because compaction is a host action an MCP server can't execute.)*
-- [ ] **6.3 The manual — a context-efficiency skill** the agent consults (the "teach" half): how to
-  avoid/repair context bloat, when to reach for which tool. Installed globally for both agents.
+- [x] **6.3 The manual — a context-efficiency skill** the agent consults (the "teach" half)
+  → done: commit `689bc3c`. Bundled `mr-context` skill; `init` installs skills to both ~/.claude/skills
+    and ~/.codex/skills. 66 tests green.
 - [ ] **6.4 Proc engine — turn-boundary trigger** — at the turn boundary (Claude UserPromptSubmit /
   Codex equivalent), fire when **pressure** (predictive turns-to-full) **and** **reclaimability**
   (rules find fixable junk) both trip. Debounced; points the agent at the manual/tool. **Acceptance:**
