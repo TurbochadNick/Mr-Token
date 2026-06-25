@@ -245,8 +245,9 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
     debounced; wired LIVE into Claude's UserPromptSubmit. 68 tests green. **Codex caveat:** engine is shared,
     but Codex live-pressure needs a rollout-based ctx tracker (model_context_window + running input) — next
     increment (added to backlog), not faked.
-- [ ] **6.5 Config + kill switch** — per-tool autonomy level (`off|tell|ask|do`) + a global kill
-  switch; default **warn-only**. **Acceptance:** a tool set to `off` never fires; kill switch silences all.
+- [x] **6.5 Config + kill switch**
+  → done: commit `4a8fe01`. `policy.py` (config + env), proc engine gates on `autonomy()`, default
+    warn-only; `mrtoken-transcript config` to view/set; global kill switch. 69 tests green.
 - [ ] **6.6 L2 Ask + AFK escalation** — hook-driven approval (reply = approve; AFK = next-turn
   escalation per config). **Acceptance:** ask shown; inaction escalates to the configured action (or warn).
 - [ ] **6.7 Measure-don't-degrade** — every tool action logs before/after (tokens, ctx %, task still
