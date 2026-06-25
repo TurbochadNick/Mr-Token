@@ -496,6 +496,221 @@ class BackendTest(unittest.TestCase):
             self.assertEqual((summ["right"], summ["wrong"]), (1, 1))
             self.assertEqual(summ["labelled_precision"], 0.5)
 
+    def test_offload_stashes_and_summarizes(self):
+        # ROADMAP 6.1: offload writes full content to disk, returns a compact summary
+        # + stash path, and keeps the bulk out of context.
+        from mrtoken.offload import offload_content
+        with tempfile.TemporaryDirectory() as tmp:
+            big = "\n".join(f"line {i} lorem ipsum dolor" for i in range(500))
+            r = offload_content(content=big, max_lines=20, stash_dir=tmp)
+            self.assertEqual(r["lines"], 500)
+            self.assertTrue(os.path.exists(r["stash_path"]))
+            with open(r["stash_path"]) as fh:
+                self.assertEqual(fh.read(), big)            # full content retrievable
+            self.assertLess(len(r["summary"].splitlines()), 60)  # summary is compact
+            self.assertGreater(r["est_tokens_saved"], 0)
+            # query mode greps
+            rq = offload_content(content="apple\nbanana\napricot", query="ap",
+                                 stash_dir=tmp)
+            self.assertIn("apple", rq["summary"])
+            self.assertIn("apricot", rq["summary"])
+            self.assertNotIn("banana", rq["summary"])
+            # path mode reads a file
+            p = os.path.join(tmp, "f.txt"); open(p, "w").write("a\nb\nc\n")
+            rp = offload_content(path=p, stash_dir=tmp)
+            self.assertEqual(rp["lines"], 3)
+
+    def test_mcp_server_lists_and_calls_offload(self):
+        # ROADMAP 6.1: the MCP server exposes + dispatches the toolbox (both agents
+        # speak MCP, so this equips Claude and Codex from one server).
+        import mrtoken.offload as offmod
+        from mrtoken import mcp_server
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = offmod.central_default
+            offmod.central_default = lambda: tmp   # keep stash out of the real central store
+            try:
+                init = mcp_server.handle_request(
+                    {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                     "params": {"protocolVersion": "2025-06-18"}})
+                self.assertEqual(init["result"]["serverInfo"]["name"], "mrtoken")
+                self.assertEqual(init["result"]["protocolVersion"], "2025-06-18")  # echoes client
+
+                self.assertIsNone(mcp_server.handle_request(
+                    {"jsonrpc": "2.0", "method": "notifications/initialized"}))  # notification
+
+                tl = mcp_server.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+                self.assertIn("offload", [t["name"] for t in tl["result"]["tools"]])
+
+                call = mcp_server.handle_request(
+                    {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": "offload",
+                                "arguments": {"content": "x\n" * 300, "max_lines": 10}}})
+                res = call["result"]
+                self.assertFalse(res["isError"])
+                self.assertIn("kept out of context", res["content"][0]["text"])
+
+                bad = mcp_server.handle_request(
+                    {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                     "params": {"name": "nope", "arguments": {}}})
+                self.assertTrue(bad["result"]["isError"])
+            finally:
+                offmod.central_default = orig
+
+    def test_manual_skill_installs_to_both_agents(self):
+        # ROADMAP 6.3: the context-efficiency manual is a bundled skill, installed to
+        # BOTH ~/.claude/skills and ~/.codex/skills (when Codex is present).
+        from mrtoken.install import init, SKILLS_SRC
+        self.assertTrue(os.path.isfile(os.path.join(SKILLS_SRC, "mr-context", "SKILL.md")))
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, "package.json"), "w").write("{}")
+            gpath = os.path.join(tmp, "global-settings.json")
+            os.makedirs(os.path.join(tmp, ".codex"))            # Codex present
+            codex_skills = os.path.join(tmp, ".codex", "skills")
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_skills_root=codex_skills, emit=lambda *_: None)
+            claude_skills = os.path.join(tmp, "skills")          # next to global-settings.json
+            self.assertTrue(os.path.isfile(os.path.join(claude_skills, "mr-context", "SKILL.md")))
+            self.assertTrue(os.path.isfile(os.path.join(codex_skills, "mr-context", "SKILL.md")))
+
+    def test_intervention_policy_autonomy_and_kill_switch(self):
+        # ROADMAP 6.5: per-tool autonomy (off|tell|ask|do) + global kill switch; default warn-only.
+        import mrtoken.policy as policy
+        with tempfile.TemporaryDirectory() as tmp:
+            cfgp = os.path.join(tmp, "config.json")
+            orig = policy._config_path
+            policy._config_path = lambda: cfgp
+            saved = os.environ.pop("MRTOKEN_INTERVENE", None)
+            try:
+                self.assertEqual(policy.autonomy("offload"), "tell")   # default = warn-only
+                self.assertTrue(policy.kill_switch_on())
+                policy.set_autonomy("offload", "ask")
+                self.assertEqual(policy.autonomy("offload"), "ask")
+                self.assertEqual(policy.autonomy("handoff"), "tell")   # untouched → default
+                policy.set_autonomy("handoff", "off")
+                self.assertEqual(policy.autonomy("handoff"), "off")
+                with self.assertRaises(ValueError):
+                    policy.set_autonomy("offload", "maybe")
+                policy.set_enabled(False)                              # global kill switch
+                self.assertEqual(policy.autonomy("offload"), "off")
+                self.assertFalse(policy.kill_switch_on())
+                policy.set_enabled(True)
+                self.assertEqual(policy.autonomy("offload"), "ask")    # restored
+                os.environ["MRTOKEN_INTERVENE"] = "off"                # env kill switch
+                self.assertEqual(policy.autonomy("offload"), "off")
+            finally:
+                policy._config_path = orig
+                os.environ.pop("MRTOKEN_INTERVENE", None)
+                if saved is not None:
+                    os.environ["MRTOKEN_INTERVENE"] = saved
+
+    def test_proc_engine_fires_on_pressure_plus_junk(self):
+        # ROADMAP 6.4: fire only when pressure AND reclaimable junk both trip.
+        from mrtoken.intervene import evaluate
+        iv = evaluate(82, None, ["huge_tool_output"])       # high ctx + big output
+        self.assertIsNotNone(iv)
+        self.assertEqual(iv["tool"], "offload")
+        self.assertIsNotNone(evaluate(40, 2, ["re_read_loop"]))        # low turns-to-full + junk
+        self.assertEqual(evaluate(85, None, ["context_rot"])["tool"], "handoff")
+        self.assertIsNone(evaluate(90, 1, ["low_cache"]))   # pressure but junk isn't reclaimable
+        self.assertIsNone(evaluate(30, 20, ["huge_tool_output"]))  # junk but no pressure
+        self.assertIsNone(evaluate(10, None, []))           # clean → silent
+
+    def test_outcomes_auto_disable_a_degrading_tool(self):
+        # ROADMAP 6.7: a tool whose outcomes trend negative auto-disables (policy off);
+        # a healthy tool stays enabled. The "don't let it degrade me" guardrail.
+        import mrtoken.policy as policy
+        from mrtoken import outcomes
+        with tempfile.TemporaryDirectory() as tmp:
+            o_cd, p_cp = outcomes.central_default, policy._config_path
+            outcomes.central_default = lambda: tmp
+            policy._config_path = lambda: os.path.join(tmp, "config.json")
+            saved = os.environ.pop("MRTOKEN_INTERVENE", None)
+            try:
+                self.assertEqual(policy.autonomy("offload"), "tell")   # default: on
+                for _ in range(5):
+                    outcomes.record("offload", -1)                     # consistently not helping
+                self.assertTrue(outcomes.health("offload")["disable"])
+                self.assertIn("offload", outcomes.enforce())
+                self.assertEqual(policy.autonomy("offload"), "off")    # auto-disabled
+                for _ in range(5):
+                    outcomes.record("handoff", 1)                      # healthy
+                self.assertNotIn("handoff", outcomes.enforce())
+                self.assertEqual(policy.autonomy("handoff"), "tell")
+            finally:
+                outcomes.central_default = o_cd
+                policy._config_path = p_cp
+                if saved is not None:
+                    os.environ["MRTOKEN_INTERVENE"] = saved
+
+    def test_ask_policy_first_then_afk_escalation(self):
+        # ROADMAP 6.6: first fire ASKS (propose + wait); inaction on a later turn
+        # (same tool, context not improved) ESCALATES.
+        import mrtoken.datadir as dd
+        from mrtoken.intervene import apply_ask_policy
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = dd.central_default
+            dd.central_default = lambda: tmp
+            try:
+                iv1 = apply_ask_policy("s1", {"tool": "offload", "ctx_pct": 80,
+                                              "level": "ask", "message": "base"})
+                self.assertEqual(iv1["phase"], "ask")
+                self.assertIn("Reply `go`", iv1["message"])
+                iv2 = apply_ask_policy("s1", {"tool": "offload", "ctx_pct": 82,
+                                              "level": "ask", "message": "base"})
+                self.assertEqual(iv2["phase"], "escalate")     # AFK / inaction
+                self.assertIn("STILL", iv2["message"])
+                iv3 = apply_ask_policy("s1", {"tool": "handoff", "ctx_pct": 82,
+                                              "level": "ask", "message": "base"})
+                self.assertEqual(iv3["phase"], "ask")          # different tool → fresh ask
+            finally:
+                dd.central_default = orig
+
+    def test_proc_engine_debounces(self):
+        # ROADMAP 6.4: fire once per rising pressure band, not every turn.
+        import mrtoken.datadir as dd
+        from mrtoken.intervene import should_fire
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = dd.central_default
+            dd.central_default = lambda: tmp
+            try:
+                self.assertTrue(should_fire("s1", 72))    # first fire
+                self.assertFalse(should_fire("s1", 75))   # within band → suppressed
+                self.assertTrue(should_fire("s1", 85))    # climbed another band → fires
+            finally:
+                dd.central_default = orig
+
+    def test_toolbox_handoff_compact_and_toggle(self):
+        # ROADMAP 6.2: handoff (real) + compact (advisory) tools, each toggleable.
+        from mrtoken import toolbox
+        self.assertEqual(set(toolbox.TOOL_REGISTRY), {"offload", "handoff", "compact"})
+
+        orig_h = toolbox.build_handoff
+        toolbox.build_handoff = lambda db, s: "# Handoff (stub)"
+        try:
+            txt, err = toolbox.call_tool("handoff", {"session": "x"})
+            self.assertFalse(err)
+            self.assertIn("Handoff", txt)
+        finally:
+            toolbox.build_handoff = orig_h
+
+        ctxt, cerr = toolbox.call_tool("compact", {})
+        self.assertFalse(cerr)
+        self.assertIn("compact", ctxt.lower())
+
+        # toggle: disable offload → hidden from tools/list + rejected on call
+        os.environ["MRTOKEN_TOOLS_OFF"] = "offload"
+        try:
+            names = [t["name"] for t in toolbox.enabled_tool_schemas()]
+            self.assertNotIn("offload", names)
+            self.assertIn("handoff", names)
+            _, derr = toolbox.call_tool("offload", {"content": "x"})
+            self.assertTrue(derr)
+        finally:
+            os.environ.pop("MRTOKEN_TOOLS_OFF", None)
+
+        _, uerr = toolbox.call_tool("bogus", {})
+        self.assertTrue(uerr)
+
     def test_golden_session_signals(self):
         # ROADMAP 5D.3 — golden regression: whole-session fixtures with their
         # EXPECTED fired-signal sets. Catches drift when a threshold changes.
@@ -615,7 +830,7 @@ class BackendTest(unittest.TestCase):
                                {"type": "command", "command": "echo existing"}]}]}}, h)
 
             init(project_root=tmp, global_settings_path=global_settings_path,
-                 emit=lambda *_: None)
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=lambda *_: None)
             # the user's OWN project-local Stop hook + other settings preserved;
             # ours is NOT added project-local (it goes global now so it fires for
             # sessions started from any folder, e.g. the desktop app)
@@ -642,7 +857,7 @@ class BackendTest(unittest.TestCase):
 
             # idempotent: second run adds nothing extra
             init(project_root=tmp, global_settings_path=global_settings_path,
-                 emit=lambda *_: None)
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=lambda *_: None)
             gs2 = _load_settings(global_settings_path)
             g_stop2 = [hh["command"] for e in gs2["hooks"]["Stop"] for hh in e["hooks"]]
             self.assertEqual(len(g_stop2), len(g_stop))  # Stop not duplicated
@@ -666,7 +881,8 @@ class BackendTest(unittest.TestCase):
                     {"matcher": "", "hooks": [{"type": "command", "command": "echo mine"}]},
                 ]}}, h)
             gpath = os.path.join(tmp, "global-settings.json")
-            init(project_root=tmp, global_settings_path=gpath, emit=lambda *_: None)
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=lambda *_: None)
 
             self.assertTrue(_already_installed(_load_settings(gpath)))   # moved to global
             s = _load_settings(local)
@@ -700,7 +916,8 @@ class BackendTest(unittest.TestCase):
                            "hooks": {"Stop": [{"matcher": "", "hooks": [
                                {"type": "command", "command": "echo keepme"}]}]}}, h)
             gpath = os.path.join(tmp, "global-settings.json")
-            init(project_root=tmp, global_settings_path=gpath, emit=lambda *_: None)
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=lambda *_: None)
             skills = os.path.join(os.path.dirname(gpath), "skills")
             self.assertTrue(_already_installed(_load_settings(gpath)))     # Stop hook is global now
             self.assertTrue(os.path.exists(os.path.join(skills, "mr-handoff", "SKILL.md")))
@@ -725,7 +942,8 @@ class BackendTest(unittest.TestCase):
             with open(gpath, "w") as h:  # user already has their own statusLine
                 json.dump({"statusLine": {"type": "command", "command": "my-bar"}}, h)
             out = []
-            init(project_root=tmp, global_settings_path=gpath, emit=out.append)
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=out.append)
             joined = "\n".join(out)
             self.assertIn("replacing your existing statusLine", joined)
             gs = _load_settings(gpath)

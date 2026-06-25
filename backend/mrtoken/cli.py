@@ -219,6 +219,35 @@ def cmd_feedback(args):
     print(f"✓ recorded: {r['session_id'][:8]} · {r['rule']} → {r['verdict']}")
 
 
+def cmd_config(args):
+    from mrtoken import policy
+    if getattr(args, "kill", False):
+        policy.set_enabled(False); print("✓ interventions OFF (global kill switch)")
+    if getattr(args, "enable", False):
+        policy.set_enabled(True); print("✓ interventions enabled")
+    for pair in getattr(args, "intervene", None) or []:
+        if "=" not in pair:
+            print(f"  skip {pair!r} — use tool=level (level: {'/'.join(policy.LEVELS)})"); continue
+        tool, level = pair.split("=", 1)
+        try:
+            policy.set_autonomy(tool.strip(), level.strip())
+            print(f"✓ {tool.strip()} → {level.strip()}")
+        except ValueError as e:
+            print(f"  {e}")
+    s = policy.summary()
+    print(f"\n  interventions: {'on' if s['enabled'] else 'OFF (kill switch)'} · "
+          f"default {s['default']}")
+    for t, lv in (s["tools"] or {}).items():
+        print(f"    {t:10} {lv}")
+
+
+def cmd_mcp(args):
+    """Run the MCP stdio server (the toolbox the agent calls). Register with
+    `claude mcp add mrtoken -- mrtoken-transcript mcp` or Codex [mcp_servers]."""
+    from mrtoken.mcp_server import serve
+    sys.exit(serve())
+
+
 def cmd_statusline(args):
     from mrtoken.statusline import statusline_hud
     sys.exit(statusline_hud(getattr(args, "session", None)))
@@ -286,6 +315,16 @@ def main(argv=None):
     p_explain.add_argument("session", nargs="?", help="session id or prefix (default: newest)")
     p_explain.add_argument("--db", dest="db_sub")
     p_explain.add_argument("--codex", action="store_true", help="read the central Codex DB")
+
+    p_mcp = sub.add_parser("mcp",
+        help="run the MCP stdio server (the agent toolbox: offload, …) — register with Claude/Codex")
+
+    p_config = sub.add_parser("config",
+        help="view/set intervention policy: per-tool autonomy (off|tell|ask|do) + kill switch")
+    p_config.add_argument("--intervene", action="append", metavar="TOOL=LEVEL",
+        help="set a tool's proc-engine level, e.g. offload=ask (repeatable)")
+    p_config.add_argument("--kill", action="store_true", help="global kill switch: silence all interventions")
+    p_config.add_argument("--enable", action="store_true", help="re-enable interventions")
 
     p_feedback = sub.add_parser("feedback",
         help="record a right/wrong/unsure verdict on a fired rule (real-usage precision)")
@@ -364,8 +403,8 @@ def main(argv=None):
     dispatch = {"ingest": cmd_ingest, "report": cmd_report,
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "corpus": cmd_corpus,
-                "explain": cmd_explain, "feedback": cmd_feedback,
-                "watch": cmd_watch,
+                "explain": cmd_explain, "feedback": cmd_feedback, "mcp": cmd_mcp,
+                "config": cmd_config, "watch": cmd_watch,
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,

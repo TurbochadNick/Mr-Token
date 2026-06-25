@@ -26,10 +26,23 @@ def main():
     if cwd and os.path.isdir(cwd):
         os.chdir(cwd)
 
+    tpath = payload.get("transcript_path")
+    # proc engine (ROADMAP 6.4–6.6): pressure + reclaimable junk → an actionable
+    # intervention (tell, or ask w/ AFK escalation), debounced + policy-gated.
+    try:
+        from mrtoken.intervene import intervention_for_session
+        iv = intervention_for_session(transcript_path=tpath,
+                                      session_id=payload.get("session_id", ""))
+        if iv:
+            print(json.dumps({"systemMessage": "mr · " + iv["message"]}))
+            sys.exit(0)
+    except Exception:
+        pass  # never block the prompt
+
     try:
         from mrtoken.statusline import build_statusline_text
         # use the EXACT transcript Claude Code handed us, not a newest-file guess
-        line = build_statusline_text(transcript_path=payload.get("transcript_path"))
+        line = build_statusline_text(transcript_path=tpath)
         if line:
             print(json.dumps({"systemMessage": line}))
     except Exception:

@@ -229,28 +229,41 @@ Code and Codex**; every tool/tweak individually toggleable; nothing auto-acts (L
 until 6.7's measurement proves it helps. **Locked defaults** (Zach): toolbox = MCP tools +
 a manual skill; approval = hook-driven first; AFK default = warn-only.
 
-- [ ] **6.1 Toolbox foundation — MCP server + `mr_offload`** — stand up a Mr Token MCP server and
-  ship the first tool: `offload(content/ref)` writes a large tool output to disk and returns a
-  compact summary/reference, so it stops filling context. Register for Claude Code **and** Codex
-  (both support MCP). Toggleable. **Acceptance:** the agent can call it in both agents; offloaded
-  content leaves context, a summary returns; unit test.
-- [ ] **6.2 More tools — `mr_handoff`, `mr_compact`** — expose the existing handoff logic + a compact
-  trigger as MCP tools. **Acceptance:** callable in both agents; each individually toggleable; tests.
-- [ ] **6.3 The manual — a context-efficiency skill** the agent consults (the "teach" half): how to
-  avoid/repair context bloat, when to reach for which tool. Installed globally for both agents.
-- [ ] **6.4 Proc engine — turn-boundary trigger** — at the turn boundary (Claude UserPromptSubmit /
-  Codex equivalent), fire when **pressure** (predictive turns-to-full) **and** **reclaimability**
-  (rules find fixable junk) both trip. Debounced; points the agent at the manual/tool. **Acceptance:**
-  fires on a fabricated pressure+junk session, silent on a clean one; both agents.
-- [ ] **6.5 Config + kill switch** — per-tool autonomy level (`off|tell|ask|do`) + a global kill
-  switch; default **warn-only**. **Acceptance:** a tool set to `off` never fires; kill switch silences all.
-- [ ] **6.6 L2 Ask + AFK escalation** — hook-driven approval (reply = approve; AFK = next-turn
-  escalation per config). **Acceptance:** ask shown; inaction escalates to the configured action (or warn).
-- [ ] **6.7 Measure-don't-degrade** — every tool action logs before/after (tokens, ctx %, task still
-  succeeded?); a tool whose outcome trends negative **auto-disables and says so**. Builds on
-  `feedback`/`explain`. **Acceptance:** a fabricated "made it worse" history auto-disables that tool.
+- [x] **6.1 Toolbox foundation — MCP server + `mr_offload`**
+  → done: commit `3025bcb` on `feat/mcp-offload`. Zero-dep MCP stdio server (`mrtoken-transcript mcp`)
+    exposing `offload`; works for Claude + Codex (both speak MCP); `docs/MCP.md` registration. 64 tests
+    green, verified over real stdio. Live in-agent confirm = register + call in a session.
+- [x] **6.2 More tools — `mr_handoff`, `mr_compact`**
+  → done: commit `d5a5da4`. Toolbox registry; `handoff` (real), `compact` (advisory — host op), per-tool
+    toggle via MRTOKEN_TOOLS_OFF. 65 tests green; stdio lists offload/handoff/compact. *(Note: compact is
+    advisory because compaction is a host action an MCP server can't execute.)*
+- [x] **6.3 The manual — a context-efficiency skill** the agent consults (the "teach" half)
+  → done: commit `689bc3c`. Bundled `mr-context` skill; `init` installs skills to both ~/.claude/skills
+    and ~/.codex/skills. 66 tests green.
+- [x] **6.4 Proc engine — turn-boundary trigger**
+  → done: commit `fc1f602`. Pure agent-agnostic `evaluate()` (pressure ∧ reclaimable-junk → tool nudge),
+    debounced; wired LIVE into Claude's UserPromptSubmit. 68 tests green. **Codex caveat:** engine is shared,
+    but Codex live-pressure needs a rollout-based ctx tracker (model_context_window + running input) — next
+    increment (added to backlog), not faked.
+- [x] **6.5 Config + kill switch**
+  → done: commit `4a8fe01`. `policy.py` (config + env), proc engine gates on `autonomy()`, default
+    warn-only; `mrtoken-transcript config` to view/set; global kill switch. 69 tests green.
+- [x] **6.6 L2 Ask + AFK escalation**
+  → done: commit `db67c31`. `ask` level proposes + waits (reply=approve); inaction on a later turn
+    (same tool, ctx not improved) escalates to a firmer nudge (auto-action plugs in at 6.8). 70 tests green.
+- [x] **6.7 Measure-don't-degrade**
+  → done: commit `7a397d8`. `outcomes.py` central store; proc engine auto-captures ctx-delta effect per
+    tool; a tool trending negative auto-disables via policy (→ off) + says how to re-enable. 71 tests green.
 - [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
   help, at equal quality. **⚑ decision per tool** before it defaults to auto.
+
+## Shipped: Phase 6 — the intervention engine (v0.5.0)
+The v2 vision realized — the agent's manual + toolbox + report card. MCP server +
+`offload`/`handoff`/`compact` tools (both agents); the `mr-context` manual; the proc
+engine (pressure ∧ reclaimable-junk → in-the-moment nudge, Claude live); per-tool
+policy + kill switch; L2 ask + AFK escalation; measure-don't-degrade auto-disable.
+Default warn-only. Remaining: **6.8 L3 auto-act** (open — gated on outcome/experiment
+evidence, per-tool ⚑ decision) and the **Codex live-pressure tracker** (backlog).
 
 ## Shipped after the roadmap (v0.4.5–0.4.7)
 - [x] **Codex-dir backfill** — `ingest --backfill` now also sweeps `~/.codex/sessions/**` (+ archived_sessions)
@@ -267,6 +280,9 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
   sessions (165M tok, $1,059 API-eq). *(v0.4.8)*
 
 ## Backlog / not yet scheduled
+- **Codex live-pressure tracker (proc engine)** — feed the 6.4 engine for Codex by tracking current
+  context from the rollout (`model_context_window` + running input-side tokens), since Codex has no
+  Claude-style live transcript snapshot. Surfaced by 6.4 (engine is shared; only Claude is wired live).
 - **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
   same project shortly after a `fresh_handoff` fired, so the acted-vs-ignored split is real
   (current B is degenerate because the rule only fires on already-deep sessions). Surfaced by 2.1.
