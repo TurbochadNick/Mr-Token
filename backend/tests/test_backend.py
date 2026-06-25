@@ -572,6 +572,32 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(claude_skills, "mr-context", "SKILL.md")))
             self.assertTrue(os.path.isfile(os.path.join(codex_skills, "mr-context", "SKILL.md")))
 
+    def test_proc_engine_fires_on_pressure_plus_junk(self):
+        # ROADMAP 6.4: fire only when pressure AND reclaimable junk both trip.
+        from mrtoken.intervene import evaluate
+        iv = evaluate(82, None, ["huge_tool_output"])       # high ctx + big output
+        self.assertIsNotNone(iv)
+        self.assertEqual(iv["tool"], "offload")
+        self.assertIsNotNone(evaluate(40, 2, ["re_read_loop"]))        # low turns-to-full + junk
+        self.assertEqual(evaluate(85, None, ["context_rot"])["tool"], "handoff")
+        self.assertIsNone(evaluate(90, 1, ["low_cache"]))   # pressure but junk isn't reclaimable
+        self.assertIsNone(evaluate(30, 20, ["huge_tool_output"]))  # junk but no pressure
+        self.assertIsNone(evaluate(10, None, []))           # clean → silent
+
+    def test_proc_engine_debounces(self):
+        # ROADMAP 6.4: fire once per rising pressure band, not every turn.
+        import mrtoken.datadir as dd
+        from mrtoken.intervene import should_fire
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = dd.central_default
+            dd.central_default = lambda: tmp
+            try:
+                self.assertTrue(should_fire("s1", 72))    # first fire
+                self.assertFalse(should_fire("s1", 75))   # within band → suppressed
+                self.assertTrue(should_fire("s1", 85))    # climbed another band → fires
+            finally:
+                dd.central_default = orig
+
     def test_toolbox_handoff_compact_and_toggle(self):
         # ROADMAP 6.2: handoff (real) + compact (advisory) tools, each toggleable.
         from mrtoken import toolbox
