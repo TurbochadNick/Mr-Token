@@ -1,48 +1,92 @@
 # MR Token — Product Brief
 
-*Status: discovery → MVP build. Last updated 2026-06-05 (positioning revised after two research passes — see DECISIONS.md section 4-5).*
+*Status: v2 vision (2026-06-25). After ~8 releases of dogfooding (v0.4.1→v0.4.8) the
+measurement half is solid but the product wasn't yet indispensable — it observed waste
+but didn't change behavior in the moment. This brief recommits to the original promise
+("the one thing to do **right now**" + "keep the agent sharp") by completing the loop.
+Earlier framing + research: this file's git history and DECISIONS.md.*
 
 ## One-liner
-A local-first tool that watches your AI coding agent for the waste that actually costs you — bloated tool outputs, re-read loops, context rot — and tells you the one thing to do about it right now. So you **do more within your rate-limit windows, keep the agent sharp, and spend less.** Cheap to leave on always; useful day one with **no LLM in the loop**.
+**Mr Token is the agent's efficiency manual + toolbox + report card** — it keeps a coding
+agent from running out of context on junk, by **teaching** it how to avoid waste, **equipping**
+it with the tools to fix waste in the moment, and **grading** whether it actually got better.
+Local-first, metadata-by-default, cheap to leave on. The cheap detection core runs with **no
+LLM in the loop**; acting is an opt-in layer on top.
 
-## Problem (sharpened by research)
-The waste that matters is **dynamic**, not "repeated context" (prompt caching makes re-sending the static prefix cheap). The real drivers are huge tool/log dumps, re-reading the same files, retry loops, and runaway step counts — non-cacheable context that snowballs. Stanford's agent-spend study: the same task can cost up to **30x** more depending on how many steps/re-reads the agent took. That snowball does three kinds of damage, depending on the user: **costs money** (metered/API), **eats your rate limit and context window** (flat-rate plans — vendor-documented), and **degrades output quality** (context rot — research-backed, every plan). Users can't see it, and per-call dashboards miss it because it lives at the **session/workflow** level.
+## The shift (v2) — what's the same, what evolved
+The measurement was never the product; it was the foundation. The product is **closing the
+loop in the moment**. Three honest changes from v1:
 
-## What it does (in order of build)
-1. **Monitor** — reconstruct a task as `trace → model_call / tool_call → event`, with token counts, cache stats, sizes, timings, cost estimate. No AI.
-2. **Detect** — deterministic rules flag waste (repeated context, huge tool output, retry loops, low cache use, context-block domination, reasoning ratio outliers).
-3. **Recommend** — plain-text workflow advice: continue / compact / fresh handoff / spawn subagent / lower or raise reasoning / re-plan / offload logs.
-4. **Assist (opt-in, later)** — LLM generates handoffs, summarizes logs, diagnoses cost. Only when expected savings justify the spend.
+1. **Audience can be the agent, not just the human.** The human isn't in the loop at
+   token-decision time — the agent is. So Mr Token aims its guidance at *the agent* (injected
+   manual pages + agent-callable tools) by default, and at the *human* when you want it to.
+   Configurable; one default, flexible underneath.
+2. **From report to manual + toolbox.** "Diagnose → teach → equip → grade" is just the original
+   **Monitor → Detect → Recommend → Assist** ladder said plainly. The toolbox (`handoff`,
+   `offload`, `compact`, `summarize`) *is* the Assist rung — now agent-callable.
+3. **It can act (consented).** v1's non-goal was "no autonomous context reducer; never silently
+   rewrite context." We relax the *letter* (it may act) while keeping the *spirit*: **never
+   silently or unconsented — every action is toggleable, reversible, and measured.**
+
+## Problem
+The waste that matters is **dynamic**: huge tool/log dumps, re-reading the same files, retry
+loops, runaway step counts — non-cacheable context that snowballs (Stanford: same task up to
+**30×** by steps/re-reads). The felt pain: **you run out of context** mid-task because it got
+filled with junk — forcing a compaction, losing coherence, or burning your rate-limit window.
+Three flavors of damage by user: **money** (metered), **rate limit + context window** (flat-rate),
+**output quality** (context rot). It lives at the **session/workflow** level, so per-call
+dashboards miss it.
+
+## What it does — diagnose → teach → equip → grade
+1. **Diagnose (Monitor + Detect).** Reconstruct `trace → model_call / tool_call`, exact tokens /
+   cache / cost; deterministic rules flag the waste (huge output, re-read loop, repeated context,
+   retry loop, low cache, step runaway, context rot). No AI. This is the **report card**.
+2. **Teach (the manual).** At the right moment, inject guidance *written for the agent to act on*
+   ("ctx 82%, ~40k is re-read junk — offload it or hand off"), plus a standing skill it can consult.
+3. **Equip (the toolbox).** Ship the agent the tools to fix it: `offload` (big output → disk +
+   summary), `handoff` (fresh session), `compact`, `summarize`. The agent has hands, not just a warning.
+4. **Grade (feedback).** Did the agent get better? `validate` / `feedback` / `explain` track whether
+   an action helped — and **auto-disable any tool whose measured outcome trends negative.**
+
+### The intervention engine ("right now")
+- **Proc point = each turn boundary** (hooks fire there; you reset *between* turns, not mid-turn).
+- **Fires when both:** *pressure* (context filling toward the wall — predictive turns-to-full) **and**
+  *reclaimability* (it's junk a tool can fix). Pressure alone = a quiet heads-up; pressure + junk = act.
+- **Graduated autonomy, per tool, configurable:** **L1 Tell** → **L2 Ask** (approve, with an AFK
+  timeout that escalates on inaction) → **L3 Do** (auto-remediate, logged, reversible). L3 only after
+  the report card proves that action helps.
+
+## Audience & customization (sharp default, flexible underneath)
+- **Hero default:** agent-facing **context-rescue** — "don't run out of context on junk" — working
+  out of the box. This is what must be indispensable.
+- **Flexible layer:** point it at the human instead; tune autonomy levels per tool; turn any tweak
+  off. People will use it in ways we don't predict — *that's fine, on top of one sharp default*, not
+  instead of one.
+- Users: **agent power users** (primary) → agent/tool builders → teams/cost owners (later).
 
 ## Cost model
-**Tokens are the ground-truth unit.** Dollars are a computed overlay: `tokens × versioned per-model price table`, stored per call with the price-table version. For Claude Code subscription use, the dollar figure is labeled **"estimated API-equivalent cost"** — not a real bill.
+**Tokens are ground truth.** Dollars are a computed overlay (`tokens × versioned price table`),
+labeled **"estimated API-equivalent cost"** for subscription use — not a real bill.
 
-## Users (MVP targets one)
-- **Agent power users** (Claude Code daily drivers) — *primary.* "Why was that task expensive, and what do I do right now?"
-- Agent/tool builders (custom Anthropic/OpenAI agents) — later, via SDK wrapper.
-- Teams / cost owners — later.
+## Guardrails (hard constraints)
+- **Every tool/tweak individually toggleable + a global kill switch.** Nothing auto-acts unless
+  opted to that level.
+- **Measured so it can't silently degrade.** Every action logs before/after (tokens, context %, and
+  did the task still succeed); a tool trending negative auto-disables and says so.
+- **Privacy: metadata-only by default** — counts, hashes, sizes, tool names, timings, cost. Content
+  is read to derive metadata then discarded; full-content capture is explicit, local, per-session,
+  secret-scanned. **No network egress by default.**
 
-## MVP scope (proves the concept)
-- **Source:** Claude Code only, via **transcript JSONL** (`~/.claude/projects/<path>/<session>.jsonl`) — verified to contain full token usage, cache stats, model, tools, retries (`requestId`/`parentUuid`), and subagents (`isSidechain`). No OTEL/hooks required for v1.
-- **Stack:** Python, SQLite ledger, pure-function rule engine, CLI report (`mrtoken-transcript report <session>`). No dashboard yet.
-- **Rules (3 high-signal):** repeated-context (block hashing), huge-tool-output, retry-loop.
-- **One trusted recommendation:** "fresh handoff recommended" with a token-based justification.
-- **Validation:** dogfood on Zach's own real sessions (ground truth known) for ~2 weeks before adding a 2nd integration or any dashboard.
-
-## Non-goals (explicitly NOT first)
-- No autonomous context reducer; never silently delete/rewrite context.
+## Non-goals
+- **No silent or unconsented action** — it may act, but only toggled-on, reversible, and logged.
+  (Revised from v1's blanket "no autonomous reducer.")
+- No AI call in the cheap detection core (the always-on layer stays deterministic).
 - No marketplace; no all-providers-before-proof.
-- No AI call after every agent call.
-- No dashboard before the data model is proven.
 - No claim of exact dollar cost for subscription tools.
 
-## Privacy stance (hard constraint, not a setting)
-- **Default = metadata only**: token counts, hashes, sizes, types, tool names, timings, cost estimates.
-- Transcript content is read to *derive* metadata, then discarded — reading raw content counts as content-capture mode.
-- Full-content capture is explicit, local, per-session opt-in, with **secret scanning** before anything is persisted.
-- No network egress by default.
-
-## Open questions to resolve via dogfooding
-- Are the handoff/subagent heuristics actually right when they fire? (Currently hypotheses.)
-- Reasoning over/underuse needs fuzzy task classification — keep as a soft hint only.
-- OTEL 60s metric interval vs transcript-on-write latency — does "real-time" advice need OTEL traces (beta, ~5s)?
+## Open questions to resolve next
+- **Toolbox surface:** MCP tools vs skills vs both (the agent needs to *call* the toolbox).
+- **Approval/timeout host:** hook-driven (works today) vs a live watcher daemon (richer UX).
+- **AFK default action** when unanswered: handoff, compact, or warn-only.
+- **Does acting actually help, at equal quality?** The gated ROI experiment (`backend/experiments/`)
+  is how we prove the toolbox earns L3 — before any tool defaults to auto.
