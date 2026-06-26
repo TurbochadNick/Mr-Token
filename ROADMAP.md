@@ -257,6 +257,27 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
 - [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
   help, at equal quality. **⚑ decision per tool** before it defaults to auto.
 
+## Phase 7 — Prove the value + plug-and-play hub *(from Rosson's feedback)*
+
+Two ideas from Rosson: (1) make token savings **felt** — show the token-count improvement so
+subscription users see value; (2) make Mr Token the **plug-and-play, on/off, testable hub** for
+token-efficiency systems (its own tools + proven OSS like `headroomlabs-ai/headroom` — compress
+tool outputs before they hit the LLM, 60–95% fewer tokens, MCP server; `ponytail` — do-less
+guidance). Both are on-vision: reuse our policy (toggle) + outcomes (measure/test). **Cross-cutting:**
+both agents; sharp default (the savings report works out of the box), flexible hub underneath.
+
+- [ ] **7.1 Savings report** — surface "Mr Token saved you ~N tokens" from `offload`'s
+  `est_tokens_saved` + the outcomes store. A `savings` command + a HUD/report line; per-session and a
+  rollup. This is the **felt-value** piece — highest leverage, no external deps. **Acceptance:** a
+  session that used `offload` shows a positive savings figure; a clean session shows ~0.
+- [ ] **7.2 External-module registry** — let a user register an external token-saver (esp. an MCP
+  server like headroom) as a Mr Token "module" that flows through the SAME policy (toggle on/off) +
+  outcomes (measure/test). Thin adapter + config; do NOT vendor a 51k-star repo. **Acceptance:** a
+  registered external module can be toggled and its savings/outcomes tracked alongside our tools.
+- [ ] **7.3 Evaluate headroom + ponytail as first modules** *(gated on 7.2; dep/trust review)* —
+  register them via 7.2, measure real savings, keep/drop on the evidence. **⚑ decision** before any
+  external module ships on by default.
+
 ## Shipped: Phase 6 — the intervention engine (v0.5.0)
 The v2 vision realized — the agent's manual + toolbox + report card. MCP server +
 `offload`/`handoff`/`compact` tools (both agents); the `mr-context` manual; the proc
