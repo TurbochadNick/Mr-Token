@@ -266,10 +266,10 @@ tool outputs before they hit the LLM, 60–95% fewer tokens, MCP server; `ponyta
 guidance). Both are on-vision: reuse our policy (toggle) + outcomes (measure/test). **Cross-cutting:**
 both agents; sharp default (the savings report works out of the box), flexible hub underneath.
 
-- [ ] **7.1 Savings report** — surface "Mr Token saved you ~N tokens" from `offload`'s
-  `est_tokens_saved` + the outcomes store. A `savings` command + a HUD/report line; per-session and a
-  rollup. This is the **felt-value** piece — highest leverage, no external deps. **Acceptance:** a
-  session that used `offload` shows a positive savings figure; a clean session shows ~0.
+- [x] **7.1 Savings report**
+  → done: commit `b64250e` (v0.5.2). `mrtoken-transcript savings [--codex]` — realized (logged tool
+    actions, central savings.db) + addressable (rules found). Real Codex corpus: ~43.5M tok addressable.
+    73 tests green.
 - [ ] **7.2 External-module registry** — let a user register an external token-saver (esp. an MCP
   server like headroom) as a Mr Token "module" that flows through the SAME policy (toggle on/off) +
   outcomes (measure/test). Thin adapter + config; do NOT vendor a 51k-star repo. **Acceptance:** a
@@ -301,9 +301,8 @@ evidence, per-tool ⚑ decision) and the **Codex live-pressure tracker** (backlo
   sessions (165M tok, $1,059 API-eq). *(v0.4.8)*
 
 ## Backlog / not yet scheduled
-- **Codex live-pressure tracker (proc engine)** — feed the 6.4 engine for Codex by tracking current
-  context from the rollout (`model_context_window` + running input-side tokens), since Codex has no
-  Claude-style live transcript snapshot. Surfaced by 6.4 (engine is shared; only Claude is wired live).
+- [x] **Codex live-pressure tracker (proc engine)** — done (v0.5.2, commit `fd1d152`): `codex_ctx_pct()`
+  from the rollout + shared `decide()` core; the proc engine now fires for Codex via its Stop hook.
 - **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
   same project shortly after a `fresh_handoff` fired, so the acted-vs-ignored split is real
   (current B is degenerate because the rule only fires on already-deep sessions). Surfaced by 2.1.
