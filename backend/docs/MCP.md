@@ -38,6 +38,18 @@ printf '%s\n%s\n' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | mrtoken-transcript mcp
 ```
 
+## Plug-and-play modules (ROADMAP 7.2, groundwork)
+Register an *external* token-saver (e.g. headroom's MCP server) as a Mr Token module so it
+flows through the same toggle + measurement machinery:
+```bash
+mrtoken-transcript modules --add headroom --command headroom --arg mcp   # register
+mrtoken-transcript modules --register headroom                           # print Claude/Codex snippet
+mrtoken-transcript modules --disable headroom                            # toggle off
+```
+A module's savings show in `mrtoken-transcript savings` once recorded under its name. NOTE:
+the registry declares + toggles modules and emits registration; it does **not** vendor, run, or
+trust external code — actually wiring + measuring headroom/ponytail is the gated 7.3 (dep/trust review).
+
 ## Notes
 - Stash lives under the central store: `~/.mrtoken/data/offload/<hash>.txt`. Local only,
   never sent anywhere (privacy invariant holds).

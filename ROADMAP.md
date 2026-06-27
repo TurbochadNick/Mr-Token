@@ -270,10 +270,13 @@ both agents; sharp default (the savings report works out of the box), flexible h
   → done: commit `b64250e` (v0.5.2). `mrtoken-transcript savings [--codex]` — realized (logged tool
     actions, central savings.db) + addressable (rules found). Real Codex corpus: ~43.5M tok addressable.
     73 tests green.
-- [ ] **7.2 External-module registry** — let a user register an external token-saver (esp. an MCP
-  server like headroom) as a Mr Token "module" that flows through the SAME policy (toggle on/off) +
-  outcomes (measure/test). Thin adapter + config; do NOT vendor a 51k-star repo. **Acceptance:** a
-  registered external module can be toggled and its savings/outcomes tracked alongside our tools.
+- [~] **7.2 External-module registry** *(groundwork laid)*
+  → groundwork: commit `<savings/modules branch>`. `modules.py` registry over `~/.mrtoken/config.json`
+    (`modules` key, shares the policy file); `mrtoken-transcript modules --add/--remove/--enable/--disable
+    /--register` (emits Claude + Codex registration snippets). Savings/outcomes already key by name, so a
+    module's value shows in `savings` once recorded. **Remaining:** the measurement SHIM that records an
+    external module's savings during use (folds into 7.3, since it needs the real tool wired). No external
+    code vendored/run/trusted.
 - [ ] **7.3 Evaluate headroom + ponytail as first modules** *(gated on 7.2; dep/trust review)* —
   register them via 7.2, measure real savings, keep/drop on the evidence. **⚑ decision** before any
   external module ships on by default.
