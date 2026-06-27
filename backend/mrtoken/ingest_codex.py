@@ -42,6 +42,33 @@ def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+def codex_ctx_pct(path: str) -> int | None:
+    """Live context % for a Codex rollout (ROADMAP 6.4 / Codex live-pressure tracker):
+    the last token_count carries the turn's input-side tokens + the model's window."""
+    last = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if d.get("type") == "event_msg" and (d.get("payload") or {}).get("type") == "token_count":
+                    last = d["payload"].get("info") or {}
+    except OSError:
+        return None
+    if not last:
+        return None
+    win = last.get("model_context_window")
+    inp = (last.get("last_token_usage") or {}).get("input_tokens")  # includes cached = current ctx
+    if not (win and inp):
+        return None
+    return min(99, int(inp / win * 100))
+
+
 def ingest_codex_file(conn, path: str, prices=None) -> dict:
     """Ingest one Codex rollout JSONL into the shared schema. Idempotent: replaces
     any prior rows for the session (trace.session_id is UNIQUE)."""

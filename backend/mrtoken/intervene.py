@@ -72,7 +72,14 @@ def intervention_for_session(transcript_path: str | None = None,
     ctx_now = snap.get("context_now") or 0
     win = context_window(snap.get("context_max") or ctx_now)
     ctx_pct = min(99, int(ctx_now / win * 100)) if (ctx_now and win) else 0
-    iv = evaluate(ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"))
+    return decide(session_id, ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"))
+
+
+def decide(session_id: str, ctx_pct, turns_to_full, signals) -> dict | None:
+    """Agent-agnostic decision core: evaluate → autonomy gate → debounce →
+    measure-don't-degrade → ask-phase. Reused by Claude (transcript snapshot) and
+    Codex (rollout-derived ctx %). Returns the intervention to surface, or None."""
+    iv = evaluate(ctx_pct, turns_to_full, signals)
     if not iv:
         return None
     from mrtoken.policy import autonomy  # per-tool autonomy / global kill switch
@@ -81,7 +88,6 @@ def intervention_for_session(transcript_path: str | None = None,
         return None
     iv["level"] = level
     # measure-don't-degrade (6.7): did the PRIOR recommendation for this session help?
-    # Record the outcome (ctx delta) and let a degrading tool auto-disable itself.
     if session_id:
         try:
             from mrtoken import outcomes
