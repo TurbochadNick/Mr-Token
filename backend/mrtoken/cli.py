@@ -241,6 +241,11 @@ def cmd_config(args):
         print(f"    {t:10} {lv}")
 
 
+def cmd_savings(args):
+    from mrtoken.savings import print_savings
+    print_savings(_open(args.db))
+
+
 def cmd_mcp(args):
     """Run the MCP stdio server (the toolbox the agent calls). Register with
     `claude mcp add mrtoken -- mrtoken-transcript mcp` or Codex [mcp_servers]."""
@@ -315,6 +320,11 @@ def main(argv=None):
     p_explain.add_argument("session", nargs="?", help="session id or prefix (default: newest)")
     p_explain.add_argument("--db", dest="db_sub")
     p_explain.add_argument("--codex", action="store_true", help="read the central Codex DB")
+
+    p_savings = sub.add_parser("savings",
+        help="show tokens saved — realized (tools that ran) + addressable (rules found)")
+    p_savings.add_argument("--db", dest="db_sub")
+    p_savings.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_mcp = sub.add_parser("mcp",
         help="run the MCP stdio server (the agent toolbox: offload, …) — register with Claude/Codex")
@@ -404,7 +414,7 @@ def main(argv=None):
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "corpus": cmd_corpus,
                 "explain": cmd_explain, "feedback": cmd_feedback, "mcp": cmd_mcp,
-                "config": cmd_config, "watch": cmd_watch,
+                "config": cmd_config, "savings": cmd_savings, "watch": cmd_watch,
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,

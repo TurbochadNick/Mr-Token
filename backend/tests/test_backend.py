@@ -669,6 +669,64 @@ class BackendTest(unittest.TestCase):
             finally:
                 dd.central_default = orig
 
+    def test_savings_realized_and_addressable(self):
+        # ROADMAP 7.1: realized savings (logged tool actions) + addressable (rules found).
+        import mrtoken.savings as savings
+        from mrtoken.ingest import connect
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = savings.central_default
+            savings.central_default = lambda: tmp
+            try:
+                self.assertEqual(savings.realized()["total"], 0)         # nothing yet
+                savings.record("offload", 12000)
+                savings.record("offload", 8000)
+                savings.record("handoff", 0)                            # non-positive → ignored
+                r = savings.realized()
+                self.assertEqual(r["total"], 20000)
+                self.assertEqual(r["by_tool"]["offload"]["uses"], 2)
+                self.assertNotIn("handoff", r["by_tool"])
+                # addressable from a DB's recommendations
+                conn = connect(os.path.join(tmp, "t.db"))
+                conn.execute("INSERT INTO trace(session_id,ingested_at) VALUES('s','t')")
+                tid = conn.execute("SELECT id FROM trace").fetchone()[0]
+                conn.execute("INSERT INTO recommendation(trace_id,rule,severity,message,"
+                             "est_savings_tokens,created_at) VALUES(?,?,?,?,?,?)",
+                             (tid, "huge_tool_output", "warn", "x", 50000, "t"))
+                conn.commit()
+                self.assertEqual(savings.addressable(conn), 50000)
+            finally:
+                savings.central_default = orig
+
+    def test_codex_live_pressure_and_decide(self):
+        # ROADMAP B: live ctx % from a Codex rollout + the shared decide() core fires
+        # for Codex too (proc engine no longer Claude-only).
+        from mrtoken.ingest_codex import codex_ctx_pct
+        from mrtoken import intervene
+        import mrtoken.datadir as dd, mrtoken.policy as policy
+        with tempfile.TemporaryDirectory() as tmp:
+            roll = os.path.join(tmp, "r.jsonl")
+            write_jsonl(roll, [
+                {"type": "event_msg", "payload": {"type": "token_count", "info": {
+                    "model_context_window": 100000,
+                    "last_token_usage": {"input_tokens": 85000, "cached_input_tokens": 80000,
+                                         "output_tokens": 100, "total_tokens": 85100}}}},
+            ])
+            self.assertEqual(codex_ctx_pct(roll), 85)   # 85000/100000
+
+            o_cd, p_cp = dd.central_default, policy._config_path
+            dd.central_default = lambda: tmp
+            policy._config_path = lambda: os.path.join(tmp, "config.json")
+            saved = os.environ.pop("MRTOKEN_INTERVENE", None)
+            try:
+                iv = intervene.decide("cxs1", 85, None, ["huge_tool_output"])
+                self.assertIsNotNone(iv)
+                self.assertEqual(iv["tool"], "offload")
+                self.assertIsNone(intervene.decide("cxs2", 20, None, ["huge_tool_output"]))  # no pressure
+            finally:
+                dd.central_default, policy._config_path = o_cd, p_cp
+                if saved is not None:
+                    os.environ["MRTOKEN_INTERVENE"] = saved
+
     def test_proc_engine_debounces(self):
         # ROADMAP 6.4: fire once per rising pressure band, not every turn.
         import mrtoken.datadir as dd

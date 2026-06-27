@@ -97,9 +97,10 @@ def main():
         conn = connect(db)
         totals = {"model_calls": 0, "tool_calls": 0, "recs": 0, "high": 0}
 
+        codex_iv = None  # Codex live intervention (proc engine), if it fires
         if codex_path:
             # Codex session: parse the rollout via the Codex adapter (source='codex')
-            from mrtoken.ingest_codex import ingest_codex_file
+            from mrtoken.ingest_codex import ingest_codex_file, codex_ctx_pct
             r = ingest_codex_file(conn, codex_path, prices)
             if not r.get("skipped"):
                 row = conn.execute("SELECT id FROM trace WHERE session_id=?",
@@ -111,6 +112,15 @@ def main():
                     totals["recs"]        += len(recs)
                     totals["high"]        += sum(1 for rc in recs if rc["severity"] == "high")
                     session_id = r["session_id"]  # for the rec-line query below
+                    # proc engine for Codex: live ctx % from the rollout + fired signals
+                    try:
+                        from mrtoken.intervene import decide
+                        cpct = codex_ctx_pct(codex_path)
+                        if cpct is not None:
+                            codex_iv = decide(session_id, cpct, None,
+                                              [rc["rule"] for rc in recs])
+                    except Exception:
+                        codex_iv = None
         else:
             for path in paths:
                 parent = path.split(os.sep)[-3] if "subagents" in path else None
@@ -185,6 +195,10 @@ def main():
         except Exception:
             pass
 
+        # a fired Codex intervention (proc engine) takes the rec slot — it's the
+        # actionable nudge, not just a passive signal.
+        if codex_iv:
+            rec_line = "  ·  " + codex_iv["message"]
         message = (hud or f"mr · {totals['model_calls']} calls") + rec_line + assist_line
         # passive "update available" nudge (throttled once/day, silent on failure)
         try:
