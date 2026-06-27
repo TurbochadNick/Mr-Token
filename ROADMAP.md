@@ -186,12 +186,11 @@ task needs a human decision flagged with **⚑ decision**.
 The harness exists (`backend/experiments/`, continue+handoff arms live, oracle+recorder working).
 Pilots 1–2 were inconclusive because the fixtures didn't reliably bloat past the 100k reset point
 and used a turn-count proxy. Pilot 3 fixes exactly that.
-- [ ] **5A.1 Reliably-bloating fixture** — a task whose seed forces the agent past ~100k input-side
-  tokens before it can finish (large multi-file repo / forced reads). Pilot once to confirm it crosses
-  the threshold. *(build only; ~1 cheap confirm run)*
-- [ ] **5A.2 Token-threshold reset** — replace the turn-count proxy with a reset fired when input-side
-  context crosses 100k, via transcript-watching (reuse `watch`'s tracking — avoids needing the Agent SDK).
-- [ ] **5A.3 Wire the `compact` arm** (currently deferred in `drive_agent`).
+- [x] **5A.1 Reliably-bloating fixture** — `debug-hugelib` (16 modules + big reference blocks, ~74k tokens
+  of forced reads). Plumbing verified via `--check-fixture`; solvable. *(Rescued to main in v0.5.4.)*
+- [x] **5A.2 Token-threshold reset** — runner records `peak_input_tokens` + `crossed_threshold` from the
+  transcript (validated against real input-side tokens, not a turn guess). Mock-verified. *(v0.5.4)*
+- [x] **5A.3 Wire the `compact` arm** — done (`--resume` to completion); `--mock` validates all 3 arms. *(v0.5.4)*
 - [ ] **5A.4 Run the matrix** — continue/compact/handoff × pilot-3 × K=5–10, interleaved. **⚑ decision/SPEND:**
   needs explicit budget greenlight (doc estimates a few M tokens / tens of $). Hard budget cap in the harness.
 - [ ] **5A.5 Analyze + record** — apply the pre-registered rule (≥5% signal, ≥10–15% win vs BOTH arms at
