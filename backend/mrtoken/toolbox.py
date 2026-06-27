@@ -21,6 +21,11 @@ from mrtoken.handoff import build_handoff
 def _offload_call(args: dict) -> str:
     r = offload_content(content=args.get("content"), path=args.get("path"),
                         query=args.get("query"), max_lines=args.get("max_lines", 40))
+    try:  # log realized savings for the report (7.1); never break the tool
+        from mrtoken import savings
+        savings.record("offload", r["est_tokens_saved"])
+    except Exception:
+        pass
     return (r["summary"] + f"\n\n[stashed full output → {r['stash_path']} · "
             f"~{r['est_tokens_saved']:,} tokens kept out of context]")
 

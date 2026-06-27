@@ -669,6 +669,34 @@ class BackendTest(unittest.TestCase):
             finally:
                 dd.central_default = orig
 
+    def test_savings_realized_and_addressable(self):
+        # ROADMAP 7.1: realized savings (logged tool actions) + addressable (rules found).
+        import mrtoken.savings as savings
+        from mrtoken.ingest import connect
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = savings.central_default
+            savings.central_default = lambda: tmp
+            try:
+                self.assertEqual(savings.realized()["total"], 0)         # nothing yet
+                savings.record("offload", 12000)
+                savings.record("offload", 8000)
+                savings.record("handoff", 0)                            # non-positive → ignored
+                r = savings.realized()
+                self.assertEqual(r["total"], 20000)
+                self.assertEqual(r["by_tool"]["offload"]["uses"], 2)
+                self.assertNotIn("handoff", r["by_tool"])
+                # addressable from a DB's recommendations
+                conn = connect(os.path.join(tmp, "t.db"))
+                conn.execute("INSERT INTO trace(session_id,ingested_at) VALUES('s','t')")
+                tid = conn.execute("SELECT id FROM trace").fetchone()[0]
+                conn.execute("INSERT INTO recommendation(trace_id,rule,severity,message,"
+                             "est_savings_tokens,created_at) VALUES(?,?,?,?,?,?)",
+                             (tid, "huge_tool_output", "warn", "x", 50000, "t"))
+                conn.commit()
+                self.assertEqual(savings.addressable(conn), 50000)
+            finally:
+                savings.central_default = orig
+
     def test_codex_live_pressure_and_decide(self):
         # ROADMAP B: live ctx % from a Codex rollout + the shared decide() core fires
         # for Codex too (proc engine no longer Claude-only).
