@@ -246,6 +246,41 @@ def cmd_savings(args):
     print_savings(_open(args.db))
 
 
+def cmd_modules(args):
+    from mrtoken import modules
+    if getattr(args, "add", None):
+        try:
+            modules.add_module(args.add, kind=getattr(args, "kind", None) or "mcp",
+                               command=getattr(args, "command", None),
+                               args=getattr(args, "arg", None) or [], note=getattr(args, "note", None))
+            print(f"✓ registered module: {args.add}")
+        except ValueError as e:
+            print(f"  {e}"); sys.exit(1)
+    if getattr(args, "remove", None):
+        modules.remove_module(args.remove); print(f"✓ removed module: {args.remove}")
+    if getattr(args, "enable", None):
+        modules.set_enabled(args.enable, True); print(f"✓ enabled: {args.enable}")
+    if getattr(args, "disable", None):
+        modules.set_enabled(args.disable, False); print(f"✓ disabled: {args.disable}")
+    if getattr(args, "register", None):
+        reg = modules.mcp_registration(args.register)
+        if not reg:
+            print(f"  no mcp module named {args.register!r}"); sys.exit(1)
+        a = " ".join(reg["args"])
+        print(f"\n  Register `{args.register}` with each agent:")
+        print(f"    Claude Code:  claude mcp add {args.register} -- {reg['command']} {a}".rstrip())
+        print(f"    Codex (~/.codex/config.toml):")
+        print(f"      [mcp_servers.{args.register}]")
+        print(f"      command = {reg['command']!r}")
+        print(f"      args = {reg['args']!r}\n")
+    mods = modules.list_modules()
+    print("  registered modules:" if mods else "  no modules registered "
+          "(add one: mrtoken-transcript modules --add NAME --command CMD)")
+    for m in mods:
+        flag = "" if m.get("enabled", True) else "  (disabled)"
+        print(f"    {m['name']:14} {m.get('kind'):8} {m.get('command') or ''}{flag}")
+
+
 def cmd_mcp(args):
     """Run the MCP stdio server (the toolbox the agent calls). Register with
     `claude mcp add mrtoken -- mrtoken-transcript mcp` or Codex [mcp_servers]."""
@@ -325,6 +360,18 @@ def main(argv=None):
         help="show tokens saved — realized (tools that ran) + addressable (rules found)")
     p_savings.add_argument("--db", dest="db_sub")
     p_savings.add_argument("--codex", action="store_true", help="read the central Codex DB")
+
+    p_modules = sub.add_parser("modules",
+        help="register/toggle external token-saver modules (plug-and-play hub)")
+    p_modules.add_argument("--add", metavar="NAME", help="register a module")
+    p_modules.add_argument("--kind", choices=["mcp", "guidance"], help="module kind (default mcp)")
+    p_modules.add_argument("--command", help="launch command (for an mcp module)")
+    p_modules.add_argument("--arg", action="append", help="an arg for the command (repeatable)")
+    p_modules.add_argument("--note", help="optional note")
+    p_modules.add_argument("--remove", metavar="NAME", help="remove a module")
+    p_modules.add_argument("--enable", metavar="NAME", help="enable a module")
+    p_modules.add_argument("--disable", metavar="NAME", help="disable a module")
+    p_modules.add_argument("--register", metavar="NAME", help="print agent-registration snippet")
 
     p_mcp = sub.add_parser("mcp",
         help="run the MCP stdio server (the agent toolbox: offload, …) — register with Claude/Codex")
@@ -414,7 +461,8 @@ def main(argv=None):
                 "list": cmd_list, "subagents": cmd_subagents, "fleet": cmd_fleet,
                 "export": cmd_export, "validate": cmd_validate, "corpus": cmd_corpus,
                 "explain": cmd_explain, "feedback": cmd_feedback, "mcp": cmd_mcp,
-                "config": cmd_config, "savings": cmd_savings, "watch": cmd_watch,
+                "config": cmd_config, "savings": cmd_savings, "modules": cmd_modules,
+                "watch": cmd_watch,
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,

@@ -669,6 +669,37 @@ class BackendTest(unittest.TestCase):
             finally:
                 dd.central_default = orig
 
+    def test_module_registry(self):
+        # ROADMAP 7.2 (groundwork): register/toggle external token-saver modules +
+        # emit an agent-registration snippet. No external code is run/trusted.
+        import mrtoken.policy as policy
+        from mrtoken import modules
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = policy._config_path
+            policy._config_path = lambda: os.path.join(tmp, "config.json")
+            try:
+                self.assertEqual(modules.list_modules(), [])
+                modules.add_module("headroom", kind="mcp", command="headroom",
+                                   args=["mcp"], note="compress tool outputs")
+                m = modules.get_module("headroom")
+                self.assertEqual((m["kind"], m["command"], m["enabled"]), ("mcp", "headroom", True))
+                self.assertEqual(modules.mcp_registration("headroom"),
+                                 {"command": "headroom", "args": ["mcp"]})
+                modules.set_enabled("headroom", False)
+                self.assertFalse(modules.get_module("headroom")["enabled"])
+                with self.assertRaises(ValueError):
+                    modules.add_module("bad", kind="mcp")          # mcp needs a command
+                with self.assertRaises(ValueError):
+                    modules.add_module("x", kind="bogus")
+                # coexists with the intervention policy in the same config file
+                policy.set_autonomy("offload", "ask")
+                self.assertEqual(policy.autonomy("offload"), "ask")
+                self.assertEqual(len(modules.list_modules()), 1)   # module survived policy write
+                modules.remove_module("headroom")
+                self.assertEqual(modules.list_modules(), [])
+            finally:
+                policy._config_path = orig
+
     def test_savings_realized_and_addressable(self):
         # ROADMAP 7.1: realized savings (logged tool actions) + addressable (rules found).
         import mrtoken.savings as savings
