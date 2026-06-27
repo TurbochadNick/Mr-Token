@@ -18,7 +18,7 @@ Cost is computed only if the model is in the price table (Claude-priced today), 
 left NULL — tokens are the ground truth, cost is a best-effort overlay.
 """
 from __future__ import annotations
-import hashlib, json, os
+import bisect, hashlib, json, os
 
 from mrtoken.ingest import now_iso, load_prices, est_cost
 
@@ -135,17 +135,33 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
     cur.execute("""INSERT INTO trace(source,session_id,project_path,started_at,ended_at,ingested_at)
                    VALUES('codex',?,?,?,?,?)""", (sid, cwd, first_ts, last_ts, now_iso()))
     tid = cur.lastrowid
+    mc_ts, mc_ids = [], []  # chronological (stream order) → safe to bisect
     for mc in model_calls:
         cur.execute("""INSERT INTO model_call(trace_id,model,timestamp,input_tokens,output_tokens,
             cache_read_input_tokens,reasoning_tokens,est_cost_usd)
             VALUES(?,?,?,?,?,?,?,?)""",
             (tid, mc["model"], mc["timestamp"], mc["input_tokens"], mc["output_tokens"],
              mc["cache_read_input_tokens"], mc["reasoning_tokens"], mc["est_cost_usd"]))
+        mc_ts.append(mc["timestamp"] or "")
+        mc_ids.append(cur.lastrowid)
+
+    def _link(tc_ts):
+        # link a tool call to its TURN's model_call: the first model_call at/after the
+        # tool call (Codex logs a turn's token_count after its function calls). Without
+        # this, retry_loop + huge_tool_output can't see call position → broken on Codex.
+        if not mc_ids:
+            return None
+        if not tc_ts:
+            return mc_ids[-1]
+        i = bisect.bisect_left(mc_ts, tc_ts)
+        return mc_ids[i] if i < len(mc_ids) else mc_ids[-1]
+
     for tc in tool_calls:
-        cur.execute("""INSERT INTO tool_call(trace_id,tool_use_id,tool_name,input_chars,input_hash,
-            output_chars,output_tokens_est,output_hash,is_error,started_at,ended_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-            (tid, tc["tool_use_id"], tc["tool_name"], tc["input_chars"], tc["input_hash"],
+        cur.execute("""INSERT INTO tool_call(trace_id,model_call_id,tool_use_id,tool_name,input_chars,
+            input_hash,output_chars,output_tokens_est,output_hash,is_error,started_at,ended_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (tid, _link(tc.get("started_at")), tc["tool_use_id"], tc["tool_name"],
+             tc["input_chars"], tc["input_hash"],
              tc.get("output_chars"), tc.get("output_tokens_est"), tc.get("output_hash"),
              tc.get("is_error", 0), tc.get("started_at"), tc.get("ended_at")))
     conn.commit()

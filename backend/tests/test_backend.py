@@ -341,6 +341,10 @@ class BackendTest(unittest.TestCase):
             inp, cr = conn.execute("SELECT input_tokens, cache_read_input_tokens "
                                    "FROM model_call WHERE trace_id=?", (tid,)).fetchone()
             self.assertEqual((inp, cr), (1000, 4000))  # fresh = 5000-4000; cached → cache_read
+            # tool calls are LINKED to a model call (else retry_loop/huge_tool_output break on Codex)
+            linked = conn.execute("SELECT model_call_id FROM tool_call WHERE trace_id=?",
+                                  (tid,)).fetchone()
+            self.assertIsNotNone(linked[0])
             analyse(conn, tid)  # rule engine runs on codex data without error
             # a Claude transcript must NOT sniff as codex (Claude path unaffected)
             claude = os.path.join(tmp, "claude.jsonl")
