@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS run (
   steps         INTEGER,
   tool_errors   INTEGER,
   reset_fired   INTEGER,              -- did the arm hit the reset point?
+  peak_input_tokens INTEGER,          -- input-side tokens reached before reset (5A.2)
+  crossed_threshold INTEGER,          -- did it genuinely cross reset_threshold_tokens?
   notes         TEXT,
   created_at    TEXT NOT NULL
 );
@@ -100,6 +102,26 @@ def _measure(session_id: str, work: str) -> dict:
     return {"total_tokens": row[0], "est_cost_usd": row[1], "tool_errors": row[2]}
 
 
+def _input_side_tokens(session_id: str, work: str):
+    """Cumulative input-side tokens (input + cache read + cache write) for a session —
+    the 'carried context' the 100k reset threshold is measured against. None if the
+    transcript isn't found yet."""
+    from mrtoken.ingest import connect, load_prices, ingest_file
+    import glob, tempfile as _tf
+    esc = work.replace("/", "-").replace(".", "-")
+    hits = glob.glob(os.path.expanduser(f"~/.claude/projects/{esc}/{session_id}.jsonl")) \
+        or glob.glob(os.path.expanduser(f"~/.claude/projects/*/{session_id}.jsonl"))
+    if not hits:
+        return None
+    db = os.path.join(_tf.mkdtemp(), "m.db")
+    conn = connect(db)
+    r = ingest_file(conn, hits[0], load_prices())
+    tid = conn.execute("SELECT id FROM trace WHERE session_id=?", (r["session_id"],)).fetchone()[0]
+    row = conn.execute("SELECT input_tokens + cache_read_tokens + cache_write_tokens "
+                       "FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
+    return row[0] if row else None
+
+
 def _drive_mock(manifest: dict, arm: str) -> dict:
     """Zero-spend control-flow validation: simulate token growth crossing the
     reset point and the per-arm intervention branch. Does not solve the task."""
@@ -110,7 +132,10 @@ def _drive_mock(manifest: dict, arm: str) -> dict:
     total = phase1 + phase2_carry + 8000        # + some completion work
     return {"total_tokens": total, "est_cost_usd": round(total * 3e-6, 4),
             "wall_clock_s": 0.0, "steps": 12, "tool_errors": 0,
-            "reset_fired": int(reset_fired), "notes": f"MOCK ({arm})"}
+            "reset_fired": int(reset_fired),
+            "peak_input_tokens": phase1 if reset_fired else None,
+            "crossed_threshold": int(reset_fired),  # mock always crosses on reset arms
+            "notes": f"MOCK ({arm})"}
 
 
 def drive_agent(task_dir: str, manifest: dict, work: str, arm: str,
@@ -134,13 +159,17 @@ def drive_agent(task_dir: str, manifest: dict, work: str, arm: str,
         return {**m, "wall_clock_s": None, "steps": res.get("num_turns"),
                 "reset_fired": 0, "notes": "live:continue"}
 
+    threshold = manifest.get("reset_threshold_tokens", 100000)
+    phase1_turns = manifest.get("handoff_phase1_turns", 8)
+
     if arm == "handoff":
-        # Phase 1: run partway (turn-count proxy for the reset point), leaving the
-        # agent's partial edits on disk in `work`.
-        phase1_turns = manifest.get("handoff_phase1_turns", 8)
+        # Phase 1: run partway, leaving the agent's partial edits on disk in `work`.
         r1 = _run_claude(prompt, work, model, budget_usd, max_turns=phase1_turns)
         sid1 = r1.get("session_id")
         m1 = _measure(sid1, work) if sid1 else {"total_tokens": 0, "est_cost_usd": 0}
+        # token-threshold reset (5A.2): record the input-side tokens phase 1 reached,
+        # so we KNOW whether the reset point was genuinely crossed — not a turn guess.
+        peak = _input_side_tokens(sid1, work) if sid1 else None
         # Generate a compact handoff from phase 1, then a FRESH session continues
         # (work dir still holds phase 1's edits, so phase 2 builds on them).
         from mrtoken.handoff import build_handoff
@@ -155,12 +184,29 @@ def drive_agent(task_dir: str, manifest: dict, work: str, arm: str,
             "wall_clock_s": None,
             "steps": (r1.get("num_turns") or 0) + (r2.get("num_turns") or 0),
             "tool_errors": (m1.get("tool_errors") or 0) + (m2.get("tool_errors") or 0),
-            "reset_fired": 1, "notes": f"live:handoff (phase1={phase1_turns} turns)",
+            "reset_fired": 1, "peak_input_tokens": peak,
+            "crossed_threshold": int(bool(peak and peak >= threshold)),
+            "notes": f"live:handoff (phase1={phase1_turns} turns)",
         }
 
-    raise NotImplementedError(
-        f"live '{arm}' arm not wired for the pilot (compact arm deferred — needs the "
-        "headless-compaction question resolved). Use --arm continue or --arm handoff.")
+    if arm == "compact":
+        # Phase 1 partway, then RESUME the same session to completion — Claude Code
+        # compacts context as it nears the window. (Headless compaction behaviour is
+        # the open question the 1-run smoke test settles; the path is wired here.)
+        r1 = _run_claude(prompt, work, model, budget_usd, max_turns=phase1_turns)
+        sid1 = r1.get("session_id")
+        peak = _input_side_tokens(sid1, work) if sid1 else None
+        r2 = _run_claude("Continue until the task is complete.", work, model, budget_usd,
+                         resume_sid=sid1) if sid1 else {}
+        sid2 = r2.get("session_id") or sid1
+        m = _measure(sid2, work) if sid2 else {"total_tokens": 0, "est_cost_usd": 0}
+        return {**m, "wall_clock_s": None,
+                "steps": (r1.get("num_turns") or 0) + (r2.get("num_turns") or 0),
+                "reset_fired": 1, "peak_input_tokens": peak,
+                "crossed_threshold": int(bool(peak and peak >= threshold)),
+                "notes": f"live:compact (phase1={phase1_turns} turns)"}
+
+    raise NotImplementedError(f"unknown arm: {arm}")
 
 
 def record(db_path: str, row: dict) -> None:
@@ -169,7 +215,7 @@ def record(db_path: str, row: dict) -> None:
     conn.executescript(RESULTS_SCHEMA)
     cols = ("task_id", "arm", "rep", "model", "effort", "completed", "total_tokens",
             "est_cost_usd", "wall_clock_s", "steps", "tool_errors", "reset_fired",
-            "notes", "created_at")
+            "peak_input_tokens", "crossed_threshold", "notes", "created_at")
     conn.execute(f"INSERT INTO run({','.join(cols)}) VALUES({','.join('?'*len(cols))})",
                  tuple(row.get(c) for c in cols))
     conn.commit(); conn.close()

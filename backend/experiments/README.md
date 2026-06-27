@@ -42,7 +42,16 @@ All arms: Sonnet, medium effort, pinned identically. K reps each, interleaved.
 
 ## Status
 
-Scaffold + fixture format + recorder are here. The **live agent runner** (driving
-Sonnet headless to completion and applying the intervention at the reset point) is
-the integration seam marked `drive_agent()` in `runner.py` — wiring it to the
-Claude Agent SDK / headless `claude` is the next build step.
+Scaffold + fixture format + recorder are here, plus (ROADMAP 5A groundwork):
+- **`debug-hugelib`** — a fixture engineered to RELIABLY bloat past 100k via forced
+  large reads (16 modules, each with a big reference block; ~74k tokens of seed to
+  read). `runner.py tasks/debug-hugelib --check-fixture` validates the plumbing.
+- **All three arms wired** in `drive_agent()` — continue / handoff / **compact**
+  (compact was previously deferred). `--mock` validates the full pipeline with no spend.
+- **Token-threshold awareness** — handoff/compact record `peak_input_tokens` +
+  `crossed_threshold` (input-side tokens reached before the reset), so a run that
+  didn't actually bloat is flagged, not silently wasted.
+
+**Remaining (gated on token budget):** one live `--arm continue` *confirm-pilot* on
+`debug-hugelib` to verify it crosses 100k, then the full matrix (continue/compact/
+handoff × K reps). Hard per-run budget cap via `--budget-usd`.

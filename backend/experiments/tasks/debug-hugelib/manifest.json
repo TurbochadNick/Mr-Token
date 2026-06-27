@@ -1,0 +1,14 @@
+{
+  "id": "debug-hugelib",
+  "type": "debug-failing-suite",
+  "description": "Fix bugs spread across 16 modules until the suite passes. Each fix needs the module's BEHAVIOR REFERENCE, forcing reads that bloat context past 100k.",
+  "prompt_file": "TASK.md",
+  "oracle": "oracle.sh",
+  "seed_dir": "seed",
+  "immutable_files": ["test_hugelib.py"],
+  "reset_threshold_tokens": 100000,
+  "handoff_phase1_turns": 16,
+  "agent": {"model": "claude-sonnet-4-6", "effort": "medium", "temperature": 0},
+  "max_steps": 120,
+  "note": "Engineered for reliable bloat via forced large reads (16 modules, each with a large reference block). Confirm it crosses 100k with one continue pilot before the full matrix."
+}

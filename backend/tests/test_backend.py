@@ -560,6 +560,32 @@ class BackendTest(unittest.TestCase):
             finally:
                 offmod.central_default = orig
 
+    def test_experiment_runner_groundwork(self):
+        # ROADMAP 5A.1–5A.3 groundwork: the hugelib fixture's oracle plumbing works
+        # (no API), and the runner's mock arms record reset + threshold fields.
+        import importlib.util, io, contextlib, mrtoken
+        backend = os.path.dirname(os.path.dirname(mrtoken.__file__))
+        exp = os.path.join(backend, "experiments")
+        spec = importlib.util.spec_from_file_location("exp_runner", os.path.join(exp, "runner.py"))
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        task = os.path.join(exp, "tasks", "debug-hugelib")
+        manifest = runner.load_manifest(task)
+        self.assertEqual(manifest["reset_threshold_tokens"], 100_000)
+
+        cont = runner.drive_agent(task, manifest, "/tmp/unused", "continue", mock=True)
+        self.assertEqual(cont["reset_fired"], 0)
+        for arm in ("handoff", "compact"):  # both wired now (compact was deferred)
+            m = runner.drive_agent(task, manifest, "/tmp/unused", arm, mock=True)
+            self.assertEqual(m["reset_fired"], 1)
+            self.assertEqual(m["crossed_threshold"], 1)
+            self.assertGreater(m["total_tokens"], 0)
+
+        # fixture plumbing (no API): oracle fails on the buggy seed + immutability guard
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = runner.check_fixture(task)
+        self.assertEqual(rc, 0)
+
     def test_manual_skill_installs_to_both_agents(self):
         # ROADMAP 6.3: the context-efficiency manual is a bundled skill, installed to
         # BOTH ~/.claude/skills and ~/.codex/skills (when Codex is present).
