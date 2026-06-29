@@ -52,5 +52,4 @@ correlating a bug report or a beta log to a specific version.
 3. Push. Tell testers to run `./update.sh`.
 
 Versioning is plain semver-ish: bump the minor for new behavior testers should
-notice, the patch for fixes. We are at `0.2.0` (first version with the live
-re_read signal, the handoff fix, `export --redact`, and global skills).
+notice, the patch for fixes. The current beta build is `0.5.5`.

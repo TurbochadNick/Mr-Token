@@ -1,7 +1,7 @@
 # Mr Token — Roadmap (loop-able task plan)
 
 *Living plan. Ordered so each task is small, self-contained, and verifiable — built to be
-worked one-at-a-time, including via Claude Code's `/loop`. Last updated 2026-06-23.*
+worked one-at-a-time, including via Claude Code's `/loop`. Last updated 2026-06-29.*
 
 Purpose recap (see `backend/docs/BRIEF.md` for the full version): a **local-first
 observability tool for AI coding agents** that catches the *dynamic* waste that actually
@@ -29,7 +29,7 @@ Per iteration, the agent should:
 2. State the root cause / approach in one paragraph before editing (per repo working rules).
 3. Implement it, staying in scope — one task per iteration, no drive-by refactors.
 4. Run the task's **Acceptance** check; the backend suite must stay green:
-   `cd backend && python3 -m unittest tests.test_backend`
+   `./scripts/test-backend.sh`
 5. Flip the box to `- [x]`, add a one-line `→ done:` note with the commit hash.
 6. Commit on a branch (never commit straight to `main`); end the message with the repo's
    `Co-Authored-By` trailer. Open/My PRs use the `zoozorocks01` gh account (private repo).
@@ -298,8 +298,12 @@ evidence, per-tool ⚑ decision) and the **Codex live-pressure tracker** (backlo
 - [x] **`session_detail` view + `export --detail <session>`** — per-model-call timeline (Nick-requested),
   schema `mrtoken.session_detail.v1`. *(v0.4.5)*
 - [x] **Internal feedback & observability** — `explain` / `feedback` / golden regression. *(v0.4.6, ROADMAP 5D)*
-- [x] **Codex live integration** — the Stop hook is now agent-aware: `~/.codex/hooks.json` auto-ingests each
-  Codex session on end (`source='codex'`) with a Codex HUD. Confirmed live (a real session captured). *(v0.4.7)*
+- [x] **Codex live integration support** — the shared Stop hook is agent-aware and can ingest a Codex
+  rollout (`source='codex'`) with a Codex HUD when invoked with the right payload. The HUD now surfaces
+  context %, compact fresh tokens, cache ratio, estimated cost when priced, model, profile, and short
+  recommendation labels. `init` now installs
+  the Stop hook into `~/.codex/hooks.json` when Codex is present, and `uninstall` removes only MR Token's
+  Codex hook/skills while preserving user hooks. *(v0.4.7 support; installer gap closed 2026-06-29)*
 - [x] **Central Codex DB** — Codex sessions sprawl across dirs, so per-project DBs scattered them. Now they
   aggregate in one central `~/.mrtoken/data/codex.db`; `--codex` shortcut on fleet/report/explain/export/
   validate/roi/why; `ingest --backfill` routes Codex there. fleet now counts Codex sessions. Backfilled 122
@@ -307,7 +311,7 @@ evidence, per-tool ⚑ decision) and the **Codex live-pressure tracker** (backlo
 
 ## Backlog / not yet scheduled
 - [x] **Codex live-pressure tracker (proc engine)** — done (v0.5.2, commit `fd1d152`): `codex_ctx_pct()`
-  from the rollout + shared `decide()` core; the proc engine now fires for Codex via its Stop hook.
+  from the rollout + shared `decide()` core; live use is wired through the Codex Stop hook installer.
 - **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
   same project shortly after a `fresh_handoff` fired, so the acted-vs-ignored split is real
   (current B is degenerate because the rule only fires on already-deep sessions). Surfaced by 2.1.

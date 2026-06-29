@@ -42,10 +42,24 @@ def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-def codex_ctx_pct(path: str) -> int | None:
-    """Live context % for a Codex rollout (ROADMAP 6.4 / Codex live-pressure tracker):
-    the last token_count carries the turn's input-side tokens + the model's window."""
+def _int_or_none(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def codex_usage_snapshot(path: str) -> dict:
+    """Best-effort live usage snapshot from a Codex rollout.
+
+    Codex's latest token_count event has the current input-side context tokens
+    and, when available, the model context window. Keep this separate from DB
+    ingestion so the Stop hook can render HUD-only fields without changing the
+    shared schema.
+    """
     last = None
+    model = None
+    window = None
     try:
         with open(path, encoding="utf-8") as fh:
             for line in fh:
@@ -56,17 +70,45 @@ def codex_ctx_pct(path: str) -> int | None:
                     d = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if d.get("type") == "event_msg" and (d.get("payload") or {}).get("type") == "token_count":
-                    last = d["payload"].get("info") or {}
+                payload = d.get("payload") or {}
+                if d.get("type") == "turn_context":
+                    model = payload.get("model") or model
+                elif d.get("type") == "event_msg" and payload.get("type") == "token_count":
+                    info = payload.get("info") or {}
+                    last = info
+                    window = _int_or_none(info.get("model_context_window")) or window
     except OSError:
-        return None
+        return {}
     if not last:
-        return None
-    win = last.get("model_context_window")
-    inp = (last.get("last_token_usage") or {}).get("input_tokens")  # includes cached = current ctx
-    if not (win and inp):
-        return None
-    return min(99, int(inp / win * 100))
+        return {"model": model}
+
+    usage = last.get("last_token_usage") or {}
+    input_tokens = _int_or_none(usage.get("input_tokens")) or 0  # includes cached = current ctx
+    output_tokens = _int_or_none(usage.get("output_tokens")) or 0
+    cached_tokens = _int_or_none(usage.get("cached_input_tokens")) or 0
+    total_tokens = _int_or_none(usage.get("total_tokens"))
+    if total_tokens is None:
+        total_tokens = input_tokens + output_tokens
+
+    ctx_pct = None
+    if window and input_tokens:
+        ctx_pct = min(99, int(input_tokens / window * 100))
+
+    return {
+        "model": model,
+        "ctx_pct": ctx_pct,
+        "context_tokens": input_tokens,
+        "context_window": window,
+        "cached_input_tokens": cached_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def codex_ctx_pct(path: str) -> int | None:
+    """Live context % for a Codex rollout (ROADMAP 6.4 / Codex live-pressure tracker):
+    the last token_count carries the turn's input-side tokens + the model's window."""
+    return codex_usage_snapshot(path).get("ctx_pct")
 
 
 def ingest_codex_file(conn, path: str, prices=None) -> dict:

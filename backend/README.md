@@ -105,11 +105,17 @@ existing transcript and exits, useful for a quick "where am I" check or testing.
 
 `mrtoken-transcript init` is the zero-config path for a pilot evaluator: it
 resolves the project root, creates `.token-tithe/token-tithe.db` (the same DB the
-TS CLI uses), installs a **project-local** Stop hook into
-`.claude/settings.local.json`, and installs the bundled **skills** into
-`.claude/skills/` (currently `/mr-handoff`). It backs up any existing settings,
-preserves all existing settings and hooks (it adds ours alongside the TS hook),
-and is idempotent. `--print` shows a dry run.
+TS CLI uses), installs global Claude Code hooks and statusLine settings into
+`~/.claude/settings.json`, and installs the bundled skills into
+`~/.claude/skills/`. If `~/.codex/` exists, it also installs the skills into
+`~/.codex/skills/`.
+
+The hooks are global so they fire for sessions started from any folder; the hook
+handler resolves the right project-local DB from the session payload. `init`
+backs up settings before editing, preserves unrelated settings and hooks, and is
+idempotent. `--print` shows a dry run. When `~/.codex/` exists, `init` also
+writes the Codex Stop hook to `~/.codex/hooks.json` so Codex rollouts auto-ingest
+into the central Codex DB.
 
 ### The `/mr-handoff` skill — the wedge, reachable in-session
 

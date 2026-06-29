@@ -2,73 +2,87 @@
 
 ## What Mr Token Does
 
-Mr Token is a local fuel-efficiency diagnostic tool for AI coding-agent usage. The backend package is still named `token-tithe`.
+Mr Token is a local-first fuel-efficiency diagnostic tool for AI coding-agent
+usage. The supported pilot surface is the Python backend command
+`mrtoken-transcript`.
 
-It installs Claude Code hooks, records local hook events, estimates token burn, diagnoses waste patterns, and generates safe patch proposals that may reduce future token use.
+It installs Claude Code hooks, reads local transcripts, records metadata-only
+token/cache/tool data, diagnoses dynamic waste patterns, and surfaces the next
+action through a terminal HUD plus `/mr-*` skills.
 
 ## What It Does Not Do
 
 - No cloud backend
-- No login or billing
+- No login or billing for the Python backend beta
 - No telemetry
 - No source upload by default
 - No automatic patch application
-- No arbitrary shell command execution from the UI
-- No Codex, OpenClaw, or Claude desktop support in this pilot
+- No arbitrary shell command execution from the optional UI
+- No hosted dashboard
+- No hosted Codex service or cloud relay
 
 ## Pilot Scope
 
-The pilot is scoped to local Claude Code CLI projects. A technical evaluator should install Mr Token in a test repository, initialize hooks, use Claude Code normally, then inspect the local dashboard and Doctor output.
+The pilot is scoped to local Claude Code usage. A technical evaluator should
+install Mr Token in a test repository, use Claude Code normally for several
+days, then inspect the HUD, reports, and redacted export.
 
-## Claude Code CLI Requirement
+Claude Code terminal sessions show the full status line and turn-boundary
+nudges. Claude Code desktop sessions can still be ingested by the global hook,
+but the desktop app may not render the ambient terminal HUD; use `/mr-status`,
+`/mr-why`, or `mrtoken-transcript status` on demand.
 
-This pilot requires Claude Code CLI hook support. Mr Token writes hooks into project-local `.claude/settings.local.json`.
+When `~/.codex/` exists, `init` installs the MR Token skills and Stop hook for
+Codex as well. Codex sessions aggregate into the central Codex DB and can be
+inspected with `mrtoken-transcript ... --codex`.
 
 ## Local-Only Data Model
 
-Data is written inside the current project:
+Data is written locally:
 
 - `.token-tithe/token-tithe.db`
-- `.token-tithe/events.jsonl`
-- `.token-tithe/patches/`
-- `.claude/settings.local.json`
+- `~/.mrtoken/data/`
+- `~/.claude/settings.json`
+- `~/.claude/skills/`
 
-The local web UI binds to `127.0.0.1` and reads the SQLite database through the local CLI server.
+The project DB stores token counts, cache stats, hashes, sizes, timings, tool
+names, recommendations, and feedback. It does not store raw prompts, source
+files, full transcripts, or secrets by default.
 
-## First Audit
+## First Run
 
 ```bash
-git clone <repo>
-cd <repo>
-pnpm install
-pnpm build
-npm link
-token-tithe ui
+git clone <repo> mr_token
+cd mr_token
+./install.sh
+mrtoken-transcript status
 ```
 
-In the UI:
+Use Claude Code normally. When you want a report:
 
-1. Open Setup.
-2. Click **Initialize Project**.
-3. Use Claude Code normally.
-4. Click **Refresh Audit**.
-5. Open Doctor and click **Run Doctor**.
+```bash
+mrtoken-transcript why
+mrtoken-transcript savings
+mrtoken-transcript export --redact > mrtoken-beta.json
+```
 
 ## Success Criteria
 
 A successful pilot shows:
 
-- Hooks install without destroying existing `.claude/settings.local.json`.
-- Events are captured locally.
-- Dashboard shows token burn, events, and diagnosis findings.
-- Doctor generates patch proposals under `.token-tithe/patches/`.
-- Patches are never applied automatically.
+- Hooks install without destroying existing Claude Code settings.
+- Sessions are ingested locally.
+- HUD/status reports show actual token/cache/cost data.
+- Recommendations identify real dynamic waste when it occurs.
+- `/mr-status`, `/mr-why`, and `/mr-handoff` are understandable and useful.
+- `export --redact` produces a shareable metadata-only pilot file.
 - Uninstall steps are clear and reversible.
 
 ## Known Alpha Limitations
 
-- Only Claude Code CLI is supported.
-- Hook payloads may contain file paths, commands, and snippets of tool output.
-- Token estimation uses deterministic heuristics, not provider billing records.
+- The Python backend is the supported beta path; the TS dashboard is optional.
+- Desktop apps may run hooks without rendering the terminal HUD.
+- Codex support is newer than the Claude Code path and should be treated as
+  secondary in the pilot.
+- API-equivalent cost is an estimate, not a subscription bill.
 - Diagnosis is rule-based and may produce false positives.
-- The UI has no authentication because it binds to localhost only.

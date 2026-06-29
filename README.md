@@ -1,183 +1,112 @@
-# token-tithe
+# Mr Token
 
-`token-tithe` is a local-first TypeScript CLI for Claude Code users. It installs Claude Code hooks, collects local session/tool/prompt events, stores them in SQLite, and prints a terminal audit report.
+Mr Token is a local-first token-efficiency tool for coding-agent workflows. It
+shows where long sessions are burning context, flags dynamic waste such as huge
+tool outputs and retry loops, and gives the agent or user the next action to take
+now.
 
-No backend. No auth. No web dashboard.
-The local web UI is called Mr Token; the CLI/package remains `token-tithe`.
+## Current Beta Surface
 
-## Requirements
+For beta testers, the supported surface is the Python backend/HUD:
+`mrtoken-transcript`.
 
-- Node.js 22 LTS recommended (builds and tested on 22 through 26; `better-sqlite3`
-  v12 ships prebuilt binaries across this range, so no native compile is needed).
-- pnpm
+That path:
 
-## Install
+- installs Claude Code hooks, `/mr-*` skills, and a terminal status line;
+- reads Claude Code transcripts after turns/sessions;
+- stores metadata-only token, cache, tool, and recommendation data locally;
+- reports accurate transcript-derived token counts, cache stats, API-equivalent
+  cost estimates, and deterministic recommendations;
+- provides `status`, `why`, `handoff`, `savings`, `export`, `feedback`, and MCP
+  toolbox commands.
 
-```bash
-pnpm install
-pnpm build
-pnpm link --global
-```
-
-For local development:
-
-```bash
-pnpm dev -- --help
-```
-
-## Commands
+Install it with:
 
 ```bash
-npx token-tithe init
-npx token-tithe audit
-npx token-tithe doctor
-npx token-tithe ui
+./install.sh
 ```
 
-That is the local MVP boundary. `watch` exists only as the internal Claude Code hook handler installed by `init`.
+Then use Claude Code normally. In a terminal session, the HUD/status line is the
+main experience. On demand:
 
-## What `init` Does
+```bash
+mrtoken-transcript status
+mrtoken-transcript why
+mrtoken-transcript handoff
+mrtoken-transcript savings
+mrtoken-transcript export --redact > mrtoken-beta.json
+```
 
-`token-tithe init` locates the current project root, creates:
+See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the tester flow.
+
+## Other Surfaces
+
+The repo also contains a TypeScript CLI/local UI under `src/` and `web/`. That
+surface is useful for dashboard work and can read the backend's accurate
+`session_summary` view, but it is not the primary beta install path right now.
+It currently includes license/login plumbing for the `mrtoken`/`token-tithe`
+commands, so do not describe it as "no auth" in tester material.
+
+Codex support exists in the backend adapter, central Codex DB commands, MCP
+toolbox registration, and live Stop-hook ingestion. When `~/.codex/` exists,
+`mrtoken-transcript init` installs MR Token skills and the Stop hook into
+`~/.codex/hooks.json`. The Codex Stop hook prints a compact usage line with
+context percentage, fresh tokens, cache ratio, estimated cost when priced, and
+profile. Recommendation nudges are short labels; full explanations live in
+`/mr-why` and `mrtoken-transcript why`.
+
+## What It Stores
+
+The default Claude Code beta path writes:
 
 ```text
-.token-tithe/
-.token-tithe/events.jsonl
-.token-tithe/token-tithe.db
+<project>/.token-tithe/token-tithe.db
+~/.mrtoken/data/
+~/.claude/settings.json
+~/.claude/skills/
 ```
 
-It safely reads or creates project-local Claude Code settings at:
+The project DB stores metadata such as token counts, cache stats, hashes, sizes,
+tool names, timings, cost estimates, recommendations, and feedback. It does not
+store raw prompts, source files, full transcripts, or secrets by default.
+
+Codex sessions aggregate into a central DB:
 
 ```text
-.claude/settings.local.json
+~/.mrtoken/data/codex.db
 ```
 
-Before editing an existing settings file, it writes a timestamped backup next to it.
+## Privacy And Network
 
-Hooks are installed for `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `PreCompact`, and `PostCompact`. Existing settings and hooks are preserved. Each hook pipes Claude Code event JSON into the local handler with the event name:
+The always-on backend is local and deterministic. It makes no network calls by
+default and no LLM call in the core detection loop.
 
-```bash
-token-tithe watch --stdin --hook-event 'UserPromptSubmit' --db '/project/.token-tithe/token-tithe.db' --events '/project/.token-tithe/events.jsonl'
-```
+Optional features can add network behavior:
 
-## Local Data
-
-By default, SQLite data is stored at:
-
-```text
-.token-tithe/token-tithe.db
-```
-
-Raw hook events are also appended to:
-
-```text
-.token-tithe/events.jsonl
-```
-
-Each JSONL row is normalized with timestamp, project path, session id, event type, tool name, file path, command, prompt/output/result lengths, estimated tokens, and the raw Claude Code hook event.
-
-## AI Privacy
-
-No external AI call is made by default.
-
-Configure optional AI review in your project `package.json`:
-
-```json
-{
-  "tokenTithe": {
-    "ai": {
-      "enabled": false,
-      "model": "claude-haiku-4-5",
-      "redaction": true
-    }
-  }
-}
-```
-
-When `tokenTithe.ai.enabled` is `true`, `token-tithe audit` uses `ANTHROPIC_API_KEY` from the environment. It sends only a redacted structured audit summary by default. It must not send raw source files or full transcripts unless full-context mode is explicitly enabled.
-
-## Mr Token Local UI
-
-Start the local control panel:
-
-```bash
-token-tithe ui
-```
-
-Options:
-
-```bash
-token-tithe ui --port 4317
-token-tithe ui --no-open
-```
-
-The UI binds to `127.0.0.1` only and serves `http://localhost:4317`. It reads the existing `.token-tithe/token-tithe.db` through the local CLI server. There is no auth, telemetry, source upload, cloud backend, or hosted deployment.
-
-Workflow:
-
-1. Open a project folder in terminal.
-2. Run `token-tithe ui`.
-3. Click **Initialize Project** if hooks are not installed.
-4. Use Claude Code normally.
-5. Click **Refresh Audit** or run `token-tithe audit`.
-6. Click **Run Doctor** to generate safe patches.
-
-Control panel pages:
-
-- Dashboard: token summary, estimated savings, top finding, findings table, report export.
-- Events: filter by event type and tool name.
-- Doctor: generate a safe patch bundle and view `SUMMARY.md` / `patch.diff`.
-- Setup: project root, database status, events JSONL status, Claude settings status, hook status.
-
-Local API endpoints:
-
-```text
-GET /api/summary
-GET /api/findings
-GET /api/events
-GET /api/doctor/latest
-GET /api/setup
-GET /api/export/report.md
-POST /api/init
-POST /api/audit/run
-POST /api/doctor/run
-```
-
-The UI does not include patch application or arbitrary shell command execution.
-
-## Doctor Patches
-
-`token-tithe doctor` generates safe patch proposals only. It does not apply them.
-
-Patch bundles are written to:
-
-```text
-.token-tithe/patches/YYYYMMDD-HHMMSS/
-```
-
-Each bundle includes proposed files, `patch.diff`, and `SUMMARY.md` for manual review.
-
-## Not In Scope
-
-- Browser extension
-- ChatGPT integration
-- SaaS dashboard
-- Hosted deployment
-- Team billing
-- Complex auth
-- Slack bot
-- AI prompt coach
-
-Override it with:
-
-```bash
-TOKEN_TITHE_DB=/path/to/token-tithe.db token-tithe audit
-```
+- the TypeScript `mrtoken`/`token-tithe` command verifies license keys for
+  license-gated commands;
+- the TypeScript audit AI review can call Anthropic only when explicitly enabled
+  in config and provided `ANTHROPIC_API_KEY`;
+- external MCP/token-saver modules are opt-in and must pass a separate trust and
+  privacy review before being recommended.
 
 ## Development
 
+TypeScript:
+
 ```bash
+pnpm install
 pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+Python backend:
+
+```bash
+./scripts/test-backend.sh
+```
+
+The script selects Python 3.11+ and runs the suite with an isolated temporary
+`HOME`, so central `~/.mrtoken` data is not touched. Set `PYTHON=/path/to/python`
+or `MRTOKEN_TEST_HOME=/path/to/home` to override.

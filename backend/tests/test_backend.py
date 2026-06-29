@@ -4,8 +4,16 @@ import sqlite3
 import tempfile
 import unittest
 
-from mrtoken.ingest import connect, default_db_path, ingest_file, load_prices
+from mrtoken.ingest import connect as _connect, default_db_path, ingest_file, load_prices
 from mrtoken.rules import rule_huge_tool_output, rule_retry_loop
+
+_OPEN_TEST_CONNS = []
+
+
+def connect(*args, **kwargs):
+    conn = _connect(*args, **kwargs)
+    _OPEN_TEST_CONNS.append(conn)
+    return conn
 
 
 def write_jsonl(path, rows):
@@ -19,15 +27,26 @@ class BackendTest(unittest.TestCase):
         # window-inference tests must be deterministic regardless of any machine
         # override (MRTOKEN_CONTEXT_MAX env or ~/.mrtoken/config.json)
         import mrtoken.statusline as _sl
+        import mrtoken.ingest as _ing
         self._saved_env = os.environ.pop("MRTOKEN_CONTEXT_MAX", None)
         self._saved_cfg = _sl._config_context_max
+        self._saved_connect = _ing.connect
         _sl._config_context_max = lambda: None
+        _ing.connect = connect
 
     def tearDown(self):
         import mrtoken.statusline as _sl
+        import mrtoken.ingest as _ing
         _sl._config_context_max = self._saved_cfg
+        _ing.connect = self._saved_connect
         if self._saved_env is not None:
             os.environ["MRTOKEN_CONTEXT_MAX"] = self._saved_env
+        while _OPEN_TEST_CONNS:
+            conn = _OPEN_TEST_CONNS.pop()
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
 
     def test_default_db_path_is_project_local(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -309,7 +328,7 @@ class BackendTest(unittest.TestCase):
         # ROADMAP 3.5: a Codex rollout ingests into the same trace/model_call/tool_call
         # schema (source='codex') and the rule engine runs; Claude path unaffected.
         from mrtoken.ingest_codex import ingest_codex_file, _is_codex_transcript
-        from mrtoken.ingest import connect, load_prices
+        from mrtoken.ingest import load_prices
         from mrtoken.rules import analyse
         with tempfile.TemporaryDirectory() as tmp:
             codex = os.path.join(tmp, "rollout.jsonl")
@@ -373,11 +392,11 @@ class BackendTest(unittest.TestCase):
                 {"timestamp": "2026-06-24T00:00:02Z", "type": "event_msg",
                  "payload": {"type": "token_count", "info": {"last_token_usage": {
                      "input_tokens": 5000, "cached_input_tokens": 4000, "output_tokens": 200,
-                     "total_tokens": 5200}}}},
+                     "total_tokens": 5200}, "model_context_window": 10000}}},
                 {"timestamp": "2026-06-24T00:00:03Z", "type": "event_msg",
                  "payload": {"type": "token_count", "info": {"last_token_usage": {
                      "input_tokens": 6000, "cached_input_tokens": 5000, "output_tokens": 150,
-                     "total_tokens": 6150}}}},
+                     "total_tokens": 6150}, "model_context_window": 10000}}},
             ])
             db = os.path.join(tmp, "codex.db")
             on_stop.PROJECTS = os.path.join(tmp, "no-claude")  # no Claude transcript match
@@ -387,8 +406,9 @@ class BackendTest(unittest.TestCase):
             orig_stdin, saved = _sys.stdin, os.environ.get("MRTOKEN_DB")
             os.environ["MRTOKEN_DB"] = db
             _sys.stdin = io.StringIO(json.dumps({"session_id": sid, "cwd": "/proj"}))
+            out = io.StringIO()
             try:
-                with contextlib.redirect_stdout(io.StringIO()):
+                with contextlib.redirect_stdout(out):
                     try:
                         on_stop.main()
                     except SystemExit:
@@ -399,10 +419,41 @@ class BackendTest(unittest.TestCase):
                     os.environ["MRTOKEN_DB"] = saved
                 else:
                     os.environ.pop("MRTOKEN_DB", None)
-            src = sqlite3.connect(db).execute(
-                "SELECT source FROM trace WHERE session_id=?", (sid,)).fetchone()
+            raw = sqlite3.connect(db)
+            try:
+                src = raw.execute(
+                    "SELECT source FROM trace WHERE session_id=?", (sid,)).fetchone()
+            finally:
+                raw.close()
             self.assertIsNotNone(src)
             self.assertEqual(src[0], "codex")  # routed to the Codex adapter
+            msg = json.loads(out.getvalue())["systemMessage"]
+            self.assertIn("codex gpt-5.5", msg)
+            self.assertIn("ctx 60%", msg)
+            self.assertIn("~2,350 tok", msg)
+            self.assertIn("cache 82%", msg)
+
+    def test_codex_low_context_handoff_nudge_is_quiet(self):
+        # Screenshot regression: a low-current-context Codex session can still be
+        # long/expensive, but the hook should not print the old urgent "free up
+        # your context window" handoff wall of text.
+        import importlib.util, mrtoken
+        backend = os.path.dirname(os.path.dirname(mrtoken.__file__))
+        spec = importlib.util.spec_from_file_location(
+            "on_stop_compact", os.path.join(backend, "hooks", "on_stop.py"))
+        on_stop = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(on_stop)
+
+        self.assertEqual(on_stop._fmt_token_count(681_077), "681k")
+        line = on_stop._compact_rec_line(
+            "fresh_handoff",
+            "This session has grown heavy. A fresh session with a compact handoff "
+            "frees up your context window.",
+            ctx_pct=28,
+        )
+        self.assertEqual(line, "  ·  long session: /mr-handoff at phase boundary")
+        self.assertNotIn("context window", line)
+        self.assertNotIn("grown heavy", line)
 
     def test_stop_hook_ingests_from_arbitrary_cwd(self):
         # ROADMAP 4.1 (regression guard): the now-global Stop hook resolves the
@@ -453,14 +504,18 @@ class BackendTest(unittest.TestCase):
                 if saved_env is not None:
                     os.environ["MRTOKEN_DB"] = saved_env
             self.assertEqual(seen.get("cwd"), "/some/arbitrary/folder")  # used the payload cwd
-            n = sqlite3.connect(db).execute(
-                "SELECT COUNT(*) FROM trace WHERE session_id=?", (sid,)).fetchone()[0]
+            raw = sqlite3.connect(db)
+            try:
+                n = raw.execute(
+                    "SELECT COUNT(*) FROM trace WHERE session_id=?", (sid,)).fetchone()[0]
+            finally:
+                raw.close()
             self.assertEqual(n, 1)  # and a trace landed in the cwd-resolved DB
 
     def test_explain_and_feedback_loop(self):
         # ROADMAP 5D.1 + 5D.2 — explain a fired signal's evidence; capture a verdict
         # and summarise labelled precision.
-        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.ingest import ingest_file, load_prices
         from mrtoken.rules import analyse
         from mrtoken.feedback import (explain_session, record_feedback,
                                       feedback_summary)
@@ -520,7 +575,9 @@ class BackendTest(unittest.TestCase):
             self.assertIn("apricot", rq["summary"])
             self.assertNotIn("banana", rq["summary"])
             # path mode reads a file
-            p = os.path.join(tmp, "f.txt"); open(p, "w").write("a\nb\nc\n")
+            p = os.path.join(tmp, "f.txt")
+            with open(p, "w") as handle:
+                handle.write("a\nb\nc\n")
             rp = offload_content(path=p, stash_dir=tmp)
             self.assertEqual(rp["lines"], 3)
 
@@ -588,19 +645,37 @@ class BackendTest(unittest.TestCase):
 
     def test_manual_skill_installs_to_both_agents(self):
         # ROADMAP 6.3: the context-efficiency manual is a bundled skill, installed to
-        # BOTH ~/.claude/skills and ~/.codex/skills (when Codex is present).
-        from mrtoken.install import init, SKILLS_SRC
+        # BOTH ~/.claude/skills and ~/.codex/skills (when Codex is present). Codex
+        # also gets the shared Stop hook so live rollouts can auto-ingest.
+        from mrtoken.install import init, SKILLS_SRC, _load_settings, _already_installed
         self.assertTrue(os.path.isfile(os.path.join(SKILLS_SRC, "mr-context", "SKILL.md")))
         with tempfile.TemporaryDirectory() as tmp:
-            open(os.path.join(tmp, "package.json"), "w").write("{}")
+            with open(os.path.join(tmp, "package.json"), "w") as handle:
+                handle.write("{}")
             gpath = os.path.join(tmp, "global-settings.json")
             os.makedirs(os.path.join(tmp, ".codex"))            # Codex present
             codex_skills = os.path.join(tmp, ".codex", "skills")
+            codex_hooks = os.path.join(tmp, ".codex", "hooks.json")
+            with open(codex_hooks, "w") as h:
+                json.dump({"hooks": {"Stop": [{"hooks": [
+                    {"type": "command", "command": "echo existing-codex"}]}]}}, h)
             init(project_root=tmp, global_settings_path=gpath,
-                 codex_skills_root=codex_skills, emit=lambda *_: None)
+                 codex_skills_root=codex_skills, codex_hooks_path=codex_hooks,
+                 emit=lambda *_: None)
             claude_skills = os.path.join(tmp, "skills")          # next to global-settings.json
             self.assertTrue(os.path.isfile(os.path.join(claude_skills, "mr-context", "SKILL.md")))
             self.assertTrue(os.path.isfile(os.path.join(codex_skills, "mr-context", "SKILL.md")))
+            ch = _load_settings(codex_hooks)
+            self.assertTrue(_already_installed(ch))
+            codex_cmds = [hh["command"] for e in ch["hooks"]["Stop"] for hh in e["hooks"]]
+            self.assertIn("echo existing-codex", codex_cmds)
+
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_skills_root=codex_skills, codex_hooks_path=codex_hooks,
+                 emit=lambda *_: None)
+            ch2 = _load_settings(codex_hooks)
+            codex_cmds2 = [hh["command"] for e in ch2["hooks"]["Stop"] for hh in e["hooks"]]
+            self.assertEqual(len(codex_cmds2), len(codex_cmds))
 
     def test_intervention_policy_autonomy_and_kill_switch(self):
         # ROADMAP 6.5: per-tool autonomy (off|tell|ask|do) + global kill switch; default warn-only.
@@ -729,7 +804,6 @@ class BackendTest(unittest.TestCase):
     def test_savings_realized_and_addressable(self):
         # ROADMAP 7.1: realized savings (logged tool actions) + addressable (rules found).
         import mrtoken.savings as savings
-        from mrtoken.ingest import connect
         with tempfile.TemporaryDirectory() as tmp:
             orig = savings.central_default
             savings.central_default = lambda: tmp
@@ -833,7 +907,7 @@ class BackendTest(unittest.TestCase):
     def test_golden_session_signals(self):
         # ROADMAP 5D.3 — golden regression: whole-session fixtures with their
         # EXPECTED fired-signal sets. Catches drift when a threshold changes.
-        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.ingest import ingest_file, load_prices
         from mrtoken.rules import analyse
 
         def a(sid, mid, ts, text="ok", usage=None, tool=None):
@@ -1035,14 +1109,23 @@ class BackendTest(unittest.TestCase):
                            "hooks": {"Stop": [{"matcher": "", "hooks": [
                                {"type": "command", "command": "echo keepme"}]}]}}, h)
             gpath = os.path.join(tmp, "global-settings.json")
+            os.makedirs(os.path.join(tmp, ".codex"))
+            codex_hooks = os.path.join(tmp, ".codex", "hooks.json")
+            with open(codex_hooks, "w") as h:
+                json.dump({"hooks": {"Stop": [{"hooks": [
+                    {"type": "command", "command": "echo keep-codex"}]}]}}, h)
+            codex_skills = os.path.join(tmp, ".codex", "skills")
             init(project_root=tmp, global_settings_path=gpath,
-                 codex_skills_root=os.path.join(tmp, "nocodex", "skills"), emit=lambda *_: None)
+                 codex_skills_root=codex_skills, codex_hooks_path=codex_hooks,
+                 emit=lambda *_: None)
             skills = os.path.join(os.path.dirname(gpath), "skills")
             self.assertTrue(_already_installed(_load_settings(gpath)))     # Stop hook is global now
             self.assertTrue(os.path.exists(os.path.join(skills, "mr-handoff", "SKILL.md")))
+            self.assertTrue(_already_installed(_load_settings(codex_hooks)))  # Codex hook installed
 
             uninstall(project_root=tmp, settings_path=settings_path,
-                      global_settings_path=gpath, emit=lambda *_: None)
+                      global_settings_path=gpath, codex_hooks_path=codex_hooks,
+                      emit=lambda *_: None)
             s, g = _load_settings(settings_path), _load_settings(gpath)
             self.assertFalse(_already_installed(g))                       # our global Stop hook gone
             cmds = [hh["command"] for e in s.get("hooks", {}).get("Stop", []) for hh in e["hooks"]]
@@ -1051,6 +1134,11 @@ class BackendTest(unittest.TestCase):
             self.assertNotIn("statusLine", g)                            # global HUD gone
             self.assertFalse(g.get("hooks", {}).get("UserPromptSubmit"))  # global hook gone
             self.assertFalse(os.path.exists(os.path.join(skills, "mr-handoff")))  # skill removed
+            ch = _load_settings(codex_hooks)
+            codex_cmds = [hh["command"] for e in ch.get("hooks", {}).get("Stop", []) for hh in e["hooks"]]
+            self.assertIn("echo keep-codex", codex_cmds)                  # user's Codex hook preserved
+            self.assertFalse(any("on_stop.py" in c for c in codex_cmds))  # our Codex hook removed
+            self.assertFalse(os.path.exists(os.path.join(codex_skills, "mr-context")))
 
     def test_init_warns_before_replacing_existing_statusline(self):
         from mrtoken.install import init, _load_settings
@@ -1173,7 +1261,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rule_fresh_handoff(conn, tid), [])
 
     def test_ingest_dedupes_usage_per_message_id_and_prices_opus(self):
-        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.ingest import ingest_file, load_prices
         with tempfile.TemporaryDirectory() as tmp:
             transcript = os.path.join(tmp, "s.jsonl")
             usage = {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 1000}
@@ -1208,7 +1296,7 @@ class BackendTest(unittest.TestCase):
         # The global Stop hook fires on every trivial desktop session. A
         # zero-model-call transcript must NOT be persisted; a sub-floor one (< 2
         # model calls) is kept but flagged low-activity and excluded from counts.
-        from mrtoken.ingest import connect, ingest_file, load_prices, MIN_ACTIVITY
+        from mrtoken.ingest import ingest_file, load_prices, MIN_ACTIVITY
         import io, contextlib
         from mrtoken.fleet import fleet_summary
         self.assertEqual(MIN_ACTIVITY["model_calls"], 2)  # Zach's floor
@@ -1330,7 +1418,7 @@ class BackendTest(unittest.TestCase):
     def test_corpus_aggregates_exports_and_handles_bad_files(self):
         # A real v1 export round-trips through corpus intake; a malformed file is
         # reported, not crashed.
-        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.ingest import ingest_file, load_prices
         from mrtoken.rules import analyse
         from mrtoken.export import export_report
         from mrtoken.corpus import summarize_exports, print_corpus_report
@@ -1388,7 +1476,7 @@ class BackendTest(unittest.TestCase):
     def test_roi_measure_projection_and_cohort(self):
         # fresh_handoff before/after (ROADMAP 2.1): a long, escalating session with
         # a fresh_handoff rec yields a non-negative projected saving and a cohort.
-        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.ingest import ingest_file, load_prices
         from mrtoken.roi import roi_measure, print_roi_measure
         import io, contextlib
         with tempfile.TemporaryDirectory() as tmp:
@@ -1418,7 +1506,6 @@ class BackendTest(unittest.TestCase):
 
     def test_fleet_counts_codex_sessions(self):
         # fleet must count Codex sessions (source='codex'), not just claude_code.
-        from mrtoken.ingest import connect
         from mrtoken.ingest_codex import ingest_codex_file
         from mrtoken.fleet import fleet_summary
         import io, contextlib, re
@@ -1450,7 +1537,7 @@ class BackendTest(unittest.TestCase):
     def test_backfill_sweeps_codex_dir(self):
         # Codex-dir backfill routes ~/.codex rollouts to the CENTRAL Codex DB
         # (--codex-db), NOT the per-project Claude --db.
-        from mrtoken.ingest import main as ingest_main, connect
+        from mrtoken.ingest import main as ingest_main
         import io, contextlib
         with tempfile.TemporaryDirectory() as tmp:
             claude_root = os.path.join(tmp, "claude"); os.makedirs(claude_root)  # empty Claude side
@@ -1478,14 +1565,16 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(summary["codex_sessions"], 1)
             self.assertEqual(summary["codex_db"], codex_db)
             # codex landed in the central Codex DB, not the Claude --db
-            self.assertEqual(connect(codex_db).execute(
+            cconn = connect(codex_db)
+            self.assertEqual(cconn.execute(
                 "SELECT source FROM trace WHERE session_id='cxbf'").fetchone()[0], "codex")
-            self.assertIsNone(connect(db).execute(
+            dconn = connect(db)
+            self.assertIsNone(dconn.execute(
                 "SELECT 1 FROM trace WHERE session_id='cxbf'").fetchone())
 
     def test_export_since_filter_and_session_detail(self):
         # ROADMAP backlog: --since (incremental refresh) + session_detail timeline.
-        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.ingest import ingest_file, load_prices
         from mrtoken.export import export_report, export_detail
         def sess(sid, ts0, ts1):
             return [
@@ -1519,7 +1608,7 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(det["calls"][0]["timestamp"], "2026-06-20T00:00:00Z")
 
     def test_ingest_extracts_title_and_export_redacts(self):
-        from mrtoken.ingest import connect, ingest_file, load_prices
+        from mrtoken.ingest import ingest_file, load_prices
         from mrtoken.rules import analyse
         from mrtoken.export import export_report
         with tempfile.TemporaryDirectory() as tmp:

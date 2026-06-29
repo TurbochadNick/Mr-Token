@@ -32,10 +32,12 @@ exists, fall back to **estimated** (events) otherwise.
 
 - **TypeScript:** `pnpm install && pnpm build`; tests `pnpm test` (Vitest).
   Entry point `src/cli.ts`; audit rules `src/audit/rules.ts`; UI `web/`.
-- **Python backend:** `pip install -e backend/`; tests
-  `cd backend && python3 -m unittest tests.test_backend`. Entry point
+- **Python backend:** `pip install -e backend/`; tests `./scripts/test-backend.sh`
+  from the repo root. The script selects Python 3.11+ and isolates `HOME` so
+  real `~/.mrtoken` data is not touched. Entry point
   `backend/mrtoken/cli.py`. Commands: `init`, `ingest`, `report`, `list`,
-  `subagents`, `fleet`, `export`, `validate`, `watch`, `handoff`, `why`, `roi`.
+  `subagents`, `fleet`, `export`, `validate`, `watch`, `handoff`, `why`, `roi`,
+  `status`, `savings`, `mcp`, `config`, `feedback`, `modules`.
 - **Skills:** `backend/skills/<name>/SKILL.md` are bundled Claude Code skills;
   `mrtoken-transcript init` installs them GLOBALLY into `~/.claude/skills/` (so
   `/mr-*` and the Stop-hook flywheel work in every project, like the hooks do).

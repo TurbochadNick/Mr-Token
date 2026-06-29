@@ -9,11 +9,16 @@ mrtoken-transcript uninstall
 This removes everything `init` added and **preserves all your other Claude Code
 settings**, backing up each settings file first:
 
-- the project-local **Stop** hook from `.claude/settings.local.json`
-- the **statusLine** bar and the **UserPromptSubmit** + **PreCompact** hooks from
+- any legacy project-local **Stop** hook from `.claude/settings.local.json`
+- the global **Stop**, **UserPromptSubmit**, and **PreCompact** hooks from
   `~/.claude/settings.json`
-- the `/mr-handoff`, `/mr-status`, `/mr-why` skills from `~/.claude/skills/`
-  (keep them with `--keep-skills`)
+- the global **statusLine** bar from `~/.claude/settings.json`
+- the `/mr-handoff`, `/mr-status`, `/mr-why`, and related MR Token skills from `~/.claude/skills/`
+- the Codex Stop hook from `~/.codex/hooks.json`, when present
+- the MR Token Codex skills from `~/.codex/skills/`, when present
+
+Use `--keep-skills` to remove hooks/statusLine but leave the Claude/Codex skills
+installed.
 
 Run it once per project you ran `init` in (the global bits are only removed once).
 
@@ -22,10 +27,16 @@ nothing at all.
 
 ## Remove the local data
 
-The metadata ledger is just a folder; delete it per project:
+The metadata ledger is local. Delete it per project:
 
 ```bash
 rm -rf .token-tithe/
+```
+
+Central MR Token state, savings/outcomes, and Codex aggregate data live under:
+
+```text
+~/.mrtoken/data/
 ```
 
 ## Uninstall the package

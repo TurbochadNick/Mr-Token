@@ -22,6 +22,65 @@ if BACKEND_ROOT not in sys.path:
 PROJECTS = os.path.expanduser("~/.claude/projects")
 CODEX_DIRS = (os.path.expanduser("~/.codex/sessions"),
               os.path.expanduser("~/.codex/archived_sessions"))
+CONTEXT_WARN_PCT = 70
+
+
+def _fmt_token_count(tokens) -> str:
+    n = int(tokens or 0)
+    if n >= 1_000_000:
+        v = n / 1_000_000
+        return f"{v:.1f}M".replace(".0M", "M")
+    if n >= 100_000:
+        return f"{round(n / 1_000):,}k"
+    if n >= 10_000:
+        v = n / 1_000
+        return f"{v:.1f}k".replace(".0k", "k")
+    return f"{n:,}"
+
+
+def _compact_rec_line(rule: str, message: str, ctx_pct=None) -> str:
+    """One short hook nudge. Full recommendation text belongs in status/why."""
+    if rule == "fresh_handoff":
+        if ctx_pct is not None and ctx_pct < CONTEXT_WARN_PCT:
+            return "  ·  long session: /mr-handoff at phase boundary"
+        return "  ·  fresh handoff: run /mr-handoff before more work"
+    labels = {
+        "retry_loop": "retry loop: inspect failing tool calls",
+        "huge_tool_output": "huge output: offload or summarize",
+        "repeated_context": "repeated context: compact repeated blocks",
+        "re_read_loop": "re-read loop: keep one result or narrow the read",
+        "step_runaway": "step runaway: re-plan the approach",
+        "context_rot": "context rot: handoff at phase boundary",
+    }
+    if rule in labels:
+        return "  ·  " + labels[rule]
+    short = message[:90] + "..." if len(message) > 90 else message
+    return f"  ·  [{rule}] {short}"
+
+
+def _pick_high_recommendation(conn, session_id: str, ctx_pct=None):
+    rows = conn.execute("""
+        SELECT r.rule, r.message FROM recommendation r
+        JOIN trace t ON t.id = r.trace_id
+        WHERE t.session_id=? AND r.severity='high'
+    """, (session_id,)).fetchall()
+    if not rows:
+        return None
+
+    def score(row):
+        rule = row[0]
+        if rule == "fresh_handoff" and ctx_pct is not None and ctx_pct < CONTEXT_WARN_PCT:
+            return 30
+        return {
+            "retry_loop": 0,
+            "huge_tool_output": 1,
+            "fresh_handoff": 2,
+            "repeated_context": 3,
+            "re_read_loop": 4,
+            "step_runaway": 5,
+        }.get(rule, 20)
+
+    return sorted(rows, key=score)[0]
 
 
 def find_transcripts(session_id: str) -> list[str]:
@@ -98,9 +157,11 @@ def main():
         totals = {"model_calls": 0, "tool_calls": 0, "recs": 0, "high": 0}
 
         codex_iv = None  # Codex live intervention (proc engine), if it fires
+        codex_usage = None
         if codex_path:
             # Codex session: parse the rollout via the Codex adapter (source='codex')
-            from mrtoken.ingest_codex import ingest_codex_file, codex_ctx_pct
+            from mrtoken.ingest_codex import ingest_codex_file, codex_usage_snapshot
+            codex_usage = codex_usage_snapshot(codex_path)
             r = ingest_codex_file(conn, codex_path, prices)
             if not r.get("skipped"):
                 row = conn.execute("SELECT id FROM trace WHERE session_id=?",
@@ -115,7 +176,7 @@ def main():
                     # proc engine for Codex: live ctx % from the rollout + fired signals
                     try:
                         from mrtoken.intervene import decide
-                        cpct = codex_ctx_pct(codex_path)
+                        cpct = (codex_usage or {}).get("ctx_pct")
                         if cpct is not None:
                             codex_iv = decide(session_id, cpct, None,
                                               [rc["rule"] for rc in recs])
@@ -146,16 +207,28 @@ def main():
         if codex_path:
             # Codex HUD from the rollout's own metrics (build_statusline_text is
             # Claude-transcript-specific and would leak a Claude session's stats).
-            row = conn.execute("SELECT total_tokens, est_cost_usd "
+            row = conn.execute("SELECT profile, total_tokens, est_cost_usd, cache_hit_ratio "
                                "FROM session_summary WHERE session_id=?", (session_id,)).fetchone()
             mdl = conn.execute(
                 "SELECT mc.model FROM model_call mc JOIN trace t ON t.id=mc.trace_id "
                 "WHERE t.session_id=? AND mc.model IS NOT NULL LIMIT 1", (session_id,)).fetchone()
             if row:
-                tot, cost = row
-                hud = f"mr · codex {(mdl[0] if mdl else '') or ''} · ~{tot or 0:,} tok"
-                if cost:
-                    hud += f" · ~${cost:.2f}"
+                profile, tot, cost, cache = row
+                model = (codex_usage or {}).get("model") or (mdl[0] if mdl else None)
+                identity = "codex" + (f" {model}" if model else "")
+                parts = ["mr", identity]
+                ctx_pct = (codex_usage or {}).get("ctx_pct")
+                if ctx_pct is not None:
+                    parts.append(f"ctx {int(ctx_pct)}%{' ⚠' if int(ctx_pct) >= CONTEXT_WARN_PCT else ''}")
+                if tot:
+                    parts.append(f"~{_fmt_token_count(tot)} tok")
+                if cache is not None:
+                    parts.append(f"cache {cache:.0%}")
+                if cost and cost >= 0.01:
+                    parts.append(f"~${cost:.2f}")
+                if profile:
+                    parts.append(profile)
+                hud = " · ".join(parts)
         else:
             try:
                 from mrtoken.statusline import build_statusline_text
@@ -166,20 +239,12 @@ def main():
         # Append the top high-priority recommendation, if any.
         rec_line = ""
         if totals["high"]:
-            first_high = conn.execute("""
-                SELECT r.rule, r.message FROM recommendation r
-                JOIN trace t ON t.id = r.trace_id
-                WHERE t.session_id=? AND r.severity='high'
-                ORDER BY CASE r.rule
-                  WHEN 'fresh_handoff' THEN 0
-                  WHEN 'retry_loop'    THEN 1
-                  ELSE 2 END
-                LIMIT 1
-            """, (session_id,)).fetchone()
+            first_high = _pick_high_recommendation(
+                conn, session_id, (codex_usage or {}).get("ctx_pct") if codex_path else None)
             if first_high:
                 rule, msg = first_high
-                short = msg[:160] + "…" if len(msg) > 160 else msg
-                rec_line = f"  ·  [{rule}] {short}"
+                rec_line = _compact_rec_line(
+                    rule, msg, (codex_usage or {}).get("ctx_pct") if codex_path else None)
 
         # cost-gated Assist suggestion (opt-in via MRTOKEN_ASSIST; silent otherwise)
         assist_line = ""

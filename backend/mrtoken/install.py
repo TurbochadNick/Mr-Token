@@ -12,6 +12,8 @@ transcript-derived token data automatically:
      sessions started from ANY folder (the desktop app runs sessions from many
      directories). on_stop.py resolves the correct per-project DB from the
      session payload's cwd, so global registration still lands data per project.
+     If Codex is present, also install the same Stop hook into ~/.codex/hooks.json
+     so Codex rollouts land in the central Codex DB.
 
 Safe by design: backs up an existing settings file first, preserves all existing
 settings and hooks, and is idempotent (won't add our hook twice).
@@ -157,6 +159,16 @@ def _add_hook(settings: dict) -> dict:
     return settings
 
 
+def _add_codex_hook(settings: dict) -> dict:
+    """Add the Codex Stop hook using Codex's hooks.json shape."""
+    hooks = settings.setdefault("hooks", {})
+    stop = hooks.setdefault("Stop", [])
+    stop.append({
+        "hooks": [{"type": "command", "command": hook_command()}],
+    })
+    return settings
+
+
 def _strip_hooks(settings: dict, event: str, marker: str) -> int:
     """Remove only the hooks for `event` whose command contains `marker`,
     preserving any unrelated hooks. Drops a now-empty event. Returns count removed."""
@@ -180,7 +192,8 @@ def _strip_hooks(settings: dict, event: str, marker: str) -> int:
 
 
 def uninstall(project_root: str | None = None, settings_path: str | None = None,
-              global_settings_path: str | None = None, remove_skills: bool = True,
+              global_settings_path: str | None = None, codex_hooks_path: str | None = None,
+              remove_skills: bool = True,
               emit=print) -> int:
     """Reverse of init: remove MR Token's hooks + statusLine (and the /mr-* skills)
     from the project-local and global Claude Code settings. Backs up each file
@@ -219,12 +232,28 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
     else:
         emit("  · no global hooks found")
 
+    codex_hooks_path = codex_hooks_path or os.path.expanduser("~/.codex/hooks.json")
+    codex = _load_settings(codex_hooks_path)
+    codex_changed = bool(_strip_hooks(codex, "Stop", HOOK_MARKER))
+    if codex_changed:
+        _backup(codex_hooks_path)
+        with open(codex_hooks_path, "w", encoding="utf-8") as fh:
+            json.dump(codex, fh, indent=2); fh.write("\n")
+        emit(f"  ✓ removed Codex Stop hook: {codex_hooks_path}")
+    else:
+        emit("  · no Codex Stop hook found")
+
     if remove_skills:
         skills_root = os.path.join(os.path.dirname(global_settings_path), "skills")
-        for name in ("mr-handoff", "mr-status", "mr-why"):
+        for name in ("mr-context", "mr-handoff", "mr-status", "mr-why"):
             d = os.path.join(skills_root, name)
             if os.path.isdir(d):
                 shutil.rmtree(d); emit(f"  ✓ removed skill /{name}")
+        codex_skills_root = os.path.join(os.path.dirname(codex_hooks_path), "skills")
+        for name in ("mr-context", "mr-handoff", "mr-status", "mr-why"):
+            d = os.path.join(codex_skills_root, name)
+            if os.path.isdir(d):
+                shutil.rmtree(d); emit(f"  ✓ removed Codex skill /{name}")
 
     emit("  done — other settings preserved; .token-tithe data left as-is "
          "(rm -rf .token-tithe to remove it).")
@@ -233,6 +262,7 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
 
 def init(project_root: str | None = None, settings_path: str | None = None,
          global_settings_path: str | None = None, codex_skills_root: str | None = None,
+         codex_hooks_path: str | None = None,
          dry_run: bool = False, emit=print) -> int:
     root = find_project_root(project_root)
     db_path = resolve_db_path(root)  # shared contract (per-project for real projects)
@@ -253,13 +283,16 @@ def init(project_root: str | None = None, settings_path: str | None = None,
     # Codex agent gets the same manual + tools (install only if Codex is present).
     skills_root = os.path.join(os.path.dirname(global_settings_path), "skills")
     codex_skills_root = codex_skills_root or os.path.expanduser("~/.codex/skills")
-    install_codex_skills = os.path.isdir(os.path.dirname(codex_skills_root))  # ~/.codex exists
+    codex_hooks_path = codex_hooks_path or os.path.join(os.path.dirname(codex_skills_root), "hooks.json")
+    install_codex = os.path.isdir(os.path.dirname(codex_hooks_path))  # ~/.codex exists
 
     if dry_run:
         emit(f"  would create DB:            {db_path}")
         emit(f"  would install skills:       {', '.join('/'+s for s in skills) or '(none)'} → {skills_root}")
-        if install_codex_skills:
+        if install_codex:
             emit(f"  would install Codex skills: {', '.join('/'+s for s in skills) or '(none)'} → {codex_skills_root}")
+            emit(f"  would edit Codex hooks:    {codex_hooks_path}")
+            emit(f"    Codex Stop hook command: {hook_command()}")
         emit(f"  would edit global settings: {global_settings_path}")
         emit(f"    Stop hook command:        {hook_command()}"
              + ("" if stop_hook_global else f"  (→ {stop_hook_path})"))
@@ -279,10 +312,23 @@ def init(project_root: str | None = None, settings_path: str | None = None,
     installed = install_skills(skills_root)
     if installed:
         emit(f"  ✓ installed skills:    {', '.join('/'+s for s in installed)}  ({skills_root})")
-    if install_codex_skills:
+    if install_codex:
         c = install_skills(codex_skills_root)
         if c:
             emit(f"  ✓ installed Codex skills: {', '.join('/'+s for s in c)}  ({codex_skills_root})")
+        codex_hooks = _load_settings(codex_hooks_path)
+        if _already_installed(codex_hooks):
+            emit("  ✓ Codex Stop hook already installed")
+        else:
+            backup = _backup(codex_hooks_path)
+            if backup:
+                emit(f"  ✓ backed up Codex hooks: {os.path.basename(backup)}")
+            _add_codex_hook(codex_hooks)
+            os.makedirs(os.path.dirname(codex_hooks_path), exist_ok=True)
+            with open(codex_hooks_path, "w", encoding="utf-8") as fh:
+                json.dump(codex_hooks, fh, indent=2)
+                fh.write("\n")
+            emit(f"  ✓ Codex Stop hook installed: {codex_hooks_path}")
 
     # 4 (legacy override only): if --settings points at a non-global file, install
     # the Stop hook there, preserving everything. Default path is global (step 5).

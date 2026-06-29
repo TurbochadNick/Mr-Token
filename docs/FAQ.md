@@ -32,11 +32,16 @@ stays exact:
 
 ## Does this work with Claude desktop app?
 
-No. The pilot targets Claude Code CLI hooks.
+Partly. The global hook can ingest desktop sessions when Claude Code provides the
+same hook payload/transcript path, but the desktop app may not render the
+terminal HUD. Use `/mr-status`, `/mr-why`, or `mrtoken-transcript status` on
+demand.
 
 ## Does this work with Claude Code CLI?
 
-Yes. Mr Token installs project-local Claude Code hooks into `.claude/settings.local.json`.
+Yes. This is the primary beta path. Mr Token installs global Claude Code hooks
+and a statusLine into `~/.claude/settings.json`, then resolves the correct local
+project DB from each session.
 
 ## Does this upload code?
 
@@ -44,7 +49,9 @@ No source upload occurs by default. Data stays local unless a user deliberately 
 
 ## Does this support Codex?
 
-Not yet. The codebase has an adapter structure, but only the Claude Code adapter is implemented.
+Yes, as a secondary beta path. The backend can ingest Codex rollouts, backfill
+Codex sessions into a central DB, expose MCP tools to Codex, and install a Stop
+hook into `~/.codex/hooks.json` when `~/.codex/` exists.
 
 ## Does this apply patches automatically?
 
@@ -56,11 +63,16 @@ Doctor is the fuel-efficiency diagnostic system. It explains where tokens are be
 
 ## What is the UI?
 
-The UI is a local Mr Token control panel served by `token-tithe ui` on `127.0.0.1`.
+The optional TypeScript UI is a local control panel served by `token-tithe ui` on
+`127.0.0.1`. It is not the primary beta surface; the beta surface is the
+`mrtoken-transcript` HUD/backend.
 
 ## What does local-only mean?
 
-The server binds to localhost, reads local SQLite data, and does not use a hosted backend, telemetry, login, or billing.
+The Python backend reads local transcripts, writes local SQLite metadata, and
+does not use a hosted backend, telemetry, login, or billing. Optional TS
+commands include license plumbing, and optional AI review can call Anthropic only
+when explicitly enabled.
 
 ## Can this be used on confidential projects?
 

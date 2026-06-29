@@ -260,10 +260,9 @@ def rule_fresh_handoff(conn, tid: int) -> list:
     """, (tid,)).fetchone()[0] or 0
 
     return [_rec("fresh_handoff", "high",
-                 "This session has grown heavy. A fresh session with a compact handoff frees up your "
-                 "context window and rate-limit headroom and keeps the agent sharp — usually more "
-                 "effective (and cheaper) than continuing. Run /mr-handoff (or `mrtoken-transcript "
-                 "handoff`) to generate one — goal, key decisions, last state, and changed files.",
+                 "Session shows handoff-worthy churn. Use /mr-handoff before a phase change "
+                 "or a risky next step; it trims stale history plus rate-limit and cost carry. "
+                 "If the current task is still moving cleanly and ctx is low, keep going.",
                  {"signals": signals, "conversation_depth": n,
                   "input_growth_ratio": round(inp_last / inp_first, 2) if inp_first else None,
                   "cache_ratio_first_quarter": round(ratio_first, 3),

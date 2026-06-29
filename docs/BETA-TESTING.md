@@ -8,6 +8,51 @@ try the tool but not sit for 30 minutes.
 The whole loop: **install, use for a few days, send back one redacted file plus
 three answers.** Nothing leaves their machine unless they choose to send it.
 
+## Tester package path
+
+Send testers through one path only: the Python backend/HUD.
+
+```bash
+git clone <repo-url> mr_token
+cd mr_token
+./install.sh
+mrtoken-transcript status
+```
+
+Expected result:
+
+- `install.sh` installs `mrtoken-transcript`, runs `init`, and writes Claude Code
+  hooks/statusLine plus `/mr-*` skills.
+- If `~/.codex/` exists, `init` also installs the Codex skills and Stop hook.
+- `mrtoken-transcript status` prints the current-session snapshot once there is
+  a Claude Code transcript to read.
+
+Do not route beta testers through the TypeScript UI unless they are explicitly
+testing dashboard work. The beta claim is the live terminal HUD and transcript
+backend, not the dashboard.
+
+### Codex testers
+
+Codex is a secondary beta path. After install, use Codex normally and look for a
+compact Stop-hook line like:
+
+```text
+mr · codex gpt-5.5 · ctx 28% · ~681k tok · cache 96% · code · long session: /mr-handoff at phase boundary
+```
+
+Inspect aggregate Codex data with:
+
+```bash
+mrtoken-transcript fleet --codex
+mrtoken-transcript why --codex <session-prefix>
+```
+
+Turn everything off with:
+
+```bash
+mrtoken-transcript uninstall
+```
+
 ## What you ask the tester to do
 
 1. **Install + set up** per [QUICKSTART.md](QUICKSTART.md). Use Claude Code in a
