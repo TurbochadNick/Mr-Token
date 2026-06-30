@@ -41,7 +41,12 @@ Maintainer release check before sending a new build:
 
 ```bash
 ./scripts/accept-codex-hud.sh
+./scripts/accept-install-lifecycle.sh
+./scripts/check-recommendation-quality.sh --db /path/to/scratch-codex.db --refresh-rules
 ```
+
+Use a scratch copy for the recommendation-quality gate if you want to refresh
+stored recommendations. The script mutates the DB when `--refresh-rules` is set.
 
 ### Codex testers
 
@@ -85,6 +90,12 @@ mrtoken-transcript uninstall
    titles, commands, or any raw transcript content. The doctor bundle contains
    redacted install checks and no settings contents. They can open both JSON
    files and confirm before sending.
+
+Aggregate returned files with:
+
+```bash
+mrtoken-transcript beta-summary mrtoken-beta.json mrtoken-doctor-bundle.json
+```
 
 4. **Answer three questions** (2 minutes, in their own words):
    - Did the HUD ever change what you actually did in a session (compact early,

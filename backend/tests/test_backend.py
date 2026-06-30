@@ -1371,6 +1371,48 @@ class BackendTest(unittest.TestCase):
         conn.commit()
         self.assertEqual(rule_fresh_handoff(conn, tid), [])
 
+    def test_fresh_handoff_filters_short_and_error_only_noise(self):
+        from mrtoken.rules import rule_fresh_handoff
+
+        short, stid = make_trace()
+        # 18 calls with obvious cache decay + input growth used to fire, but
+        # there is not enough runway left for handoff advice to be actionable.
+        for i in range(18):
+            inp, cr = (1_000, 9_000) if i < 9 else (20_000, 2_000)
+            short.execute("INSERT INTO model_call(trace_id,timestamp,input_tokens,"
+                          "cache_read_input_tokens,est_cost_usd) VALUES(?,?,?,?,?)",
+                          (stid, f"2026-06-01T00:{i:02d}:00Z", inp, cr, 0.01))
+        short.commit()
+        self.assertEqual(rule_fresh_handoff(short, stid), [])
+
+        flat, ftid = make_trace()
+        # A long session with late tool errors but healthy cache and flat/falling
+        # late cost is a noisy "keep debugging" shape, not handoff-worthy churn.
+        for i in range(44):
+            cur = flat.execute("INSERT INTO model_call(trace_id,timestamp,input_tokens,"
+                               "cache_read_input_tokens,est_cost_usd) VALUES(?,?,?,?,?)",
+                               (ftid, f"2026-06-01T01:{i:02d}:00Z", 10_000, 90_000,
+                                0.02 if i < 22 else 0.015))
+            if i >= 34:
+                flat.execute("INSERT INTO tool_call(trace_id,model_call_id,tool_name,is_error) "
+                             "VALUES(?,?,?,1)", (ftid, cur.lastrowid, "Bash"))
+        flat.commit()
+        self.assertEqual(rule_fresh_handoff(flat, ftid), [])
+
+        rising, rtid = make_trace()
+        for i in range(44):
+            cur = rising.execute("INSERT INTO model_call(trace_id,timestamp,input_tokens,"
+                                 "cache_read_input_tokens,est_cost_usd) VALUES(?,?,?,?,?)",
+                                 (rtid, f"2026-06-01T02:{i:02d}:00Z", 10_000, 90_000,
+                                  0.02 if i < 22 else 0.04))
+            if i >= 34:
+                rising.execute("INSERT INTO tool_call(trace_id,model_call_id,tool_name,is_error) "
+                               "VALUES(?,?,?,1)", (rtid, cur.lastrowid, "Bash"))
+        rising.commit()
+        recs = rule_fresh_handoff(rising, rtid)
+        self.assertEqual(len(recs), 1)
+        self.assertIn("late cost rose", recs[0]["message"] + recs[0]["evidence_json"])
+
     def test_ingest_dedupes_usage_per_message_id_and_prices_opus(self):
         from mrtoken.ingest import ingest_file, load_prices
         with tempfile.TemporaryDirectory() as tmp:
@@ -1583,6 +1625,52 @@ class BackendTest(unittest.TestCase):
             lg = summarize_exports([legacy])
             self.assertEqual(lg["sessions"], 1)        # only the 8-call session
             self.assertEqual(lg["low_activity"], 2)    # the two 1-call stubs bucketed
+
+    def test_beta_summary_combines_exports_and_doctor_bundles(self):
+        from mrtoken.beta_evidence import summarize_beta_evidence, print_beta_evidence
+        import io, contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            export_path = os.path.join(tmp, "mrtoken-beta.json")
+            with open(export_path, "w") as fh:
+                json.dump({
+                    "schema": "mrtoken.session_summary.v1",
+                    "tool_version": "0.5.8",
+                    "redacted": True,
+                    "sessions": [{
+                        "session_id": "s1",
+                        "model_calls": 8,
+                        "is_low_activity": False,
+                        "total_tokens": 12_000,
+                        "input_tokens": 5_000,
+                        "output_tokens": 1_000,
+                        "cache_read_tokens": 6_000,
+                        "cache_write_tokens": 0,
+                        "est_cost_usd": 0.12,
+                        "recommendations": [{
+                            "rule": "fresh_handoff",
+                            "severity": "high",
+                            "est_savings_tokens": 2_000,
+                        }],
+                    }],
+                }, fh)
+            bundle_path = os.path.join(tmp, "doctor.json")
+            with open(bundle_path, "w") as fh:
+                json.dump({
+                    "schema": "mrtoken.doctor.bundle.v1",
+                    "report": {
+                        "ok": True,
+                        "version": "0.5.8",
+                        "checks": [{"name": "release tag", "status": "ok"}],
+                    },
+                }, fh)
+
+            report = summarize_beta_evidence([export_path, bundle_path])
+            self.assertEqual(report["exports"]["files"], 1)
+            self.assertEqual(report["doctor_bundles"]["ok"], 1)
+            self.assertEqual(report["exports"]["rule_fires"]["fresh_handoff"]["high"], 1)
+            self.assertFalse(report["automatic_gate"]["passed"])  # needs a second export
+            with contextlib.redirect_stdout(io.StringIO()):
+                print_beta_evidence(report)
 
     def test_roi_measure_projection_and_cohort(self):
         # fresh_handoff before/after (ROADMAP 2.1): a long, escalating session with

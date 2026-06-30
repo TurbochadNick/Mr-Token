@@ -1,14 +1,18 @@
 # MR Token beta evidence tracker
 
-Use this to collect evidence from the `0.5.7` beta loop. One row per tester.
+Use this to collect evidence from the `0.5.8` beta loop. One row per tester.
 
 ## Build
 
-- Version: `0.5.7`
-- Baseline code commit: `59414f7 Improve Codex HUD and beta cleanup`
-- Release tip: current `main`
+- Version: `0.5.8`
+- Baseline code commit: `v0.5.8` tag
+- Release tip: current `main` once `v0.5.8` is tagged
 - Primary surface: Python backend/HUD through `mrtoken-transcript`
 - Secondary surface: Codex Stop-hook HUD and central Codex DB
+- Maintainer intake: `mrtoken-transcript beta-summary <export.json> <doctor-bundle.json>`
+- Release gates: `./scripts/accept-codex-hud.sh`,
+  `./scripts/accept-install-lifecycle.sh`, and
+  `./scripts/check-recommendation-quality.sh --db <scratch-codex.db> --refresh-rules`
 
 ## Tester Rows
 

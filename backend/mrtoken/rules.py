@@ -24,7 +24,8 @@ LOW_CACHE_MIN_CALLS = 10      # need a sustained sample (early-session ratios ar
 RETRY_CLUSTER_ERRORS = 3      # ≥ this many errors within window → retry_loop
 RETRY_CLUSTER_WINDOW = 8      # consecutive model_calls in which errors cluster
 HANDOFF_INPUT_GROWTH = 1.5    # final-quarter avg input_tokens vs first-quarter → signal
-HANDOFF_MIN_CALLS = 8         # don't recommend handoff on tiny sessions
+HANDOFF_MIN_CALLS = 20        # don't recommend handoff when there is no room to act
+HANDOFF_COST_GROWTH = 1.05    # error-only handoff needs late cost to have risen
 
 # Profile-aware thresholds (TTO Eco Mode methodology): a 20k-token Read is
 # normal in `research` but wasteful in `benchmark`. NULL/unknown profile → default.
@@ -208,7 +209,7 @@ def rule_fresh_handoff(conn, tid: int) -> list:
     """Headline recommendation: evidence-based, fires only when multiple signals agree."""
     mc_rows = conn.execute("""
         SELECT input_tokens, cache_read_input_tokens, cache_creation_input_tokens,
-               output_tokens, is_sidechain, stop_reason, timestamp
+               output_tokens, is_sidechain, stop_reason, timestamp, est_cost_usd
         FROM model_call WHERE trace_id=? ORDER BY timestamp ASC
     """, (tid,)).fetchall()
     if len(mc_rows) < HANDOFF_MIN_CALLS:
@@ -226,6 +227,10 @@ def rule_fresh_handoff(conn, tid: int) -> list:
     q = max(1, n // 4)
     inp_first, ratio_first = totals(mc_rows[:q])
     inp_last,  ratio_last  = totals(mc_rows[-q:])
+    mid = n // 2
+    cost_first_half = sum(r[7] or 0 for r in mc_rows[:mid])
+    cost_late_half = sum(r[7] or 0 for r in mc_rows[mid:])
+    late_cost_growth = (cost_late_half / cost_first_half) if cost_first_half else None
 
     # Split signals into SIZE (the session is merely big) vs TROUBLE (real
     # degradation). A well-cached long session does NOT benefit from a handoff —
@@ -245,8 +250,10 @@ def rule_fresh_handoff(conn, tid: int) -> list:
         LEFT JOIN model_call mc ON mc.id=tc.model_call_id
         WHERE tc.trace_id=? AND tc.is_error=1 AND mc.timestamp >= ?
     """, (tid, late_cutoff)).fetchone()[0] or 0
-    if errs_late >= 3:
-        trouble_signals.append(f"{errs_late} tool errors in second half — stale context may be compounding")
+    if errs_late >= 3 and late_cost_growth is not None and late_cost_growth >= HANDOFF_COST_GROWTH:
+        trouble_signals.append(
+            f"{errs_late} tool errors in second half and late cost rose "
+            f"{late_cost_growth:.1f}× — stale context may be compounding")
 
     signals = trouble_signals + size_signals
     # need at least one TROUBLE signal (churn/errors) plus corroboration
@@ -267,6 +274,7 @@ def rule_fresh_handoff(conn, tid: int) -> list:
                   "input_growth_ratio": round(inp_last / inp_first, 2) if inp_first else None,
                   "cache_ratio_first_quarter": round(ratio_first, 3),
                   "cache_ratio_last_quarter": round(ratio_last, 3),
+                  "late_cost_growth_ratio": round(late_cost_growth, 3) if late_cost_growth else None,
                   "late_errors": errs_late},
                  waste_row or None)]
 

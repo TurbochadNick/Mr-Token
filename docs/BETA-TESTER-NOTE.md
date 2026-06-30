@@ -1,6 +1,6 @@
 # MR Token beta tester note
 
-Paste this to a tester when sending the `0.5.7` beta.
+Paste this to a tester when sending the `0.5.8` beta.
 
 ```text
 I am testing MR Token, a local-first token-efficiency HUD for Claude Code and Codex.

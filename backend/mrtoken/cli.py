@@ -202,6 +202,16 @@ def cmd_beta_note(args):
     print(beta_note())
 
 
+def cmd_beta_summary(args):
+    from mrtoken.beta_evidence import print_beta_evidence, summarize_beta_evidence
+    import json
+    report = summarize_beta_evidence(args.files)
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2))
+    else:
+        print_beta_evidence(report)
+
+
 def cmd_validate(args):
     from mrtoken.validate import validate_db, print_report
     import json
@@ -479,6 +489,13 @@ def main(argv=None):
     sub.add_parser("beta-note",
         help="print the paste-ready tester instructions for this beta build")
 
+    p_beta_summary = sub.add_parser("beta-summary",
+        help="summarize returned beta exports and doctor bundles")
+    p_beta_summary.add_argument("files", nargs="+",
+        help="mrtoken-beta.json export(s) and mrtoken doctor bundle JSON file(s)")
+    p_beta_summary.add_argument("--json", action="store_true",
+        help="emit JSON instead of a table")
+
     sub.add_parser("update",
         help="pull the latest release into this checkout, reinstall, re-sync hooks/skills")
 
@@ -503,6 +520,7 @@ def main(argv=None):
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,
                 "doctor": cmd_doctor, "beta-note": cmd_beta_note,
+                "beta-summary": cmd_beta_summary,
                 "statusline": cmd_statusline, "update": cmd_update}
     dispatch[a.cmd](a)
 
