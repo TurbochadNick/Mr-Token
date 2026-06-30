@@ -174,6 +174,22 @@ def cmd_roi(args):
         print_roi(_open(args.db), args.session)
 
 
+def cmd_offload_roi(args):
+    from mrtoken.offload_roi import compare_offload_pair, print_offload_pair, to_json
+    report = compare_offload_pair(
+        _open(args.db),
+        args.ignore_session,
+        args.follow_session,
+        threshold_chars=args.threshold_chars,
+        ignore_passed=args.ignore_passed,
+        follow_passed=args.follow_passed,
+    )
+    if getattr(args, "json", False):
+        print(to_json(report))
+    else:
+        print_offload_pair(report)
+
+
 def cmd_status(args):
     from mrtoken.status import print_status
     sys.exit(print_status(args.db, args.session))
@@ -467,6 +483,20 @@ def main(argv=None):
     p_roi.add_argument("--db", dest="db_sub")
     p_roi.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
+    p_offload_roi = sub.add_parser("offload-roi",
+        help="compare ignore vs follow-offload sessions after a huge-output anchor")
+    p_offload_roi.add_argument("ignore_session", help="session id/prefix for the ignore arm")
+    p_offload_roi.add_argument("follow_session", help="session id/prefix for the follow-offload arm")
+    p_offload_roi.add_argument("--db", dest="db_sub")
+    p_offload_roi.add_argument("--codex", action="store_true", help="read the central Codex DB")
+    p_offload_roi.add_argument("--threshold-chars", type=int, default=40_000,
+        help="oversized tool-output anchor threshold (default: 40000 chars)")
+    p_offload_roi.add_argument("--ignore-passed", action="store_true",
+        help="declare the ignore arm oracle passed")
+    p_offload_roi.add_argument("--follow-passed", action="store_true",
+        help="declare the follow-offload arm oracle passed")
+    p_offload_roi.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+
     p_status = sub.add_parser("status",
         help="one-glance snapshot of the current session + the top next action")
     p_status.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
@@ -518,6 +548,7 @@ def main(argv=None):
                 "watch": cmd_watch,
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
+                "offload-roi": cmd_offload_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,
                 "doctor": cmd_doctor, "beta-note": cmd_beta_note,
                 "beta-summary": cmd_beta_summary,

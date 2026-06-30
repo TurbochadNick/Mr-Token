@@ -51,6 +51,9 @@ Scaffold + fixture format + recorder are here, plus (ROADMAP 5A groundwork):
 - **Token-threshold awareness** — handoff/compact record `peak_input_tokens` +
   `crossed_threshold` (input-side tokens reached before the reset), so a run that
   didn't actually bloat is flagged, not silently wasted.
+- **`codex-offload-noisy-log`** — a small Codex-specific fixture for the offload
+  ROI smoke in `../docs/CODEX-OFFLOAD-ROI.md`. It is measured with
+  `mrtoken-transcript offload-roi`, not the handoff/compact matrix runner.
 
 **Remaining (gated on token budget):** one live `--arm continue` *confirm-pilot* on
 `debug-hugelib` to verify it crosses 100k, then the full matrix (continue/compact/

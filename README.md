@@ -39,6 +39,7 @@ mrtoken-transcript beta-note
 mrtoken-transcript export --redact > mrtoken-beta.json
 mrtoken-transcript doctor --bundle
 mrtoken-transcript beta-summary mrtoken-beta.json mrtoken-doctor-bundle.json
+mrtoken-transcript offload-roi --codex <ignore-session> <follow-session>
 ```
 
 See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the tester flow.

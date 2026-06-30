@@ -1672,6 +1672,64 @@ class BackendTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 print_beta_evidence(report)
 
+    def test_offload_roi_compares_post_anchor_sessions(self):
+        from mrtoken.offload_roi import compare_offload_pair, print_offload_pair
+        import io, contextlib
+
+        conn = connect(":memory:")
+
+        def make_session(sid: str, post_tokens: list[int], post_errors: int = 0,
+                         post_huge: bool = False) -> int:
+            tid = conn.execute(
+                "INSERT INTO trace(session_id, source, ingested_at) VALUES(?,?,?)",
+                (sid, "codex", "2026-06-01T00:00:00Z"),
+            ).lastrowid
+            first = conn.execute(
+                "INSERT INTO model_call(trace_id,timestamp,input_tokens,output_tokens,"
+                "cache_read_input_tokens,est_cost_usd) VALUES(?,?,?,?,?,?)",
+                (tid, "2026-06-01T00:00:00Z", 1000, 100, 9000, 0.01),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO tool_call(trace_id,model_call_id,tool_name,output_chars) "
+                "VALUES(?,?,?,?)",
+                (tid, first, "Bash", 80_000),
+            )
+            for i, tokens in enumerate(post_tokens, start=1):
+                mid = conn.execute(
+                    "INSERT INTO model_call(trace_id,timestamp,input_tokens,output_tokens,"
+                    "cache_read_input_tokens,est_cost_usd) VALUES(?,?,?,?,?,?)",
+                    (tid, f"2026-06-01T00:00:0{i}Z", tokens, 100, 1000, tokens / 1_000_000),
+                ).lastrowid
+                if i <= post_errors:
+                    conn.execute(
+                        "INSERT INTO tool_call(trace_id,model_call_id,tool_name,is_error,output_chars) "
+                        "VALUES(?,?,?,?,?)",
+                        (tid, mid, "Bash", 1, 200),
+                    )
+                if post_huge and i == len(post_tokens):
+                    conn.execute(
+                        "INSERT INTO tool_call(trace_id,model_call_id,tool_name,output_chars) "
+                        "VALUES(?,?,?,?)",
+                        (tid, mid, "Bash", 90_000),
+                    )
+            return tid
+
+        make_session("ignore-session", [5000, 5000, 5000], post_errors=1, post_huge=True)
+        make_session("follow-session", [1000, 1000, 1000], post_errors=0, post_huge=False)
+        conn.commit()
+
+        report = compare_offload_pair(
+            conn, "ignore", "follow", ignore_passed=True, follow_passed=True)
+        self.assertEqual(report["ignore"]["post_total_tokens"], 15_300)
+        self.assertEqual(report["follow"]["post_total_tokens"], 3_300)
+        self.assertEqual(report["delta"]["post_total_tokens_saved"], 12_000)
+        self.assertTrue(report["directional_win"])
+
+        unknown_quality = compare_offload_pair(conn, "ignore", "follow")
+        self.assertFalse(unknown_quality["directional_win"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            print_offload_pair(report)
+
     def test_roi_measure_projection_and_cohort(self):
         # fresh_handoff before/after (ROADMAP 2.1): a long, escalating session with
         # a fresh_handoff rec yields a non-negative projected saving and a cohort.

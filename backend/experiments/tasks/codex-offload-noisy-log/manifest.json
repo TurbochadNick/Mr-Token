@@ -1,0 +1,12 @@
+{
+  "id": "codex-offload-noisy-log",
+  "type": "codex-offload-roi-smoke",
+  "description": "Fix one classifier bug using a huge noisy diagnostic stream; compare ignoring vs following MR Token's offload nudge.",
+  "prompt_file": "TASK.md",
+  "oracle": "oracle.sh",
+  "seed_dir": "seed",
+  "immutable_files": ["test_processor.py", "build_check.py"],
+  "agent": {"model": "gpt-5.5", "effort": "xhigh", "temperature": 0},
+  "arms": ["ignore", "follow_offload"],
+  "budget_note": "Run one paired Codex smoke first. Abort if either session exceeds 90% context or fails the oracle."
+}
