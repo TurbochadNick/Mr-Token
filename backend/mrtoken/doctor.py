@@ -18,6 +18,7 @@ from mrtoken import __version__
 from mrtoken.datadir import resolve_db_path
 from mrtoken.install import (
     _already_installed,
+    _codex_mcp_configured,
     _compact_hook_already_installed,
     _load_settings,
     _prompt_hook_already_installed,
@@ -84,6 +85,7 @@ def check_install(project_root: str | None = None,
                   global_settings_path: str | None = None,
                   claude_skills_root: str | None = None,
                   codex_hooks_path: str | None = None,
+                  codex_config_path: str | None = None,
                   codex_skills_root: str | None = None) -> dict:
     root = os.path.abspath(project_root or os.getcwd())
     db = db_path or resolve_db_path(root)
@@ -92,6 +94,7 @@ def check_install(project_root: str | None = None,
         os.path.dirname(global_settings_path), "skills")
     codex_hooks_path = codex_hooks_path or os.path.expanduser("~/.codex/hooks.json")
     codex_home = os.path.dirname(codex_hooks_path)
+    codex_config_path = codex_config_path or os.path.join(codex_home, "config.toml")
     codex_skills_root = codex_skills_root or os.path.join(codex_home, "skills")
 
     checks = []
@@ -138,6 +141,10 @@ def check_install(project_root: str | None = None,
         checks.append(_check("codex skills", "ok" if not cmissing else "fail",
                              f"{ccount}/{len(SKILLS)} installed at {codex_skills_root}"
                              + (f"; missing {', '.join(cmissing)}" if cmissing else "")))
+        has_mcp = _codex_mcp_configured(codex_config_path)
+        checks.append(_check("codex mcp", "ok" if has_mcp else "fail",
+                             codex_config_path if has_mcp
+                             else f"missing [mcp_servers.mrtoken] in {codex_config_path}"))
     else:
         checks.append(_check("codex", "skip", f"{codex_home} not present"))
 
@@ -179,6 +186,7 @@ def print_doctor(report: dict) -> None:
 def repair_install(project_root: str | None = None,
                    global_settings_path: str | None = None,
                    codex_hooks_path: str | None = None,
+                   codex_config_path: str | None = None,
                    codex_skills_root: str | None = None,
                    emit=print) -> int:
     """Intentional write path behind `doctor --fix`: re-run init."""
@@ -186,6 +194,7 @@ def repair_install(project_root: str | None = None,
     return init(project_root=project_root,
                 global_settings_path=global_settings_path,
                 codex_hooks_path=codex_hooks_path,
+                codex_config_path=codex_config_path,
                 codex_skills_root=codex_skills_root,
                 emit=emit)
 

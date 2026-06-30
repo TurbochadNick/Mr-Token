@@ -451,9 +451,13 @@ class BackendTest(unittest.TestCase):
             "frees up your context window.",
             ctx_pct=28,
         )
-        self.assertEqual(line, "  ·  long session: /mr-handoff at phase boundary")
+        self.assertEqual(line, "  ·  long session: offer /mr-handoff at phase boundary")
         self.assertNotIn("context window", line)
         self.assertNotIn("grown heavy", line)
+
+        high = on_stop._compact_rec_line("fresh_handoff", "x", ctx_pct=82)
+        self.assertIn("context is pretty full", high)
+        self.assertIn("want me to run /mr-handoff now?", high)
 
     def test_stop_hook_ingests_from_arbitrary_cwd(self):
         # ROADMAP 4.1 (regression guard): the now-global Stop hook resolves the
@@ -647,7 +651,10 @@ class BackendTest(unittest.TestCase):
         # ROADMAP 6.3: the context-efficiency manual is a bundled skill, installed to
         # BOTH ~/.claude/skills and ~/.codex/skills (when Codex is present). Codex
         # also gets the shared Stop hook so live rollouts can auto-ingest.
-        from mrtoken.install import init, SKILLS_SRC, _load_settings, _already_installed
+        from mrtoken.install import (
+            init, SKILLS_SRC, _load_settings, _already_installed,
+            _codex_mcp_configured,
+        )
         self.assertTrue(os.path.isfile(os.path.join(SKILLS_SRC, "mr-context", "SKILL.md")))
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "package.json"), "w") as handle:
@@ -656,9 +663,12 @@ class BackendTest(unittest.TestCase):
             os.makedirs(os.path.join(tmp, ".codex"))            # Codex present
             codex_skills = os.path.join(tmp, ".codex", "skills")
             codex_hooks = os.path.join(tmp, ".codex", "hooks.json")
+            codex_config = os.path.join(tmp, ".codex", "config.toml")
             with open(codex_hooks, "w") as h:
                 json.dump({"hooks": {"Stop": [{"hooks": [
                     {"type": "command", "command": "echo existing-codex"}]}]}}, h)
+            with open(codex_config, "w") as h:
+                h.write("[mcp_servers.existing]\ncommand = \"keepme\"\nargs = []\n")
             init(project_root=tmp, global_settings_path=gpath,
                  codex_skills_root=codex_skills, codex_hooks_path=codex_hooks,
                  emit=lambda *_: None)
@@ -669,6 +679,10 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(_already_installed(ch))
             codex_cmds = [hh["command"] for e in ch["hooks"]["Stop"] for hh in e["hooks"]]
             self.assertIn("echo existing-codex", codex_cmds)
+            self.assertTrue(_codex_mcp_configured(codex_config))
+            with open(codex_config, encoding="utf-8") as h:
+                codex_toml = h.read()
+            self.assertIn("[mcp_servers.existing]", codex_toml)
 
             init(project_root=tmp, global_settings_path=gpath,
                  codex_skills_root=codex_skills, codex_hooks_path=codex_hooks,
@@ -676,6 +690,8 @@ class BackendTest(unittest.TestCase):
             ch2 = _load_settings(codex_hooks)
             codex_cmds2 = [hh["command"] for e in ch2["hooks"]["Stop"] for hh in e["hooks"]]
             self.assertEqual(len(codex_cmds2), len(codex_cmds))
+            with open(codex_config, encoding="utf-8") as h:
+                self.assertEqual(h.read().count("[mcp_servers.mrtoken]"), 1)
 
     def test_intervention_policy_autonomy_and_kill_switch(self):
         # ROADMAP 6.5: per-tool autonomy (off|tell|ask|do) + global kill switch; default warn-only.
@@ -765,10 +781,23 @@ class BackendTest(unittest.TestCase):
                 self.assertEqual(iv2["phase"], "escalate")     # AFK / inaction
                 self.assertIn("STILL", iv2["message"])
                 iv3 = apply_ask_policy("s1", {"tool": "handoff", "ctx_pct": 82,
-                                              "level": "ask", "message": "base"})
+                                              "level": "ask",
+                                              "message": "We've done a lot. Do you want me to run `handoff` now?"})
                 self.assertEqual(iv3["phase"], "ask")          # different tool → fresh ask
+                self.assertIn("Do you want me to run `handoff` now?", iv3["message"])
+                self.assertIn("Reply `go`", iv3["message"])
             finally:
                 dd.central_default = orig
+
+    def test_handoff_intervention_is_consent_offer(self):
+        from mrtoken.intervene import evaluate
+        iv = evaluate(83, None, ["context_rot"])
+        self.assertIsNotNone(iv)
+        self.assertEqual(iv["tool"], "handoff")
+        self.assertIn("we've done a lot", iv["message"])
+        self.assertIn("continue this work more efficiently in a new session", iv["message"])
+        self.assertIn("Do you want me to run `handoff` now?", iv["message"])
+        self.assertNotIn("Run `handoff` now", iv["message"])
 
     def test_module_registry(self):
         # ROADMAP 7.2 (groundwork): register/toggle external token-saver modules +
@@ -1098,7 +1127,10 @@ class BackendTest(unittest.TestCase):
         self.assertIn("PYTHONPATH=", cmd)               # importable from any cwd
 
     def test_uninstall_reverses_init_preserving_other_settings(self):
-        from mrtoken.install import init, uninstall, _load_settings, _already_installed
+        from mrtoken.install import (
+            init, uninstall, _load_settings, _already_installed,
+            _codex_mcp_configured,
+        )
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "package.json"), "w") as h:
                 h.write("{}")
@@ -1111,9 +1143,12 @@ class BackendTest(unittest.TestCase):
             gpath = os.path.join(tmp, "global-settings.json")
             os.makedirs(os.path.join(tmp, ".codex"))
             codex_hooks = os.path.join(tmp, ".codex", "hooks.json")
+            codex_config = os.path.join(tmp, ".codex", "config.toml")
             with open(codex_hooks, "w") as h:
                 json.dump({"hooks": {"Stop": [{"hooks": [
                     {"type": "command", "command": "echo keep-codex"}]}]}}, h)
+            with open(codex_config, "w") as h:
+                h.write("[mcp_servers.keep]\ncommand = \"keep\"\nargs = []\n")
             codex_skills = os.path.join(tmp, ".codex", "skills")
             init(project_root=tmp, global_settings_path=gpath,
                  codex_skills_root=codex_skills, codex_hooks_path=codex_hooks,
@@ -1122,6 +1157,7 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(_already_installed(_load_settings(gpath)))     # Stop hook is global now
             self.assertTrue(os.path.exists(os.path.join(skills, "mr-handoff", "SKILL.md")))
             self.assertTrue(_already_installed(_load_settings(codex_hooks)))  # Codex hook installed
+            self.assertTrue(_codex_mcp_configured(codex_config))
 
             uninstall(project_root=tmp, settings_path=settings_path,
                       global_settings_path=gpath, codex_hooks_path=codex_hooks,
@@ -1139,6 +1175,9 @@ class BackendTest(unittest.TestCase):
             self.assertIn("echo keep-codex", codex_cmds)                  # user's Codex hook preserved
             self.assertFalse(any("on_stop.py" in c for c in codex_cmds))  # our Codex hook removed
             self.assertFalse(os.path.exists(os.path.join(codex_skills, "mr-context")))
+            self.assertFalse(_codex_mcp_configured(codex_config))
+            with open(codex_config, encoding="utf-8") as h:
+                self.assertIn("[mcp_servers.keep]", h.read())             # user's MCP config preserved
 
     def test_init_warns_before_replacing_existing_statusline(self):
         from mrtoken.install import init, _load_settings
@@ -1199,6 +1238,7 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(statuses["claude skills"], "ok")
             self.assertEqual(statuses["codex stop hook"], "ok")
             self.assertEqual(statuses["codex skills"], "ok")
+            self.assertEqual(statuses["codex mcp"], "ok")
 
     def test_doctor_reports_missing_install_without_writes(self):
         import mrtoken.doctor as doctor
@@ -1729,6 +1769,36 @@ class BackendTest(unittest.TestCase):
         self.assertFalse(unknown_quality["directional_win"])
         with contextlib.redirect_stdout(io.StringIO()):
             print_offload_pair(report)
+
+        def make_prevention_session(sid: str, tokens: list[int], huge_outputs: int) -> None:
+            tid = conn.execute(
+                "INSERT INTO trace(session_id, source, ingested_at) VALUES(?,?,?)",
+                (sid, "codex", "2026-06-01T00:10:00Z"),
+            ).lastrowid
+            for i, tokens_i in enumerate(tokens):
+                mid = conn.execute(
+                    "INSERT INTO model_call(trace_id,timestamp,input_tokens,output_tokens,"
+                    "cache_read_input_tokens,est_cost_usd) VALUES(?,?,?,?,?,?)",
+                    (tid, f"2026-06-01T00:10:0{i}Z", tokens_i, 100, 0, tokens_i / 1_000_000),
+                ).lastrowid
+                if i < huge_outputs:
+                    conn.execute(
+                        "INSERT INTO tool_call(trace_id,model_call_id,tool_name,output_chars) "
+                        "VALUES(?,?,?,?)",
+                        (tid, mid, "Bash", 80_000),
+                    )
+
+        make_prevention_session("ignore-prevent", [20_000, 20_000], huge_outputs=2)
+        make_prevention_session("follow-prevent", [2_000, 2_000], huge_outputs=0)
+        conn.commit()
+        prevention = compare_offload_pair(
+            conn, "ignore-prevent", "follow-prevent",
+            ignore_passed=True, follow_passed=True, mode="prevention")
+        self.assertEqual(prevention["mode"], "prevention")
+        self.assertEqual(prevention["ignore"]["session_huge_outputs"], 2)
+        self.assertEqual(prevention["follow"]["session_huge_outputs"], 0)
+        self.assertEqual(prevention["delta"]["session_total_tokens_saved"], 36_000)
+        self.assertTrue(prevention["directional_win"])
 
     def test_roi_measure_projection_and_cohort(self):
         # fresh_handoff before/after (ROADMAP 2.1): a long, escalating session with

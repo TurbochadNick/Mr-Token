@@ -51,6 +51,26 @@ def _metrics(conn: sqlite3.Connection, prefix: str, threshold_chars: int) -> dic
     tr = _trace(conn, prefix)
     tid = tr["id"]
     anchor = _anchor(conn, tid, threshold_chars)
+    session_row = conn.execute(
+        """
+        SELECT COUNT(*),
+               COALESCE(SUM(input_tokens + output_tokens), 0),
+               COALESCE(SUM(input_tokens + cache_read_input_tokens + cache_creation_input_tokens), 0),
+               COALESCE(SUM(est_cost_usd), 0),
+               COALESCE(SUM(output_tokens), 0)
+        FROM model_call WHERE trace_id=?
+        """,
+        (tid,),
+    ).fetchone()
+    session_tool_row = conn.execute(
+        """
+        SELECT COUNT(*),
+               COALESCE(SUM(CASE WHEN is_error=1 THEN 1 ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN COALESCE(output_chars, 0) >= ? THEN 1 ELSE 0 END), 0)
+        FROM tool_call WHERE trace_id=?
+        """,
+        (threshold_chars, tid),
+    ).fetchone()
     where = "trace_id=?"
     params: list = [tid]
     if anchor and anchor["timestamp"]:
@@ -96,6 +116,14 @@ def _metrics(conn: sqlite3.Connection, prefix: str, threshold_chars: int) -> dic
         "session_id": tr["session_id"],
         "source": tr["source"],
         "anchor": anchor,
+        "session_model_calls": session_row[0] or 0,
+        "session_total_tokens": session_row[1] or 0,
+        "session_input_side_tokens": session_row[2] or 0,
+        "session_est_cost_usd": round(session_row[3] or 0, 6),
+        "session_output_tokens": session_row[4] or 0,
+        "session_tool_calls": session_tool_row[0] or 0,
+        "session_tool_errors": session_tool_row[1] or 0,
+        "session_huge_outputs": session_tool_row[2] or 0,
         "post_model_calls": row[0] or 0,
         "post_total_tokens": row[1] or 0,
         "post_input_side_tokens": row[2] or 0,
@@ -116,22 +144,31 @@ def compare_offload_pair(
     threshold_chars: int = HUGE_TOOL_CHARS,
     ignore_passed: bool | None = None,
     follow_passed: bool | None = None,
+    mode: str = "post-anchor",
 ) -> dict:
+    if mode not in ("post-anchor", "prevention"):
+        raise ValueError("mode must be 'post-anchor' or 'prevention'")
     ignore = _metrics(conn, ignore_prefix, threshold_chars)
     follow = _metrics(conn, follow_prefix, threshold_chars)
-    delta = ignore["post_total_tokens"] - follow["post_total_tokens"]
-    cost_delta = ignore["post_est_cost_usd"] - follow["post_est_cost_usd"]
-    pct = (delta / ignore["post_total_tokens"]) if ignore["post_total_tokens"] else None
+    prefix = "session" if mode == "prevention" else "post"
+    token_key = f"{prefix}_total_tokens"
+    cost_key = f"{prefix}_est_cost_usd"
+    error_key = f"{prefix}_tool_errors"
+    huge_key = f"{prefix}_huge_outputs"
+    delta = ignore[token_key] - follow[token_key]
+    cost_delta = ignore[cost_key] - follow[cost_key]
+    pct = (delta / ignore[token_key]) if ignore[token_key] else None
     quality_known = ignore_passed is not None and follow_passed is not None
     quality_ok = bool(ignore_passed and follow_passed) if quality_known else None
     directional_win = (
         quality_ok is True
         and delta > 0
-        and follow["post_tool_errors"] <= ignore["post_tool_errors"]
-        and follow["post_huge_outputs"] <= ignore["post_huge_outputs"]
+        and follow[error_key] <= ignore[error_key]
+        and follow[huge_key] <= ignore[huge_key]
     )
     return {
         "schema": "mrtoken.offload_roi_pair.v1",
+        "mode": mode,
         "threshold_chars": threshold_chars,
         "ignore": ignore,
         "follow": follow,
@@ -142,11 +179,29 @@ def compare_offload_pair(
             "ok": quality_ok,
         },
         "delta": {
-            "post_total_tokens_saved": delta,
-            "post_token_reduction_ratio": round(pct, 4) if pct is not None else None,
-            "post_est_cost_saved_usd": round(cost_delta, 6),
+            "tokens_saved": delta,
+            "token_reduction_ratio": round(pct, 4) if pct is not None else None,
+            "est_cost_saved_usd": round(cost_delta, 6),
+            "tool_errors_delta": ignore[error_key] - follow[error_key],
+            "huge_outputs_delta": ignore[huge_key] - follow[huge_key],
+            "post_total_tokens_saved": ignore["post_total_tokens"] - follow["post_total_tokens"],
+            "post_token_reduction_ratio": round(
+                (ignore["post_total_tokens"] - follow["post_total_tokens"]) /
+                ignore["post_total_tokens"], 4
+            ) if ignore["post_total_tokens"] else None,
+            "post_est_cost_saved_usd": round(
+                ignore["post_est_cost_usd"] - follow["post_est_cost_usd"], 6),
             "post_tool_errors_delta": ignore["post_tool_errors"] - follow["post_tool_errors"],
             "post_huge_outputs_delta": ignore["post_huge_outputs"] - follow["post_huge_outputs"],
+            "session_total_tokens_saved": ignore["session_total_tokens"] - follow["session_total_tokens"],
+            "session_token_reduction_ratio": round(
+                (ignore["session_total_tokens"] - follow["session_total_tokens"]) /
+                ignore["session_total_tokens"], 4
+            ) if ignore["session_total_tokens"] else None,
+            "session_est_cost_saved_usd": round(
+                ignore["session_est_cost_usd"] - follow["session_est_cost_usd"], 6),
+            "session_tool_errors_delta": ignore["session_tool_errors"] - follow["session_tool_errors"],
+            "session_huge_outputs_delta": ignore["session_huge_outputs"] - follow["session_huge_outputs"],
         },
         "directional_win": directional_win,
         "notes": [
@@ -163,7 +218,9 @@ def print_offload_pair(report: dict) -> None:
 
     print("\nMR Token Codex offload ROI pair")
     print("-------------------------------")
+    print(f"mode: {report.get('mode', 'post-anchor')}")
     print(f"threshold: {report['threshold_chars']:,} output chars")
+    prefix = "session" if report.get("mode") == "prevention" else "post"
     for label in ("ignore", "follow"):
         m = report[label]
         anchor = m["anchor"]
@@ -173,19 +230,19 @@ def print_offload_pair(report: dict) -> None:
             anchor_s = "none"
         print(
             f"{label:6} {m['session_id'][:12]:12} "
-            f"post_tokens={m['post_total_tokens']:,} "
-            f"post_cost=${m['post_est_cost_usd']:,.4f} "
-            f"errors={m['post_tool_errors']} huge_outputs={m['post_huge_outputs']} "
+            f"{prefix}_tokens={m[f'{prefix}_total_tokens']:,} "
+            f"{prefix}_cost=${m[f'{prefix}_est_cost_usd']:,.4f} "
+            f"errors={m[f'{prefix}_tool_errors']} huge_outputs={m[f'{prefix}_huge_outputs']} "
             f"anchor={anchor_s}"
         )
     q = report["quality"]
     print(f"quality gate: ignore={yn(q['ignore_passed'])}, follow={yn(q['follow_passed'])}")
     d = report["delta"]
-    ratio = d["post_token_reduction_ratio"]
+    ratio = d["token_reduction_ratio"]
     ratio_s = "n/a" if ratio is None else f"{ratio:.1%}"
     print(
-        f"delta: {d['post_total_tokens_saved']:,} post-anchor tokens saved "
-        f"({ratio_s}), ${d['post_est_cost_saved_usd']:,.4f}"
+        f"delta: {d['tokens_saved']:,} {prefix} tokens saved "
+        f"({ratio_s}), ${d['est_cost_saved_usd']:,.4f}"
     )
     print("directional win: " + ("yes" if report["directional_win"] else "no"))
     if not q["known"]:

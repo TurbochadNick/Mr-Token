@@ -17,13 +17,17 @@ full per-tool autonomy (off/tell/ask/do) lands in ROADMAP 6.5.
 
 ## Register it
 
+`mrtoken-transcript init` registers the Mr Token MCP server for Codex when
+`~/.codex` exists. `mrtoken-transcript doctor` verifies the Codex MCP section, so
+hooks/skills can no longer look healthy while the `offload` tool is unavailable.
+
 **Claude Code:**
 ```bash
 claude mcp add mrtoken -- mrtoken-transcript mcp
 ```
 (or add to `.mcp.json` / settings: a server named `mrtoken`, command `mrtoken-transcript`, args `["mcp"]`.)
 
-**Codex** — add to `~/.codex/config.toml`:
+**Codex manual recovery** — add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.mrtoken]
 command = "mrtoken-transcript"
