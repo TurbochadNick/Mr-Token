@@ -179,6 +179,18 @@ def cmd_status(args):
     sys.exit(print_status(args.db, args.session))
 
 
+def cmd_doctor(args):
+    from mrtoken.doctor import check_install, print_doctor
+    import json
+    report = check_install(project_root=args.project_root,
+                           db_path=args.db_sub if getattr(args, "db_sub", None) else None)
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2))
+    else:
+        print_doctor(report)
+    sys.exit(0 if report["ok"] else 1)
+
+
 def cmd_validate(args):
     from mrtoken.validate import validate_db, print_report
     import json
@@ -439,6 +451,12 @@ def main(argv=None):
     p_status.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
     p_status.add_argument("--db", dest="db_sub")
 
+    p_doctor = sub.add_parser("doctor",
+        help="read-only install check for hooks, skills, DB, Codex, and release tag")
+    p_doctor.add_argument("--project-root", help="project root (default: current directory)")
+    p_doctor.add_argument("--db", dest="db_sub")
+    p_doctor.add_argument("--json", action="store_true", help="emit JSON for support logs")
+
     p_sl = sub.add_parser("statusline",
         help="print one-line HUD for Claude Code's statusLine setting (no DB write)")
     p_sl.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
@@ -466,7 +484,7 @@ def main(argv=None):
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,
-                "statusline": cmd_statusline, "update": cmd_update}
+                "doctor": cmd_doctor, "statusline": cmd_statusline, "update": cmd_update}
     dispatch[a.cmd](a)
 
 

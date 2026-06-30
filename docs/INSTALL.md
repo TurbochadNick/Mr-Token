@@ -37,11 +37,14 @@ It backs up settings before editing and preserves unrelated hooks/settings.
 
 ```bash
 mrtoken-transcript --version
+mrtoken-transcript doctor
 mrtoken-transcript status
 ```
 
-Use Claude Code normally in a terminal. You should see the `mr` status line and
-turn-boundary nudges when a session grows or a rule fires.
+`doctor` checks the command, local DB, Claude hooks/statusLine, installed skills,
+Codex hook/skills when present, and release tag state. Use Claude Code normally
+in a terminal. You should see the `mr` status line and turn-boundary nudges when
+a session grows or a rule fires.
 
 ## Optional TypeScript UI
 

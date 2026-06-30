@@ -1159,6 +1159,74 @@ class BackendTest(unittest.TestCase):
             self.assertTrue(any(f.startswith("global-settings.json.mrtoken-bak")
                                 for f in os.listdir(tmp)))
 
+    def test_doctor_reports_healthy_temp_install(self):
+        from mrtoken.install import init
+        import mrtoken.doctor as doctor
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            gpath = os.path.join(tmp, "global-settings.json")
+            codex_home = os.path.join(tmp, ".codex")
+            os.makedirs(codex_home)
+            codex_hooks = os.path.join(codex_home, "hooks.json")
+            codex_skills = os.path.join(codex_home, "skills")
+            init(project_root=tmp, global_settings_path=gpath,
+                 codex_hooks_path=codex_hooks, codex_skills_root=codex_skills,
+                 emit=lambda *_: None)
+
+            real_which = doctor.shutil.which
+            doctor.shutil.which = lambda name: "/tmp/mrtoken-transcript" if name == "mrtoken-transcript" else None
+            try:
+                report = doctor.check_install(
+                    project_root=tmp,
+                    db_path=os.path.join(tmp, ".token-tithe", "token-tithe.db"),
+                    global_settings_path=gpath,
+                    claude_skills_root=os.path.join(tmp, "skills"),
+                    codex_hooks_path=codex_hooks,
+                    codex_skills_root=codex_skills,
+                )
+            finally:
+                doctor.shutil.which = real_which
+
+            self.assertTrue(report["ok"])
+            statuses = {c["name"]: c["status"] for c in report["checks"]}
+            self.assertEqual(statuses["command"], "ok")
+            self.assertEqual(statuses["project db"], "ok")
+            self.assertEqual(statuses["claude stop hook"], "ok")
+            self.assertEqual(statuses["claude statusline"], "ok")
+            self.assertEqual(statuses["claude prompt hook"], "ok")
+            self.assertEqual(statuses["claude compact hook"], "ok")
+            self.assertEqual(statuses["claude skills"], "ok")
+            self.assertEqual(statuses["codex stop hook"], "ok")
+            self.assertEqual(statuses["codex skills"], "ok")
+
+    def test_doctor_reports_missing_install_without_writes(self):
+        import mrtoken.doctor as doctor
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, ".token-tithe", "token-tithe.db")
+            settings = os.path.join(tmp, "missing-settings.json")
+            real_which = doctor.shutil.which
+            doctor.shutil.which = lambda name: None
+            try:
+                report = doctor.check_install(
+                    project_root=tmp,
+                    db_path=db,
+                    global_settings_path=settings,
+                    claude_skills_root=os.path.join(tmp, "skills"),
+                    codex_hooks_path=os.path.join(tmp, "no-codex", "hooks.json"),
+                )
+            finally:
+                doctor.shutil.which = real_which
+
+            self.assertFalse(report["ok"])
+            statuses = {c["name"]: c["status"] for c in report["checks"]}
+            self.assertEqual(statuses["command"], "fail")
+            self.assertEqual(statuses["project db"], "warn")
+            self.assertEqual(statuses["claude settings"], "fail")
+            self.assertEqual(statuses["claude skills"], "fail")
+            self.assertEqual(statuses["codex"], "skip")
+            self.assertFalse(os.path.exists(db))  # doctor is read-only
+
     def test_update_nudge_compares_versions(self):
         from mrtoken.update_check import update_nudge
         self.assertIsNone(update_nudge("0.4.2", "v0.4.2"))     # current -> quiet

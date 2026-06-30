@@ -1,6 +1,6 @@
 # MR Token beta tester note
 
-Paste this to a tester when sending the `0.5.5` beta.
+Paste this to a tester when sending the `0.5.6` beta.
 
 ```text
 I am testing MR Token, a local-first token-efficiency HUD for Claude Code and Codex.
@@ -10,6 +10,7 @@ Install:
 git clone <repo-url> mr_token
 cd mr_token
 ./install.sh
+mrtoken-transcript doctor
 
 Then use Claude Code or Codex normally for 3 to 5 days.
 

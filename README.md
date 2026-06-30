@@ -31,6 +31,7 @@ main experience. On demand:
 
 ```bash
 mrtoken-transcript status
+mrtoken-transcript doctor
 mrtoken-transcript why
 mrtoken-transcript handoff
 mrtoken-transcript savings

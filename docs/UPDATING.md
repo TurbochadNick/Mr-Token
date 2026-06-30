@@ -52,4 +52,4 @@ correlating a bug report or a beta log to a specific version.
 3. Push. Tell testers to run `./update.sh`.
 
 Versioning is plain semver-ish: bump the minor for new behavior testers should
-notice, the patch for fixes. The current beta build is `0.5.5`.
+notice, the patch for fixes. The current beta build is `0.5.6`.

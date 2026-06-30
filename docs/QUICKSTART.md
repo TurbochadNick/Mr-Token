@@ -113,11 +113,14 @@ mrtoken-transcript status      # or: why | handoff
 ## Verify it's live
 
 ```bash
+mrtoken-transcript doctor
 mrtoken-transcript status
 ```
 
-You should see a status line for your current session. If you do, the HUD is
-working in your terminal sessions too.
+`doctor` should report healthy hooks, skills, and release state. `status`
+requires an existing transcript; once you have used Claude Code, it should show
+a status line for your current session. If it does, the HUD is working in your
+terminal sessions too.
 
 ## Uninstall
 
