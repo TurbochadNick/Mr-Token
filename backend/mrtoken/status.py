@@ -65,6 +65,8 @@ def print_status(db_path: str | None, session_arg: str | None) -> int:
     print(f"  context now ~{_fmt(s['context_now'])} tok{flag}")
     if s["top"]:
         print(f"\n  next: [{s['top']['rule']}] {s['top']['message']}")
+        print(f"  feedback: mrtoken-transcript feedback {r['session_id'][:8]} "
+              f"{s['top']['rule']} right|wrong|unsure")
     else:
         print(f"\n  next: nothing flagged — burning clean.")
     try:

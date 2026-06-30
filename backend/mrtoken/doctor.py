@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """MR Token install doctor.
 
-Read-only setup diagnostics for beta testers: command version, project DB,
-Claude hooks/statusLine/skills, optional Codex hook/skills, and release tag
-state. Does not create DBs or edit settings.
+Setup diagnostics for beta testers: command version, project DB, Claude
+hooks/statusLine/skills, optional Codex hook/skills, and release tag state.
+Plain `doctor` is read-only; `doctor --fix` intentionally re-runs init.
 """
 from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import sqlite3
+import sys
 
 from mrtoken import __version__
 from mrtoken.datadir import resolve_db_path
@@ -52,6 +54,29 @@ def _db_status(path: str) -> tuple[str, str]:
     if {"trace", "session_summary"}.issubset(names):
         return "ok", path
     return "warn", f"{path} exists but schema is incomplete; run `mrtoken-transcript init`"
+
+
+def _redact_text(text: str, project_root: str | None = None) -> str:
+    home = os.path.expanduser("~")
+    if not isinstance(text, str):
+        return text
+    out = text
+    if home:
+        out = out.replace(home, "~")
+    if project_root:
+        out = out.replace(project_root, "<project>")
+    return out
+
+
+def _redacted_report(report: dict) -> dict:
+    project_root = report.get("project_root", "")
+    out = dict(report)
+    out["project_root"] = _redact_text(out.get("project_root", ""), project_root)
+    out["checks"] = [
+        {**c, "detail": _redact_text(c.get("detail", ""), project_root)}
+        for c in report.get("checks", [])
+    ]
+    return out
 
 
 def check_install(project_root: str | None = None,
@@ -149,3 +174,31 @@ def print_doctor(report: dict) -> None:
         print(f"\ndoctor: {tail}")
     else:
         print(f"\ndoctor: {report['failures']} failure{'s' if report['failures'] != 1 else ''}")
+
+
+def repair_install(project_root: str | None = None,
+                   global_settings_path: str | None = None,
+                   codex_hooks_path: str | None = None,
+                   codex_skills_root: str | None = None,
+                   emit=print) -> int:
+    """Intentional write path behind `doctor --fix`: re-run init."""
+    from mrtoken.install import init
+    return init(project_root=project_root,
+                global_settings_path=global_settings_path,
+                codex_hooks_path=codex_hooks_path,
+                codex_skills_root=codex_skills_root,
+                emit=emit)
+
+
+def write_bundle(report: dict, path: str) -> str:
+    bundle = {
+        "schema": "mrtoken.doctor.bundle.v1",
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "executable": _redact_text(sys.executable),
+        "report": _redacted_report(report),
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(bundle, handle, indent=2)
+        handle.write("\n")
+    return path

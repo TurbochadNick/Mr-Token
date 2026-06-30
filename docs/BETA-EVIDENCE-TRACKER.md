@@ -1,10 +1,10 @@
 # MR Token beta evidence tracker
 
-Use this to collect evidence from the `0.5.6` beta loop. One row per tester.
+Use this to collect evidence from the `0.5.7` beta loop. One row per tester.
 
 ## Build
 
-- Version: `0.5.6`
+- Version: `0.5.7`
 - Baseline code commit: `59414f7 Improve Codex HUD and beta cleanup`
 - Release tip: current `main`
 - Primary surface: Python backend/HUD through `mrtoken-transcript`
@@ -12,11 +12,11 @@ Use this to collect evidence from the `0.5.6` beta loop. One row per tester.
 
 ## Tester Rows
 
-| Tester | Dates | Agent | Export received | Rules fired | Cost/cache shape | HUD changed behavior? | Noise/confusion | Keep installed? | Follow-up |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 |  | Claude / Codex | no |  |  |  |  |  |  |
-| 2 |  | Claude / Codex | no |  |  |  |  |  |  |
-| 3 |  | Claude / Codex | no |  |  |  |  |  |  |
+| Tester | Dates | Agent | Export received | Doctor bundle | Rules fired | Cost/cache shape | HUD changed behavior? | Feedback labels | Noise/confusion | Keep installed? | Follow-up |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 |  | Claude / Codex | no | no |  |  |  |  |  |  |  |
+| 2 |  | Claude / Codex | no | no |  |  |  |  |  |  |  |
+| 3 |  | Claude / Codex | no | no |  |  |  |  |  |  |  |
 
 ## Decision Gate
 

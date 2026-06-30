@@ -180,15 +180,26 @@ def cmd_status(args):
 
 
 def cmd_doctor(args):
-    from mrtoken.doctor import check_install, print_doctor
+    from mrtoken.doctor import check_install, print_doctor, repair_install, write_bundle
     import json
-    report = check_install(project_root=args.project_root,
-                           db_path=args.db_sub if getattr(args, "db_sub", None) else None)
+    db_arg = args.db_sub if getattr(args, "db_sub", None) else (
+        args.db if getattr(args, "db", DEFAULT_DB) != DEFAULT_DB else None)
+    if getattr(args, "fix", False):
+        repair_install(project_root=args.project_root)
+    report = check_install(project_root=args.project_root, db_path=db_arg)
+    if getattr(args, "bundle", None):
+        path = write_bundle(report, args.bundle)
+        print(f"doctor bundle: {path}")
     if getattr(args, "json", False):
         print(json.dumps(report, indent=2))
     else:
         print_doctor(report)
     sys.exit(0 if report["ok"] else 1)
+
+
+def cmd_beta_note(args):
+    from mrtoken.beta import beta_note
+    print(beta_note())
 
 
 def cmd_validate(args):
@@ -456,10 +467,17 @@ def main(argv=None):
     p_doctor.add_argument("--project-root", help="project root (default: current directory)")
     p_doctor.add_argument("--db", dest="db_sub")
     p_doctor.add_argument("--json", action="store_true", help="emit JSON for support logs")
+    p_doctor.add_argument("--fix", action="store_true",
+        help="re-run init before checking, re-syncing hooks/skills and project DB")
+    p_doctor.add_argument("--bundle", nargs="?", const="mrtoken-doctor-bundle.json",
+        help="write a redacted support bundle JSON (default path: mrtoken-doctor-bundle.json)")
 
     p_sl = sub.add_parser("statusline",
         help="print one-line HUD for Claude Code's statusLine setting (no DB write)")
     p_sl.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
+
+    sub.add_parser("beta-note",
+        help="print the paste-ready tester instructions for this beta build")
 
     sub.add_parser("update",
         help="pull the latest release into this checkout, reinstall, re-sync hooks/skills")
@@ -484,7 +502,8 @@ def main(argv=None):
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,
-                "doctor": cmd_doctor, "statusline": cmd_statusline, "update": cmd_update}
+                "doctor": cmd_doctor, "beta-note": cmd_beta_note,
+                "statusline": cmd_statusline, "update": cmd_update}
     dispatch[a.cmd](a)
 
 

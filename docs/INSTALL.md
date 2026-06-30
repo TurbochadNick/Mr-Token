@@ -42,9 +42,21 @@ mrtoken-transcript status
 ```
 
 `doctor` checks the command, local DB, Claude hooks/statusLine, installed skills,
-Codex hook/skills when present, and release tag state. Use Claude Code normally
-in a terminal. You should see the `mr` status line and turn-boundary nudges when
-a session grows or a rule fires.
+Codex hook/skills when present, and release tag state. If it reports missing
+hooks or skills, run:
+
+```bash
+mrtoken-transcript doctor --fix
+```
+
+For support, write a redacted diagnostic bundle:
+
+```bash
+mrtoken-transcript doctor --bundle
+```
+
+Use Claude Code normally in a terminal. You should see the `mr` status line and
+turn-boundary nudges when a session grows or a rule fires.
 
 ## Optional TypeScript UI
 

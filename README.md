@@ -35,10 +35,14 @@ mrtoken-transcript doctor
 mrtoken-transcript why
 mrtoken-transcript handoff
 mrtoken-transcript savings
+mrtoken-transcript beta-note
 mrtoken-transcript export --redact > mrtoken-beta.json
+mrtoken-transcript doctor --bundle
 ```
 
 See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the tester flow.
+Ownership is still gated; see [OWNERSHIP_GATE.md](OWNERSHIP_GATE.md) and
+[docs/GOVERNANCE.md](docs/GOVERNANCE.md) before widening distribution.
 
 ## Other Surfaces
 

@@ -122,6 +122,12 @@ requires an existing transcript; once you have used Claude Code, it should show
 a status line for your current session. If it does, the HUD is working in your
 terminal sessions too.
 
+If `doctor` reports missing hooks or skills:
+
+```bash
+mrtoken-transcript doctor --fix
+```
+
 ## Uninstall
 
 See [UNINSTALL.md](UNINSTALL.md). In short: `init` backs up your settings before

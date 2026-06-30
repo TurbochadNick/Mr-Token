@@ -1,13 +1,33 @@
-# MR Token beta tester note
+#!/usr/bin/env python3
+"""MR Token beta-loop helpers."""
+from __future__ import annotations
 
-Paste this to a tester when sending the `0.5.7` beta.
+import os
+import subprocess
 
-```text
-I am testing MR Token, a local-first token-efficiency HUD for Claude Code and Codex.
+from mrtoken import __version__
+from mrtoken.update_check import _repo_root
+
+
+def repo_url(root: str | None = None) -> str:
+    root = root or _repo_root() or os.getcwd()
+    try:
+        out = subprocess.run(["git", "-C", root, "remote", "get-url", "origin"],
+                             capture_output=True, text=True, timeout=2)
+        url = out.stdout.strip()
+        return url or "<repo-url>"
+    except Exception:
+        return "<repo-url>"
+
+
+def beta_note(url: str | None = None, version: str | None = None) -> str:
+    url = url or repo_url()
+    version = version or __version__
+    return f"""I am testing MR Token v{version}, a local-first token-efficiency HUD for Claude Code and Codex.
 
 Install:
 
-git clone <repo-url> mr_token
+git clone {url} mr_token
 cd mr_token
 ./install.sh
 mrtoken-transcript doctor
@@ -31,7 +51,7 @@ After a few days, send back:
 mrtoken-transcript export --redact > mrtoken-beta.json
 mrtoken-transcript doctor --bundle
 
-The redacted export removes project paths and session titles. The doctor bundle contains install checks and no settings contents. Please open both files before sending if you want to inspect exactly what is included.
+Please open both files before sending if you want to inspect exactly what is included.
 
 Also answer these three questions:
 1. Did the HUD ever change what you actually did in a session, such as compacting early, handing off, or stopping a retry loop?
@@ -40,5 +60,4 @@ Also answer these three questions:
 
 Turn it off any time:
 
-mrtoken-transcript uninstall
-```
+mrtoken-transcript uninstall"""

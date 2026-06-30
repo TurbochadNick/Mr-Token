@@ -16,7 +16,7 @@ Send testers through one path only: the Python backend/HUD.
 git clone <repo-url> mr_token
 cd mr_token
 ./install.sh
-mrtoken-transcript status
+mrtoken-transcript doctor
 ```
 
 Expected result:
@@ -24,12 +24,24 @@ Expected result:
 - `install.sh` installs `mrtoken-transcript`, runs `init`, and writes Claude Code
   hooks/statusLine plus `/mr-*` skills.
 - If `~/.codex/` exists, `init` also installs the Codex skills and Stop hook.
-- `mrtoken-transcript status` prints the current-session snapshot once there is
-  a Claude Code transcript to read.
+- `mrtoken-transcript doctor` verifies the command, DB, hooks, skills, Codex
+  setup, and release tag. If it fails, run `mrtoken-transcript doctor --fix`.
+
+Print the current paste-ready outreach text from the repo:
+
+```bash
+mrtoken-transcript beta-note
+```
 
 Do not route beta testers through the TypeScript UI unless they are explicitly
 testing dashboard work. The beta claim is the live terminal HUD and transcript
 backend, not the dashboard.
+
+Maintainer release check before sending a new build:
+
+```bash
+./scripts/accept-codex-hud.sh
+```
 
 ### Codex testers
 
@@ -63,14 +75,16 @@ mrtoken-transcript uninstall
 
    ```bash
    mrtoken-transcript export --redact > mrtoken-beta.json
+   mrtoken-transcript doctor --bundle
    ```
 
-   Then email/DM that file. `--redact` drops the only work-revealing fields
+   Then email/DM those files. `--redact` drops the only work-revealing fields
    (project paths and session titles). What it contains: per-session token
    counts, cache ratios, cost estimates, profile, tool-call/error counts, and
    which rules fired. What it does NOT contain: prompts, source, file paths,
-   titles, commands, or any raw transcript content. They can open the JSON and
-   confirm before sending.
+   titles, commands, or any raw transcript content. The doctor bundle contains
+   redacted install checks and no settings contents. They can open both JSON
+   files and confirm before sending.
 
 4. **Answer three questions** (2 minutes, in their own words):
    - Did the HUD ever change what you actually did in a session (compact early,
@@ -78,6 +92,12 @@ mrtoken-transcript uninstall
      never did.
    - Was anything confusing, noisy, or easy to ignore?
    - Would you keep it installed? If you already turned it off, what made you?
+
+While the beta is running, ask testers to mark useful/noisy nudges when they can:
+
+```bash
+mrtoken-transcript feedback <session-prefix> <rule> right|wrong|unsure --note "short note"
+```
 
 ## What you learn from it
 

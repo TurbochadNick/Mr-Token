@@ -1227,6 +1227,49 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(statuses["codex"], "skip")
             self.assertFalse(os.path.exists(db))  # doctor is read-only
 
+    def test_doctor_repair_and_bundle_are_explicit(self):
+        import mrtoken.doctor as doctor
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            gpath = os.path.join(tmp, "global-settings.json")
+            codex_home = os.path.join(tmp, ".codex")
+            os.makedirs(codex_home)
+            codex_hooks = os.path.join(codex_home, "hooks.json")
+            codex_skills = os.path.join(codex_home, "skills")
+
+            rc = doctor.repair_install(project_root=tmp, global_settings_path=gpath,
+                                       codex_hooks_path=codex_hooks,
+                                       codex_skills_root=codex_skills,
+                                       emit=lambda *_: None)
+            self.assertEqual(rc, 0)
+            report = doctor.check_install(
+                project_root=tmp,
+                db_path=os.path.join(tmp, ".token-tithe", "token-tithe.db"),
+                global_settings_path=gpath,
+                claude_skills_root=os.path.join(tmp, "skills"),
+                codex_hooks_path=codex_hooks,
+                codex_skills_root=codex_skills,
+            )
+            self.assertTrue(report["ok"])
+
+            bundle_path = os.path.join(tmp, "bundle.json")
+            doctor.write_bundle(report, bundle_path)
+            with open(bundle_path, encoding="utf-8") as handle:
+                data = json.load(handle)
+            self.assertEqual(data["schema"], "mrtoken.doctor.bundle.v1")
+            self.assertIn("report", data)
+            self.assertNotIn(tmp, json.dumps(data))  # home/project path redacted when under ~ in real use
+
+    def test_beta_note_uses_real_version_and_repo_url(self):
+        from mrtoken.beta import beta_note
+        from mrtoken import __version__
+        note = beta_note("git@example.com:org/repo.git")
+        self.assertIn(f"MR Token v{__version__}", note)
+        self.assertIn("git clone git@example.com:org/repo.git mr_token", note)
+        self.assertIn("mrtoken-transcript doctor", note)
+        self.assertIn("mrtoken-transcript feedback", note)
+
     def test_update_nudge_compares_versions(self):
         from mrtoken.update_check import update_nudge
         self.assertIsNone(update_nudge("0.4.2", "v0.4.2"))     # current -> quiet
@@ -1984,6 +2027,32 @@ class BackendTest(unittest.TestCase):
         conn.commit()
         s = status_snapshot(conn, tid)
         self.assertFalse(s["context_large"])         # 360k/1M = 36% -> not large
+
+    def test_status_prints_feedback_command_for_top_signal(self):
+        from mrtoken.status import print_status
+        import contextlib, io
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = os.path.join(tmp, "fb-status.jsonl")
+            write_jsonl(transcript, [
+                {"type": "assistant", "sessionId": "fb-status", "uuid": "a1",
+                 "message": {"id": "m1", "model": "claude-sonnet-4",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "tool_use", "id": "t1", "name": "Read",
+                                          "input": {"file_path": "big.txt"}}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result",
+                 "tool_use_id": "t1", "content": "x" * 200_000}]}},
+                {"type": "assistant", "sessionId": "fb-status", "uuid": "a2",
+                 "message": {"id": "m2", "model": "claude-sonnet-4",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "ok"}]}},
+            ])
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = print_status(os.path.join(tmp, "t.db"), transcript)
+            self.assertEqual(rc, 0)
+            text = out.getvalue()
+            self.assertIn("next: [huge_tool_output]", text)
+            self.assertIn("feedback: mrtoken-transcript feedback fb-statu huge_tool_output", text)
 
     def test_datadir_non_project_routes_central_not_cwd(self):
         """The scatter-bug fix: a non-project cwd must NOT get a .token-tithe/."""
