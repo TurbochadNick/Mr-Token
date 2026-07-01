@@ -38,6 +38,17 @@ Per iteration, the agent should:
 Stop the loop when the next unchecked task is in a phase you haven't green-lit, or when a
 task needs a human decision flagged with **⚑ decision**.
 
+## Loop ownership (2026-07-01) — see `ORCHESTRATION.md`
+Partners: **Claude leads** Mr Token; **Codex** takes scoped/async/test-heavy work + is the
+credit-out failover. Tags: `[claude]` Claude leads · `[codex]` hand to Codex · `[zach-gated]`
+needs Zach (budget/trust/outward) → loop stops. **Phase focus: Adopt (beta).**
+
+- **5C.1** pilot one-pager — `[claude]` (draft; Zach ships) · **5C.2** TTO framing — `[claude]` draft, `[zach]` submits
+- **5A.4** experiment matrix — `[claude]`, **funded $20 cap** (was gated) · **5A.5** analyze — `[claude]`
+- **5B.1** Nick data-surface spec — `[claude]` · **5B.2** Nick note — `[claude]` draft, `[zach]` sends
+- **7.2** module measurement shim — `[codex]` (scoped, test-checkable) · **7.3** headroom eval — `[zach-gated]` (trust)
+- **6.8** L3 auto-act — `[zach-gated]` (evidence)
+
 ---
 
 ## Phase 1 — Honest data *(do first; unblocks all validation)*
@@ -191,8 +202,10 @@ and used a turn-count proxy. Pilot 3 fixes exactly that.
 - [x] **5A.2 Token-threshold reset** — runner records `peak_input_tokens` + `crossed_threshold` from the
   transcript (validated against real input-side tokens, not a turn guess). Mock-verified. *(v0.5.4)*
 - [x] **5A.3 Wire the `compact` arm** — done (`--resume` to completion); `--mock` validates all 3 arms. *(v0.5.4)*
-- [ ] **5A.4 Run the matrix** — continue/compact/handoff × pilot-3 × K=5–10, interleaved. **⚑ decision/SPEND:**
-  needs explicit budget greenlight (doc estimates a few M tokens / tens of $). Hard budget cap in the harness.
+- [ ] **5A.4 Run the matrix** — continue/compact/handoff × pilot-3 × K=5–10, interleaved. `[claude]`
+  **FUNDED: $20 cap** (greenlit 2026-07-01). Start with one cheap `--arm continue` confirm-pilot on
+  debug-hugelib (does it cross 100k?), then the matrix; each run passes `--budget-usd` and stops before
+  the cap. Fast-follow to the Adopt focus.
 - [ ] **5A.5 Analyze + record** — apply the pre-registered rule (≥5% signal, ≥10–15% win vs BOTH arms at
   equal completion), write the result into `docs/ROI-EXPERIMENT.md`.
 
