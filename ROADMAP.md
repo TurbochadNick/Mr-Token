@@ -202,12 +202,22 @@ and used a turn-count proxy. Pilot 3 fixes exactly that.
 - [x] **5A.2 Token-threshold reset** — runner records `peak_input_tokens` + `crossed_threshold` from the
   transcript (validated against real input-side tokens, not a turn guess). Mock-verified. *(v0.5.4)*
 - [x] **5A.3 Wire the `compact` arm** — done (`--resume` to completion); `--mock` validates all 3 arms. *(v0.5.4)*
-- [ ] **5A.4 Run the matrix** — continue/compact/handoff × pilot-3 × K=5–10, interleaved. `[claude]`
-  **FUNDED: $20 cap** (greenlit 2026-07-01). Start with one cheap `--arm continue` confirm-pilot on
-  debug-hugelib (does it cross 100k?), then the matrix; each run passes `--budget-usd` and stops before
-  the cap. Fast-follow to the Adopt focus.
-- [ ] **5A.5 Analyze + record** — apply the pre-registered rule (≥5% signal, ≥10–15% win vs BOTH arms at
-  equal completion), write the result into `docs/ROI-EXPERIMENT.md`.
+- [x] **5A.4 Run the matrix** — continue/compact/handoff across THREE fixtures. `[claude]`
+  **FUNDED $20 cap; ~$16.75 spent.** Ran a regime sweep, not a single point:
+  - *Low pressure* (debug-hugelib, 30k, n=4): continue $0.327 < compact $0.394 (+20%) < handoff
+    $0.413 (+26%) — reset LOSES (net-negative), not separable.
+  - *High pressure, load-bearing* (debug-speclib, 100k): continue $1.237 ≈ compact (degenerate) <
+    handoff $1.478 (+20%) — reset TIES/LOSES; refs must be re-read.
+  - *High pressure, disposable* (debug-scanlib, 100k, n=2): continue $1.423 > handoff $1.112 (−22%)
+    > compact $1.029 (−28%) — reset **WINS ~30%** at equal completion.
+  - Also fixed a harness bug: the `compact` arm used to `--resume` (reloads full context, no reclaim
+    below the ~200k window) → now a real reset. See `docs/ROI-EXPERIMENT.md` "RESULTS".
+- [x] **5A.5 Analyze + record** — DONE, written to `docs/ROI-EXPERIMENT.md` (RESULTS section).
+  **Answer:** early compaction pays when accumulated context is DISPOSABLE (reclaimable, low
+  re-read risk) with work remaining — NOT when it's merely large. Decisive term = re-read_risk,
+  not raw size. Product implication: gate the "compact now" nudge on reclaimable-junk ×
+  remaining-runway (the engine lacks remaining-runway — Phase-6 refinement). Open follow-up:
+  fixed-compact re-run on speclib to confirm real-compact also loses on load-bearing.
 
 ### B — Show it (dashboard — Nick's TS/web lane) *(I provide the contract, do NOT build)*
 - [ ] **5B.1 Data-surface spec for Nick** — `session_summary.v1` + `session_detail.v1` + `--since`, with the

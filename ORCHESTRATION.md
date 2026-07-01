@@ -39,35 +39,40 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
-- **State (2026-07-01):** v0.5.8 on `main`, clean, all PRs merged.
+- **State (2026-07-01):** v0.5.8 on `main`. ⚠ **Working tree DIRTY, uncommitted** (experiment work
+  this session): `runner.py` compact-arm fix, new `tasks/debug-speclib` + `tasks/debug-scanlib`
+  fixtures, and doc updates (ROADMAP, this file, `docs/ROI-EXPERIMENT.md`). Commit when Zach says.
 - **Reconciled:** Adopt build-work (5C.1/5C.2) was already done by Codex —
   `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
   `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**
   (contact testers per `INTERVIEW-KIT.md`) — not a loop task.
-- **Experiment (5A.4) — IN PROGRESS. Spend ~$5.4 of $20** (est.; confirm from `results.db`).
-  Latest commits: `fccd33a` (harness fix), `89325c4` (30k config). Results DB (gitignored):
-  `backend/experiments/results/results.db`, table `run`.
-  - **Harness fixed** (`experiments/runner.py`): `_peak_carried_tokens` = MAX per-turn carried
-    context (was a cumulative SUM that crossed any threshold trivially); the `continue` arm now
-    records `peak_input_tokens`/`crossed_threshold`. **Cost (cache-weighted) is the honest burn
-    metric**; `total_tokens` (in+out) is cache-blind — secondary only.
-  - **Fixture decision (Zach, 2026-07-01):** the confirm-pilot proved `debug-hugelib` peaks ~45k
-    and finishes in ~10 turns (refs are filler, tests hardcode outputs → agent skips the reading).
-    Rather than rebuild, Zach chose to **lower the threshold** (`reset_threshold_tokens` 100k→30k,
-    `handoff_phase1_turns` 16→5) and study the **low-pressure quadrant** now, accepting a weak signal.
-  - **LOW-PRESSURE RESULT (30k config, crossed_threshold=1 rows):** all arms 100% complete
-    (quality held). continue **$0.33** (n=4, peak 69k) < compact **$0.39 +21%** (n=4, peak 78k)
-    < handoff **$0.47 +45%** (n=3, peak 88k). Reps mattered: at n=1 handoff read as +278%
-    (a $0.72 outlier rollout); n=4 collapsed it to +45%. Conclusion: at low pressure / short
-    runway, resetting costs modestly more (no wall to avoid) — the "compaction loses" quadrant,
-    as predicted. ⚠ **handoff needs 1 more rep for n=4** — top off:
-    `cd backend/experiments && python3 runner.py tasks/debug-hugelib --arm handoff --budget-usd 4 --reps 1`
-- **Next (after reps):** consolidate mean cost ± spread + completed/crossed rates → that's the
-  low-pressure data point. THEN the interesting half of the question: **build a load-bearing
-  fixture** (per-module reference holds the ONLY concrete behavior; property-based tests, not
-  hardcoded examples; distinct per-module logic; sized to cross 100k) to reach the regime where
-  **early compaction wins**. Good [codex] hand-off (scoped; done-criteria = confirm-pilot shows
-  `crossed_threshold=1`).
+- **Experiment (5A.4/5A.5) — DONE. Spend $16.75 of $20.** Full write-up in
+  `backend/docs/ROI-EXPERIMENT.md` → "RESULTS — the regime map". Results DB (gitignored):
+  `backend/experiments/results/results.db`, table `run`. Cost = cache-weighted burn (honest metric).
+  - **THE REGIME MAP (continue vs reset arms, all at equal completion):**
+
+    | Regime | Fixture | Thr | continue | handoff | compact | Verdict |
+    |---|---|---|---|---|---|---|
+    | Low pressure | debug-hugelib (n=4) | 30k | **$0.327** | +26% | +20% | reset LOSES |
+    | High, load-bearing | debug-speclib (n≈1) | 100k | $1.237 | +20% | ≡cont¹ | reset TIES/LOSES |
+    | High, disposable | debug-scanlib (n=2) | 100k | $1.423 | −22% | **−28%** | reset **WINS ~30%** |
+
+    ¹ speclib compact = pre-fix degenerate arm; load-bearing verdict rests on handoff (+20%).
+  - **ANSWER:** early reset pays when accumulated context is **DISPOSABLE** (reclaimable, low
+    re-read_risk) with work remaining — NOT when merely large. Decisive term = `re-read_risk`, not
+    raw size. A size-only "compact at 100k" rule helps on scanlib, hurts on speclib. Validates the
+    working model below. **Product:** gate the "compact now" nudge on reclaimable-junk × remaining-runway.
+  - **HARNESS FIX:** the `compact` arm used to `--resume` (reloads full context; no reclaim below the
+    ~200k window → compact ≡ continue). Now a REAL reset (fresh session + summary) in `runner.py`. That
+    fix produced the scanlib compact win. Headless `claude -p` has no `/compact`.
+  - **NEW FIXTURES** (untracked, NOT committed): `tasks/debug-speclib` (load-bearing: property +
+    one-way SHA-256 digest tests, 24 distinct modules → refs mandatory) and `tasks/debug-scanlib`
+    (disposable: ~120k no-op design notes + tiny per-module refs). Both `generate_seed.py` (buggy +
+    `--solution`), oracle-validated. **⚠ Un-cleaned:** a MOCK row (id19) polluted debug-speclib —
+    `DELETE FROM run WHERE id=19;` pending Zach's OK.
+  - **Open follow-ups:** (a) fixed-compact re-run on speclib to confirm real-compact also loses on
+    load-bearing (not just handoff); (b) more reps for tighter magnitudes (rollout variance is high);
+    (c) commit the two fixtures + runner compact fix if keeping them.
 - **Open research thread (Zach):** *when does compacting early have benefits?* Working model —
   early compaction pays iff `reclaimable_tokens × per-turn-carry-cost × turns_remaining >
   summary_cost + re-establish_cost + re-read_risk`. Three gates: reclaimable-junk (engine has it),

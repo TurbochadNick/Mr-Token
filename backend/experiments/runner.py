@@ -198,21 +198,36 @@ def drive_agent(task_dir: str, manifest: dict, work: str, arm: str,
         }
 
     if arm == "compact":
-        # Phase 1 partway, then RESUME the same session to completion — Claude Code
-        # compacts context as it nears the window. (Headless compaction behaviour is
-        # the open question the 1-run smoke test settles; the path is wired here.)
+        # REAL early compaction. The old path RESUMED the same session (`--resume`), but
+        # resume RELOADS the full transcript — no context is reclaimed unless the run hits
+        # Claude Code's ~200k auto-compaction window (5A finding: compact ≡ continue below
+        # the window). Headless `claude -p` exposes no `/compact`. So we emulate compaction
+        # the only way available: summarize phase 1, then continue in a FRESH session that
+        # carries ONLY the summary (~few k) instead of the full context. Phase-1 edits
+        # persist on disk in `work`, so phase 2 builds on them and re-reads small refs as
+        # needed — while the reclaimed bulk (disposable context) stays dropped.
         r1 = _run_claude(prompt, work, model, budget_usd, max_turns=phase1_turns)
         sid1 = r1.get("session_id")
+        m1 = _measure(sid1, work) if sid1 else {"total_tokens": 0, "est_cost_usd": 0}
         peak = _peak_carried_tokens(sid1, work) if sid1 else None
-        r2 = _run_claude("Continue until the task is complete.", work, model, budget_usd,
-                         resume_sid=sid1) if sid1 else {}
-        sid2 = r2.get("session_id") or sid1
-        m = _measure(sid2, work) if sid2 else {"total_tokens": 0, "est_cost_usd": 0}
-        return {**m, "wall_clock_s": None,
-                "steps": (r1.get("num_turns") or 0) + (r2.get("num_turns") or 0),
-                "reset_fired": 1, "peak_input_tokens": peak,
-                "crossed_threshold": int(bool(peak and peak >= threshold)),
-                "notes": f"live:compact (phase1={phase1_turns} turns)"}
+        from mrtoken.handoff import build_handoff
+        summary = build_handoff(None, sid1) if sid1 else ""
+        seeded = (("COMPACTED CONTEXT — the earlier session was summarized to reclaim space.\n"
+                   "Continue the task using this summary; re-read files as needed.\n\n"
+                   + summary + "\n\nContinue until the task is complete.")
+                  if summary else "Continue until the task is complete.")
+        r2 = _run_claude(seeded, work, model, budget_usd)  # fresh session, NO --resume
+        sid2 = r2.get("session_id")
+        m2 = _measure(sid2, work) if sid2 else {"total_tokens": 0, "est_cost_usd": 0}
+        return {
+            "total_tokens": (m1.get("total_tokens") or 0) + (m2.get("total_tokens") or 0),
+            "est_cost_usd": round((m1.get("est_cost_usd") or 0) + (m2.get("est_cost_usd") or 0), 6),
+            "wall_clock_s": None,
+            "steps": (r1.get("num_turns") or 0) + (r2.get("num_turns") or 0),
+            "tool_errors": (m1.get("tool_errors") or 0) + (m2.get("tool_errors") or 0),
+            "reset_fired": 1, "peak_input_tokens": peak,
+            "crossed_threshold": int(bool(peak and peak >= threshold)),
+            "notes": f"live:compact (real reset, phase1={phase1_turns} turns)"}
 
     raise NotImplementedError(f"unknown arm: {arm}")
 

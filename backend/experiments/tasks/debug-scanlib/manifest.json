@@ -1,0 +1,14 @@
+{
+  "id": "debug-scanlib",
+  "type": "debug-failing-suite",
+  "description": "DISPOSABLE-BLOAT fixture (mirror of debug-speclib): the agent must first read ~120k of design notes that contain NO fix info, then fix 24 modules whose behavior lives in tiny per-module docstrings. The notes are read once and never needed again, so an early reset can drop them and finish cheaply — the regime where early compaction should WIN.",
+  "prompt_file": "TASK.md",
+  "oracle": "oracle.sh",
+  "seed_dir": "seed",
+  "immutable_files": ["test_scanlib.py"],
+  "reset_threshold_tokens": 100000,
+  "handoff_phase1_turns": 18,
+  "agent": {"model": "claude-sonnet-4-6", "effort": "medium", "temperature": 0},
+  "max_steps": 160,
+  "note": "phase1_turns is a placeholder — calibrate from a continue confirm-pilot so the reset fires just after the notes are read (context crosses 100k) and most module fixes remain for phase 2, maximizing turns_remaining for the reset arms."
+}
