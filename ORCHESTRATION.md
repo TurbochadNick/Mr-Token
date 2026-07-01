@@ -55,14 +55,13 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
     and finishes in ~10 turns (refs are filler, tests hardcode outputs → agent skips the reading).
     Rather than rebuild, Zach chose to **lower the threshold** (`reset_threshold_tokens` 100k→30k,
     `handoff_phase1_turns` 16→5) and study the **low-pressure quadrant** now, accepting a weak signal.
-  - **Smoke batch (n=1), all arms complete (quality held):** continue $0.19 (peak 40.5k) <
-    compact $0.29 +55% (peak 55k) < handoff $0.72 +278% (peak 124k). Direction matches theory
-    (resetting loses when there's no wall to avoid), BUT **high rollout variance** (handoff phase-1
-    hit 124k in 5 turns vs continue's 40k in 8 — same prompt, temp 0), so n=1 magnitudes are noise.
-  - **RUNNING NOW (this session's background):** 3 reps/arm (`--reps 3`, cap $4 each) to get n=4
-    means + spread. ⚠ A NEW session won't get the completion notification — check `results.db`
-    row count per arm; re-run any arm short of 4 reps with
-    `python3 runner.py tasks/debug-hugelib --arm <arm> --budget-usd 4 --reps <missing>`.
+  - **LOW-PRESSURE RESULT (30k config, crossed_threshold=1 rows):** all arms 100% complete
+    (quality held). continue **$0.33** (n=4, peak 69k) < compact **$0.39 +21%** (n=4, peak 78k)
+    < handoff **$0.47 +45%** (n=3, peak 88k). Reps mattered: at n=1 handoff read as +278%
+    (a $0.72 outlier rollout); n=4 collapsed it to +45%. Conclusion: at low pressure / short
+    runway, resetting costs modestly more (no wall to avoid) — the "compaction loses" quadrant,
+    as predicted. ⚠ **handoff needs 1 more rep for n=4** — top off:
+    `cd backend/experiments && python3 runner.py tasks/debug-hugelib --arm handoff --budget-usd 4 --reps 1`
 - **Next (after reps):** consolidate mean cost ± spread + completed/crossed rates → that's the
   low-pressure data point. THEN the interesting half of the question: **build a load-bearing
   fixture** (per-module reference holds the ONLY concrete behavior; property-based tests, not
