@@ -215,8 +215,11 @@ and used a turn-count proxy. Pilot 3 fixes exactly that.
 - [ ] **5B.2 Coordination note to Nick** — what's ready + his two open questions now answered (draft; Zach sends).
 
 ### C — Grow it (pilots / GTM) *(materials in lane; outreach is Zach's)*
-- [ ] **5C.1 Pilot one-pager / onboarding** — from `INTERVIEW-KIT.md` + the v0.4.5 capabilities (draft).
-- [ ] **5C.2 BYU TTO pilot framing / weekly report** — Zach-driven; I can draft.
+- [x] **5C.1 Pilot one-pager / onboarding** — done by Codex: `docs/BETA-TESTER-NOTE.md` (paste-ready install
+  + what-to-expect + privacy + feedback + uninstall, for the v0.5.8 beta). *(Reconciled 2026-07-01.)*
+- [x] **5C.2 BYU TTO pilot framing** — done by Codex: `docs/BYU-TTO-PILOT.md` (what it does / doesn't, pilot
+  scope) + `docs/BETA-TESTING.md` + `beta.py`/`beta_evidence.py` tooling. *(Reconciled 2026-07-01.)*
+  **Remaining for Adopt = Zach-driven outreach** (contact testers per `INTERVIEW-KIT.md`) — not a loop task.
 
 ### D — Internal feedback & observability *(backend mine; ~zero budget; do BEFORE 5A.4)*
 We've validated Mr Token ad hoc (dogfood + the `validate` *proxy*). This adds a continuous internal loop

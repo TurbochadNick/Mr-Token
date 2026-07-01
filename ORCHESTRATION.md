@@ -39,8 +39,12 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
-- **State (2026-07-01):** v0.5.8 on `main`, clean, all PRs merged. Beta tooling + install
-  doctor + recommendation-quality gate in place.
-- **Now:** phase = Adopt. Loop pointed at Phase 5C (pilot one-pager, TTO framing) then the
-  funded experiment (5A.4, $20 cap).
-- **Next unchecked:** see ROADMAP; loop picks it up.
+- **State (2026-07-01):** v0.5.8 on `main`, clean, all PRs merged.
+- **Reconciled:** Adopt build-work (5C.1/5C.2) was already done by Codex —
+  `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
+  `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**
+  (contact testers per `INTERVIEW-KIT.md`) — not a loop task.
+- **Next (loop):** the **funded experiment** (5A.4, $20 cap) — start with ONE cheap
+  `--arm continue` confirm-pilot on `debug-hugelib` (does it cross 100k?), report, then PAUSE
+  for results before the full matrix. Alternative [claude] task if deferring spend: 5B.1 Nick
+  data-surface spec.
