@@ -65,14 +65,16 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   - **HARNESS FIX:** the `compact` arm used to `--resume` (reloads full context; no reclaim below the
     ~200k window → compact ≡ continue). Now a REAL reset (fresh session + summary) in `runner.py`. That
     fix produced the scanlib compact win. Headless `claude -p` has no `/compact`.
-  - **NEW FIXTURES** (untracked, NOT committed): `tasks/debug-speclib` (load-bearing: property +
-    one-way SHA-256 digest tests, 24 distinct modules → refs mandatory) and `tasks/debug-scanlib`
-    (disposable: ~120k no-op design notes + tiny per-module refs). Both `generate_seed.py` (buggy +
-    `--solution`), oracle-validated. **⚠ Un-cleaned:** a MOCK row (id19) polluted debug-speclib —
-    `DELETE FROM run WHERE id=19;` pending Zach's OK.
-  - **Open follow-ups:** (a) fixed-compact re-run on speclib to confirm real-compact also loses on
-    load-bearing (not just handoff); (b) more reps for tighter magnitudes (rollout variance is high);
-    (c) commit the two fixtures + runner compact fix if keeping them.
+  - **COMMITTED + PUSHED:** branch `experiment/compaction-regime-map` (`a6ed8ae`: runner compact fix
+    + both fixtures + ROI RESULTS + ROADMAP/baton) is on origin; PR not opened. Mock row id19 deleted.
+    New fixtures `tasks/debug-speclib` (load-bearing) + `tasks/debug-scanlib` (disposable) are tracked.
+  - **NEXT BUILD — the compaction gate (`docs/COMPACTION-GATE.md`, spec'd):** turns the regime map into
+    a proc-engine fix. Key: `intervene.py`'s `RECLAIMABLE` set wrongly treats `re_read_loop`/
+    `repeated_context` (content NEEDED again = load-bearing) as reasons to DROP → route those to `offload`
+    not `handoff`; add disposability + remaining-runway gates. Fixtures are the acceptance test
+    (fire-drop on scanlib, suppress-drop on speclib). ROADMAP 6.8-pre. This is the roadblock to 6.8 L3.
+  - **Open follow-ups:** (a) fixed-compact re-run on speclib (confirm real-compact also loses on
+    load-bearing); (b) more reps for tighter magnitudes; (c) 5B.1 data-surface spec for Nick (in Claude's lane).
 - **Open research thread (Zach):** *when does compacting early have benefits?* Working model —
   early compaction pays iff `reclaimable_tokens × per-turn-carry-cost × turns_remaining >
   summary_cost + re-establish_cost + re-read_risk`. Three gates: reclaimable-junk (engine has it),

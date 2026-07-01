@@ -279,8 +279,17 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
 - [x] **6.7 Measure-don't-degrade**
   → done: commit `7a397d8`. `outcomes.py` central store; proc engine auto-captures ctx-delta effect per
     tool; a tool trending negative auto-disables via policy (→ off) + says how to re-enable. 71 tests green.
+- [ ] **6.8-pre The compaction gate** — spec'd in `docs/COMPACTION-GATE.md` (`[claude]`). The 5A regime
+  map shows `pressure ∧ reclaimable-junk` is necessary but not sufficient — a reset WINS on disposable
+  context, LOSES (+20%) on load-bearing. Worse, `intervene.py`'s `RECLAIMABLE` set treats `re_read_loop`/
+  `repeated_context` (which mean content is *needed again*) as reasons to DROP. Fix, phased:
+  (1) route those signals to `offload` (keep-but-externalize), not `handoff`; (2) add a disposability
+  gate (per-block turns-since-access); (3) add a remaining-runway proxy (near-done suppression).
+  **Acceptance test = the two fixtures**: gate must fire-drop on debug-scanlib, suppress-drop on
+  debug-speclib (add to 5D.3 golden). Prereq for 6.8.
 - [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
-  help, at equal quality. **⚑ decision per tool** before it defaults to auto.
+  help, at equal quality, AND only in the disposable ∧ runway-remaining regime (see 6.8-pre).
+  **⚑ decision per tool** before it defaults to auto.
 
 ## Phase 7 — Prove the value + plug-and-play hub *(from Rosson's feedback)*
 
