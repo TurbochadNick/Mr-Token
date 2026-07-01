@@ -44,7 +44,19 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
   `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**
   (contact testers per `INTERVIEW-KIT.md`) — not a loop task.
-- **Next (loop):** the **funded experiment** (5A.4, $20 cap) — start with ONE cheap
-  `--arm continue` confirm-pilot on `debug-hugelib` (does it cross 100k?), report, then PAUSE
-  for results before the full matrix. Alternative [claude] task if deferring spend: 5B.1 Nick
-  data-surface spec.
+- **Experiment (5A.4) — pilot done, ~$0.62 of $20 spent. VERDICT: do NOT run the matrix yet.**
+  Two capped `--arm continue` confirm-pilots on `debug-hugelib`: peak carried context **44.7k**,
+  `crossed_threshold=0` — the task does NOT reach the 100k window. Root cause: the "BEHAVIOR
+  REFERENCE" blocks are generic filler, and the tests hardcode expected outputs, so a capable
+  agent skips the ~74k of reading and fixes all 16 modules from the test file + docstrings.
+  Forced-read-by-instruction fails against a goal-optimizing agent.
+  - **Harness fixes landed** (`experiments/runner.py`): `_peak_carried_tokens` = MAX per-turn
+    carried context (was a cumulative SUM that crossed any threshold trivially); the `continue`
+    arm now records `peak_input_tokens`/`crossed_threshold`. Cost (cache-weighted) is the honest
+    burn metric; `total_tokens` (in+out) is cache-blind and secondary only.
+- **Next: rebuild the fixture** so the large content is LOAD-BEARING — per-module reference that
+  states the concrete behavior (formula/constant), tests that check properties (not hardcoded
+  examples), distinct per-module logic (no generalizable pattern), sized so reading all N crosses
+  100k. Good [codex] hand-off (scoped, test-checkable; done-criteria = confirm-pilot shows
+  `crossed_threshold=1`). This shape also serves the "when does compacting early help" question.
+  Awaiting Zach's call on fixture strategy + whether to delegate to Codex.

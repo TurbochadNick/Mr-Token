@@ -102,10 +102,12 @@ def _measure(session_id: str, work: str) -> dict:
     return {"total_tokens": row[0], "est_cost_usd": row[1], "tool_errors": row[2]}
 
 
-def _input_side_tokens(session_id: str, work: str):
-    """Cumulative input-side tokens (input + cache read + cache write) for a session —
-    the 'carried context' the 100k reset threshold is measured against. None if the
-    transcript isn't found yet."""
+def _peak_carried_tokens(session_id: str, work: str):
+    """PEAK per-turn carried context for a session: MAX over model calls of
+    (input + cache_read + cache_write) tokens. This is the context actually held at
+    the fullest single turn — the right quantity for 'did it cross the 100k window',
+    NOT the cumulative SUM across turns (which balloons and crosses any threshold
+    trivially). None if the transcript isn't found yet."""
     from mrtoken.ingest import connect, load_prices, ingest_file
     import glob, tempfile as _tf
     esc = work.replace("/", "-").replace(".", "-")
@@ -117,9 +119,10 @@ def _input_side_tokens(session_id: str, work: str):
     conn = connect(db)
     r = ingest_file(conn, hits[0], load_prices())
     tid = conn.execute("SELECT id FROM trace WHERE session_id=?", (r["session_id"],)).fetchone()[0]
-    row = conn.execute("SELECT input_tokens + cache_read_tokens + cache_write_tokens "
-                       "FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
-    return row[0] if row else None
+    row = conn.execute(
+        "SELECT MAX(input_tokens + cache_read_input_tokens + cache_creation_input_tokens) "
+        "FROM model_call WHERE trace_id=?", (tid,)).fetchone()
+    return row[0] if row and row[0] is not None else None
 
 
 def _drive_mock(manifest: dict, arm: str) -> dict:
@@ -152,14 +155,19 @@ def drive_agent(task_dir: str, manifest: dict, work: str, arm: str,
     model = manifest["agent"]["model"]
     prompt = _read_prompt(task_dir, manifest)
 
+    threshold = manifest.get("reset_threshold_tokens", 100000)
+
     if arm == "continue":
         res = _run_claude(prompt, work, model, budget_usd)
         sid = res.get("session_id")
         m = _measure(sid, work) if sid else {"_warn": res.get("_error", "no session")}
+        # confirm-pilot's whole job: did a naive continue actually cross the window?
+        peak = _peak_carried_tokens(sid, work) if sid else None
         return {**m, "wall_clock_s": None, "steps": res.get("num_turns"),
-                "reset_fired": 0, "notes": "live:continue"}
+                "reset_fired": 0, "peak_input_tokens": peak,
+                "crossed_threshold": int(bool(peak and peak >= threshold)),
+                "notes": "live:continue"}
 
-    threshold = manifest.get("reset_threshold_tokens", 100000)
     phase1_turns = manifest.get("handoff_phase1_turns", 8)
 
     if arm == "handoff":
@@ -169,7 +177,7 @@ def drive_agent(task_dir: str, manifest: dict, work: str, arm: str,
         m1 = _measure(sid1, work) if sid1 else {"total_tokens": 0, "est_cost_usd": 0}
         # token-threshold reset (5A.2): record the input-side tokens phase 1 reached,
         # so we KNOW whether the reset point was genuinely crossed — not a turn guess.
-        peak = _input_side_tokens(sid1, work) if sid1 else None
+        peak = _peak_carried_tokens(sid1, work) if sid1 else None
         # Generate a compact handoff from phase 1, then a FRESH session continues
         # (work dir still holds phase 1's edits, so phase 2 builds on them).
         from mrtoken.handoff import build_handoff
@@ -195,7 +203,7 @@ def drive_agent(task_dir: str, manifest: dict, work: str, arm: str,
         # the open question the 1-run smoke test settles; the path is wired here.)
         r1 = _run_claude(prompt, work, model, budget_usd, max_turns=phase1_turns)
         sid1 = r1.get("session_id")
-        peak = _input_side_tokens(sid1, work) if sid1 else None
+        peak = _peak_carried_tokens(sid1, work) if sid1 else None
         r2 = _run_claude("Continue until the task is complete.", work, model, budget_usd,
                          resume_sid=sid1) if sid1 else {}
         sid2 = r2.get("session_id") or sid1
