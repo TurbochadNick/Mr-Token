@@ -28,8 +28,13 @@ is called out up front so the loop stops and asks instead of guessing.
 | Compaction gate — phase 1 (gate the DROP path) | `compaction-gate-phase1.md` | Codex / either | **ready** | `context_rot` no longer leads with a destructive `handoff` w/o a disposability signal; `./scripts/test-backend.sh` green incl. new regime tests |
 | Real in-the-wild ROI (cross-session linkage) | `roi-cross-session-linkage.md` | Codex / either | **ready** | `roi --measure` emits a non-degenerate acted-vs-ignored number (method B no longer all-"ignored") |
 | Experiment closeout (speclib fixed-compact + reps) | `experiment-closeout.md` | Claude | **ready** (needs ~$3 of the $20) | speclib fixed-compact n≥2 recorded; `ROI-EXPERIMENT.md` RESULTS updated |
-| 5B.2 — refresh the Nick note | _(brief TBD)_ | Claude draft, Zach sends | todo | `docs/HANDOFF-TO-NICK.md` matches the shipped v1 surface; two questions marked answered |
+| 5B.2 — refresh the Nick note | `5b2-nick-note.md` | Claude draft, **Zach sends** | **ready** | `docs/HANDOFF-TO-NICK.md` matches the shipped v1 surface; two questions marked answered |
 | K2 pane icon = Mr Token logo | _(brief TBD)_ | Claude | **BLOCKED** | no logo asset exists in-repo; source/create the logo, learn how K2 sets a pane icon, then wire it |
+
+## Onboarding a new agent (e.g. Fable)
+See **`ONBOARDING.md`** at the repo root — start-here + the trio's roles + **K2 collision-avoidance
+for running Fable in a parallel pane on this workspace**. Dispatch a `ready` brief above to Fable the
+same way as Codex (own branch/worktree, review, merge).
 
 ## Related
 - `ROADMAP.md` — the master plan (these briefs are executable slices of it)

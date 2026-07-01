@@ -10,6 +10,11 @@ off cleanly. Last set 2026-07-01.*
 - **Codex — partner + failover.** Owns scoped, async, well-specified, test-checkable work
   (a spec'd feature, a mechanical refactor, a long diagnostic) and strong structured output.
   Either agent consults the other for a second opinion when the other's strengths fit.
+- **Fable 5 (`claude-fable-5`) — conditional peak-coding executor.** Reinstated 2026-07-01 (export
+  controls lifted). If Zach runs it, he'll launch it in a **second K2 pane on this workspace**; treat
+  it like Codex — hand it a scoped `GOALS/` brief on its own branch/worktree, review the diff, merge.
+  **A/B before adopting** (the ~95% SWE-bench is pre-suspension). Full setup + K2 collision-avoidance:
+  `ONBOARDING.md`. Decision to use it is Zach's.
 
 ## The bus is git
 - **`ROADMAP.md`** is the shared, loop-able task list. Each open task is owner-tagged:
@@ -39,10 +44,12 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
-- **State (2026-07-01):** v0.5.8. Experiment work COMMITTED + PUSHED on branch
-  `experiment/compaction-regime-map` (`a6ed8ae`, `e881b43`) — not yet merged to `main`, PR not opened.
-  ⚠ **Uncommitted on that branch:** the 5B.1 draft (`docs/UI-INTEGRATION.md` + ROADMAP/baton) — being
-  looped on; commit once refined.
+- **State (2026-07-01):** v0.5.8. All this session's work is on branch
+  `experiment/compaction-regime-map` (pushed) — **not merged to `main`, PR not opened.** Covers: the
+  5A regime-map experiment, compaction-gate spec, `GOALS/` loop briefs, 5B.1 (`UI-INTEGRATION.md`) +
+  5B.2 brief, and **Fable enablement** (`ONBOARDING.md` incl. K2 parallel-session coordination;
+  Fable role added to the orchestration model). Global (not in-repo): `/which-model` snapshot updated
+  for Fable's 2026-07-01 reinstatement.
 - **Reconciled:** Adopt build-work (5C.1/5C.2) was already done by Codex —
   `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
   `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**
