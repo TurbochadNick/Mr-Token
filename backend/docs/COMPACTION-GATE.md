@@ -31,14 +31,20 @@ Two terms decide it, and **the engine currently measures neither**:
 2. **remaining-runway** — is there enough work left for per-turn savings to compound?
    (`turns_to_full` is turns-to-context-**wall**, NOT turns-to-**task-done** — different quantity.)
 
-### The sharp bug this surfaces
+### Where the current engine is right, and where the gap is
 
-Two of the four `RECLAIMABLE` signals — **`re_read_loop`** and **`repeated_context`** — are
-literally evidence that the content **is needed repeatedly**, i.e. **load-bearing**. Firing a
-*drop*-style nudge (`handoff`) on them points the agent straight into the LOSE regime: it drops
-context it will have to re-read (exactly the speclib +20%). The engine treats "being re-paid into
-context" as a reason to drop, when the experiment says it's the reason **not** to drop — and
-instead to **externalize-but-keep** (`offload`), which removes carry cost while preserving access.
+Credit where due: `_tool_for()` already routes `re_read_loop`/`repeated_context` to **`offload`**
+(keep-but-externalize) — the regime-safe choice, since that content is being re-paid *because it's
+needed again*. Good. `huge_tool_output` → `offload` too.
+
+The gap is the **one DROP path**: `context_rot` → **`handoff`** (a fresh session that drops the
+transcript). `context_rot` is a *generic* "this session has run long and is filling up" signal — it
+carries **no information about whether the accumulated context is disposable or load-bearing.** So the
+only destructive nudge the engine emits fires on a signal that can't tell the win regime from the lose
+regime. That's exactly the speclib case: pressure is real, but the context is load-bearing, so
+`handoff` drops refs that must be re-read (+20%). Today this is only L1 "tell" (advisory, low stakes),
+but it is the precise path that **must not** graduate to L3 auto-act (6.8) without a disposability +
+runway gate — an auto-`handoff` on `context_rot` over load-bearing context would actively raise cost.
 
 ## The fix: two gates + a tool-choice rule
 
@@ -113,11 +119,12 @@ regression so the classifier can't silently regress.
 
 ## Phasing
 
-1. **Reclassify + tool-choice rule (cheap, do first).** Stop nudging `handoff` on
-   `re_read_loop`/`repeated_context`; route those to `offload`. Immediate correctness gain, no
-   new signals needed.
-2. **Gate 1 (disposability recency).** Per-block turns-since-access; drop-nudges require a
-   disposable target.
+1. **Gate the one DROP path (cheap, do first).** `context_rot → handoff` currently fires with no
+   disposability signal. Until Gate 1 exists, make it conservative: on `context_rot` alone, prefer
+   `offload` (reversible) and only *mention* handoff as an option, rather than leading with the drop.
+   (`re_read_loop`/`repeated_context`/`huge_tool_output` already route to `offload` — leave them.)
+2. **Gate 1 (disposability recency).** Per-block turns-since-access; a `handoff`/`compact` DROP
+   nudge requires a disposable target, not just `context_rot` pressure.
 3. **Gate 2 (runway proxy).** Near-done suppression from progress trend.
 4. **Only then, 6.8 L3 auto-act** — enable auto-drop **exclusively** in the
    disposable ∧ runway-remaining case that the fixtures + 6.7 outcomes prove positive. Auto-act

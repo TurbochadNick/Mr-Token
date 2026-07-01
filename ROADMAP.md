@@ -220,9 +220,13 @@ and used a turn-count proxy. Pilot 3 fixes exactly that.
   fixed-compact re-run on speclib to confirm real-compact also loses on load-bearing.
 
 ### B — Show it (dashboard — Nick's TS/web lane) *(I provide the contract, do NOT build)*
-- [ ] **5B.1 Data-surface spec for Nick** — `session_summary.v1` + `session_detail.v1` + `--since`, with the
-  estimated↔actual join and example queries. (backend doc — in lane)
-- [ ] **5B.2 Coordination note to Nick** — what's ready + his two open questions now answered (draft; Zach sends).
+- [~] **5B.1 Data-surface spec for Nick** — DRAFT complete in `docs/UI-INTEGRATION.md`: it now specs the
+  full v1 surface — `session_summary.v1` (+ new `is_low_activity` col) + `session_detail.v1` (per-model-call
+  timeline) + `export` flags (`--detail`/`--since`/`--redact`/`--codex`) + estimated↔actual join + example
+  queries + stability contract. Both prior "open questions" were already BUILT (session_detail view, --since);
+  this doc catches the spec up to the code. **Looping to refine; then commit.**
+- [ ] **5B.2 Coordination note to Nick** — what's ready + his two open questions now answered (draft; Zach
+  sends). ⚠ `docs/HANDOFF-TO-NICK.md` is STALE (still lists the two questions as open) — 5B.2 = refresh it.
 
 ### C — Grow it (pilots / GTM) *(materials in lane; outreach is Zach's)*
 - [x] **5C.1 Pilot one-pager / onboarding** — done by Codex: `docs/BETA-TESTER-NOTE.md` (paste-ready install
@@ -279,14 +283,14 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
 - [x] **6.7 Measure-don't-degrade**
   → done: commit `7a397d8`. `outcomes.py` central store; proc engine auto-captures ctx-delta effect per
     tool; a tool trending negative auto-disables via policy (→ off) + says how to re-enable. 71 tests green.
-- [ ] **6.8-pre The compaction gate** — spec'd in `docs/COMPACTION-GATE.md` (`[claude]`). The 5A regime
-  map shows `pressure ∧ reclaimable-junk` is necessary but not sufficient — a reset WINS on disposable
-  context, LOSES (+20%) on load-bearing. Worse, `intervene.py`'s `RECLAIMABLE` set treats `re_read_loop`/
-  `repeated_context` (which mean content is *needed again*) as reasons to DROP. Fix, phased:
-  (1) route those signals to `offload` (keep-but-externalize), not `handoff`; (2) add a disposability
-  gate (per-block turns-since-access); (3) add a remaining-runway proxy (near-done suppression).
-  **Acceptance test = the two fixtures**: gate must fire-drop on debug-scanlib, suppress-drop on
-  debug-speclib (add to 5D.3 golden). Prereq for 6.8.
+- [ ] **6.8-pre The compaction gate** — spec'd in `docs/COMPACTION-GATE.md`; phase-1 brief in
+  `GOALS/compaction-gate-phase1.md` (`[claude]`/`[codex]`). The 5A regime map shows `pressure ∧
+  reclaimable-junk` is necessary but not sufficient — a reset WINS on disposable context, LOSES (+20%)
+  on load-bearing. `intervene.py` already routes re_read/repeated/huge → `offload` (safe); the gap is
+  the lone DROP path `context_rot → handoff`, which fires on a generic pressure signal with no
+  disposability info. Fix, phased: (1) make that drop safe-by-default; (2) disposability gate
+  (per-block turns-since-access); (3) remaining-runway proxy (near-done suppression). **Acceptance =
+  the two fixtures** (fire-drop on debug-scanlib, suppress-drop on debug-speclib; add to 5D.3). Prereq for 6.8.
 - [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
   help, at equal quality, AND only in the disposable ∧ runway-remaining regime (see 6.8-pre).
   **⚑ decision per tool** before it defaults to auto.

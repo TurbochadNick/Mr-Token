@@ -39,9 +39,10 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
-- **State (2026-07-01):** v0.5.8 on `main`. ⚠ **Working tree DIRTY, uncommitted** (experiment work
-  this session): `runner.py` compact-arm fix, new `tasks/debug-speclib` + `tasks/debug-scanlib`
-  fixtures, and doc updates (ROADMAP, this file, `docs/ROI-EXPERIMENT.md`). Commit when Zach says.
+- **State (2026-07-01):** v0.5.8. Experiment work COMMITTED + PUSHED on branch
+  `experiment/compaction-regime-map` (`a6ed8ae`, `e881b43`) — not yet merged to `main`, PR not opened.
+  ⚠ **Uncommitted on that branch:** the 5B.1 draft (`docs/UI-INTEGRATION.md` + ROADMAP/baton) — being
+  looped on; commit once refined.
 - **Reconciled:** Adopt build-work (5C.1/5C.2) was already done by Codex —
   `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
   `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**
@@ -68,13 +69,22 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   - **COMMITTED + PUSHED:** branch `experiment/compaction-regime-map` (`a6ed8ae`: runner compact fix
     + both fixtures + ROI RESULTS + ROADMAP/baton) is on origin; PR not opened. Mock row id19 deleted.
     New fixtures `tasks/debug-speclib` (load-bearing) + `tasks/debug-scanlib` (disposable) are tracked.
-  - **NEXT BUILD — the compaction gate (`docs/COMPACTION-GATE.md`, spec'd):** turns the regime map into
-    a proc-engine fix. Key: `intervene.py`'s `RECLAIMABLE` set wrongly treats `re_read_loop`/
-    `repeated_context` (content NEEDED again = load-bearing) as reasons to DROP → route those to `offload`
-    not `handoff`; add disposability + remaining-runway gates. Fixtures are the acceptance test
-    (fire-drop on scanlib, suppress-drop on speclib). ROADMAP 6.8-pre. This is the roadblock to 6.8 L3.
+  - **NEXT BUILD — the compaction gate (`docs/COMPACTION-GATE.md` spec; `GOALS/compaction-gate-phase1.md`
+    brief):** turns the regime map into a proc-engine fix. CORRECTED root cause: `intervene.py` already
+    routes re_read/repeated/huge → `offload` (safe); the real gap is the lone DROP path `context_rot →
+    handoff`, which fires on a generic pressure signal carrying no disposability info. Phase 1 = make that
+    drop safe-by-default; phases 2–3 = disposability + runway gates. Fixtures are the acceptance test
+    (fire-drop on scanlib, suppress-drop on speclib). ROADMAP 6.8-pre. The roadblock to 6.8 L3.
+  - **`GOALS/` created — loop-ready task briefs** (README + 3 briefs: compaction-gate-phase1,
+    roi-cross-session-linkage, experiment-closeout). Each is self-contained for `/loop` or a Codex
+    hand-off. Uncommitted with the 5B.1 draft.
   - **Open follow-ups:** (a) fixed-compact re-run on speclib (confirm real-compact also loses on
-    load-bearing); (b) more reps for tighter magnitudes; (c) 5B.1 data-surface spec for Nick (in Claude's lane).
+    load-bearing); (b) more reps for tighter magnitudes.
+- **5B.1 (Nick data-surface spec) — DRAFT, looping.** `docs/UI-INTEGRATION.md` now specs the full v1
+  surface (summary + `session_detail.v1` timeline + export `--detail`/`--since`/`--redact`/`--codex` +
+  `is_low_activity` + join + stability). Both prior open questions were already built; the doc catches up
+  to code. Uncommitted — refine then commit. **Next in Claude's lane: 5B.2** = refresh the STALE
+  `docs/HANDOFF-TO-NICK.md` (still lists the two questions as open) into the "here's what's ready" note.
 - **Open research thread (Zach):** *when does compacting early have benefits?* Working model —
   early compaction pays iff `reclaimable_tokens × per-turn-carry-cost × turns_remaining >
   summary_cost + re-establish_cost + re-read_risk`. Three gates: reclaimable-junk (engine has it),
