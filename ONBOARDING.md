@@ -31,12 +31,19 @@ tool names) — never raw prompts/source/secrets.
 |---|---|---|
 | **Claude** (lead) | `claude-opus-4-8` | interactive, planning, architecture, debugging, review/merge, talking with Zach |
 | **Codex** | GPT-5.x | async / fire-and-forget scoped work; failover when Claude is out of tokens |
-| **Fable** *(conditional)* | `claude-fable-5` | **proposed: peak-capability coding executor** on scoped, test-checkable `GOALS/` briefs |
+| **Fable** *(conditional)* | `claude-fable-5` | **proposed: peak-capability coding executor in the Python `backend/` lane** on scoped, test-checkable `GOALS/` briefs |
 
-**Fable's default role:** treat it like Codex — hand it a `GOALS/<brief>.md` with a clear Loop-exit;
-it runs on a **branch**, commits, and Claude/Zach reviews and merges (git is the bus). Best-fit briefs
-are the scoped, oracle/test-checkable ones (`compaction-gate-phase1.md`, `roi-cross-session-linkage.md`).
-Keep the interactive/judgment work and the budget-spending experiment runs with Claude.
+**Fable's lane = the Python backend, because that's where it can run unattended safely:**
+- **In lane:** `backend/mrtoken/` briefs (`compaction-gate-phase1.md` → `intervene.py`,
+  `roi-cross-session-linkage.md` → `roi.py`). Both have an **objective oracle** —
+  `./scripts/test-backend.sh` — so a fire-and-forget executor knows when it's done and can't quietly
+  regress. That's the exact fit for a strong coder run headless.
+- **Out of lane (leave to their owners):** the **TS/web side** (`src/`, `web/`) is **Nick's lane**
+  (ROADMAP §B) — co-owned and coordination-heavy, don't hand it to a parallel agent; the
+  **budget-spending experiment runs** (`backend/experiments/`, the $20 cap) stay with **Claude**, who
+  tracks spend; and anything **`[zach-gated]`** in the ROADMAP stops for Zach.
+- Mechanics: treat it like Codex — a `GOALS/<brief>.md` with a clear Loop-exit, on its own branch,
+  Claude/Zach reviews the diff and merges (git is the bus).
 
 **Before committing to Fable here, A/B it.** Pre-suspension it briefly topped SWE-bench (~95%), but
 that's unverified post-reinstatement — run one real Mr Token brief on Fable vs Claude/Codex and judge
@@ -68,9 +75,12 @@ and one git checkout. So rule #1 is **avoid collisions**.
 3. **Strict lane split** (only if truly concurrent in one tree): partition by path so file sets don't
    overlap (Fable touches only its brief's files; Claude stays out). Fragile — use non-overlapping briefs.
 
-**Claim work through `GOALS/`:** one brief per agent, chosen so their file lanes don't overlap (e.g.
-Fable → `roi-cross-session-linkage.md` [backend/`roi.py`], Claude → docs / a different brief). Announce
-the claim so the other sees it.
+**Claim work through `GOALS/`:** one brief per agent, chosen so their file lanes don't overlap. Mr
+Token's natural seams make this easy — the two codebases barely touch and even the DB is partitioned
+(TS owns the `events` table; Python owns the `session_summary`/`session_detail` views — see repo
+`CLAUDE.md`). So a safe split is: **Fable → `backend/mrtoken/`** (e.g. `roi-cross-session-linkage.md`
+touches only `roi.py` + a test), **Claude/Nick → `web/` + `src/` + `docs/`**. Announce the claim
+(`k2 checkin --status`) so the other sees it.
 
 **Coordinate (K2 agent verbs):**
 - `k2 workspace list --running` — who's live. `k2 read <ws>` — peek the other's screen **before** you
@@ -89,5 +99,9 @@ these hand-written docs; don't run `k2 tunnel start` (keeps keys/relay local). K
 (singular) as the per-workspace profile — simplest is to tell Fable "read `ONBOARDING.md` first" on launch.
 
 ## If you ARE Fable, first task
-Read the five docs above, then take the top **`ready`** brief in `GOALS/README.md` and execute it to
-its Loop-exit on a branch. If a brief hits a Zach-only decision, **stop and surface it** — don't guess.
+Read the five docs above, then take **`GOALS/compaction-gate-phase1.md`** (backend Python; objective
+exit = `./scripts/test-backend.sh` green with the new regime tests) and execute it to its Loop-exit on
+a branch. It's self-contained and touches only `backend/mrtoken/intervene.py` + tests — clean lane, no
+collision with Claude's docs/experiment work. If a brief hits a Zach-only decision, **stop and surface
+it** — don't guess. Verify claims against the real code first (the spec once described `intervene.py`
+wrongly; the brief has the corrected root cause).
