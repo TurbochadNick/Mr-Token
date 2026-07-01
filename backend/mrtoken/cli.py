@@ -183,6 +183,7 @@ def cmd_offload_roi(args):
         threshold_chars=args.threshold_chars,
         ignore_passed=args.ignore_passed,
         follow_passed=args.follow_passed,
+        mode="prevention" if getattr(args, "prevention", False) else "post-anchor",
     )
     if getattr(args, "json", False):
         print(to_json(report))
@@ -495,6 +496,8 @@ def main(argv=None):
         help="declare the ignore arm oracle passed")
     p_offload_roi.add_argument("--follow-passed", action="store_true",
         help="declare the follow-offload arm oracle passed")
+    p_offload_roi.add_argument("--prevention", action="store_true",
+        help="compare whole-session totals when the follow arm prevents huge output")
     p_offload_roi.add_argument("--json", action="store_true", help="emit JSON instead of a table")
 
     p_status = sub.add_parser("status",

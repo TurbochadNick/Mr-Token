@@ -20,6 +20,7 @@ settings and hooks, and is idempotent (won't add our hook twice).
 """
 from __future__ import annotations
 import json, os, shutil, sys
+import re
 from datetime import datetime, timezone
 
 from mrtoken.ingest import connect, find_project_root
@@ -33,6 +34,8 @@ SKILLS_SRC = os.path.join(os.path.dirname(HERE), "skills")  # backend/skills/<na
 HOOK_MARKER = "on_stop.py"                  # idempotency sentinel for Stop hook
 PROMPT_HOOK_MARKER = "on_prompt_submit.py"  # idempotency sentinel for UserPromptSubmit
 COMPACT_HOOK_MARKER = "on_pre_compact.py"   # idempotency sentinel for PreCompact
+CODEX_MCP_NAME = "mrtoken"
+CODEX_MCP_MARKER = "mcp_servers.mrtoken"
 
 
 def hook_command() -> str:
@@ -65,6 +68,132 @@ def statusline_command() -> str:
 def statusline_block() -> dict:
     """The statusLine value in the object form Claude Code expects."""
     return {"type": "command", "command": statusline_command(), "padding": 0}
+
+
+def mcp_command_config() -> dict:
+    """The Codex/Claude MCP server launch config.
+
+    Prefer the installed console script because Codex launches MCP servers without
+    shell expansion. In editable/source installs where the script is not on PATH,
+    fall back to `python -m mrtoken.cli mcp` with PYTHONPATH pinned to this tree.
+    """
+    exe = shutil.which("mrtoken-transcript")
+    if exe:
+        return {"command": exe, "args": ["mcp"]}
+    pkg_parent = os.path.dirname(HERE)  # dir containing the mrtoken package
+    return {
+        "command": sys.executable,
+        "args": ["-m", "mrtoken.cli", "mcp"],
+        "env": {"PYTHONPATH": pkg_parent},
+    }
+
+
+def _toml_str(value: str) -> str:
+    return json.dumps(value)
+
+
+def _toml_array(values: list[str]) -> str:
+    return "[" + ", ".join(_toml_str(v) for v in values) + "]"
+
+
+def _codex_mcp_block() -> str:
+    cfg = mcp_command_config()
+    lines = [
+        f"[mcp_servers.{CODEX_MCP_NAME}]",
+        f"command = {_toml_str(cfg['command'])}",
+        f"args = {_toml_array(cfg.get('args') or [])}",
+        "startup_timeout_sec = 30",
+    ]
+    env = cfg.get("env") or {}
+    if env:
+        lines.append("")
+        lines.append(f"[mcp_servers.{CODEX_MCP_NAME}.env]")
+        for key in sorted(env):
+            lines.append(f"{key} = {_toml_str(str(env[key]))}")
+    return "\n".join(lines) + "\n"
+
+
+def _toml_section_name(line: str) -> str | None:
+    m = re.match(r"^\s*\[([^\[\]]+)\]\s*(?:#.*)?$", line)
+    return m.group(1).strip() if m else None
+
+
+def _is_mrtoken_mcp_section(name: str | None) -> bool:
+    return bool(name == CODEX_MCP_MARKER or (name or "").startswith(CODEX_MCP_MARKER + "."))
+
+
+def _strip_codex_mcp_config_text(text: str) -> str:
+    """Remove only [mcp_servers.mrtoken] and nested tables from config.toml."""
+    out = []
+    skipping = False
+    for line in text.splitlines(keepends=True):
+        section = _toml_section_name(line)
+        if section is not None:
+            skipping = _is_mrtoken_mcp_section(section)
+        if not skipping:
+            out.append(line)
+    return "".join(out).rstrip() + ("\n\n" if out else "")
+
+
+def _codex_mcp_configured(path: str) -> bool:
+    try:
+        import tomllib
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, ValueError):
+        return False
+    server = ((data.get("mcp_servers") or {}).get(CODEX_MCP_NAME) or {})
+    if not isinstance(server, dict):
+        return False
+    args = server.get("args") or []
+    command = str(server.get("command") or "")
+    is_console = os.path.basename(command) == "mrtoken-transcript" and args == ["mcp"]
+    is_python_module = args == ["-m", "mrtoken.cli", "mcp"]
+    return bool(is_console or is_python_module)
+
+
+def _install_codex_mcp_config(path: str, emit=print) -> bool:
+    """Install/update Codex's Mr Token MCP server config.
+
+    Returns True if the file was written. Existing unrelated config is preserved.
+    """
+    if _codex_mcp_configured(path):
+        emit("  ✓ Codex MCP server already registered")
+        return False
+    try:
+        with open(path, encoding="utf-8") as fh:
+            existing = fh.read()
+    except OSError:
+        existing = ""
+    new_text = _strip_codex_mcp_config_text(existing) + _codex_mcp_block()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    backup = _backup(path)
+    if backup:
+        emit(f"  ✓ backed up Codex config: {os.path.basename(backup)}")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(new_text)
+    emit(f"  ✓ Codex MCP server registered: {path}")
+    return True
+
+
+def _uninstall_codex_mcp_config(path: str, emit=print) -> bool:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            existing = fh.read()
+    except OSError:
+        emit("  · no Codex MCP config found")
+        return False
+    stripped = _strip_codex_mcp_config_text(existing).rstrip() + "\n"
+    if stripped == existing:
+        emit("  · no Codex MCP server found")
+        return False
+    backup = _backup(path)
+    if backup:
+        emit(f"  ✓ backed up Codex config: {os.path.basename(backup)}")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(stripped)
+    emit(f"  ✓ removed Codex MCP server: {path}")
+    return True
 
 
 def install_skills(skills_root: str) -> list[str]:
@@ -193,6 +322,7 @@ def _strip_hooks(settings: dict, event: str, marker: str) -> int:
 
 def uninstall(project_root: str | None = None, settings_path: str | None = None,
               global_settings_path: str | None = None, codex_hooks_path: str | None = None,
+              codex_config_path: str | None = None,
               remove_skills: bool = True,
               emit=print) -> int:
     """Reverse of init: remove MR Token's hooks + statusLine (and the /mr-* skills)
@@ -233,6 +363,7 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
         emit("  · no global hooks found")
 
     codex_hooks_path = codex_hooks_path or os.path.expanduser("~/.codex/hooks.json")
+    codex_config_path = codex_config_path or os.path.join(os.path.dirname(codex_hooks_path), "config.toml")
     codex = _load_settings(codex_hooks_path)
     codex_changed = bool(_strip_hooks(codex, "Stop", HOOK_MARKER))
     if codex_changed:
@@ -242,6 +373,7 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
         emit(f"  ✓ removed Codex Stop hook: {codex_hooks_path}")
     else:
         emit("  · no Codex Stop hook found")
+    _uninstall_codex_mcp_config(codex_config_path, emit=emit)
 
     if remove_skills:
         skills_root = os.path.join(os.path.dirname(global_settings_path), "skills")
@@ -263,6 +395,7 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
 def init(project_root: str | None = None, settings_path: str | None = None,
          global_settings_path: str | None = None, codex_skills_root: str | None = None,
          codex_hooks_path: str | None = None,
+         codex_config_path: str | None = None,
          dry_run: bool = False, emit=print) -> int:
     root = find_project_root(project_root)
     db_path = resolve_db_path(root)  # shared contract (per-project for real projects)
@@ -284,6 +417,7 @@ def init(project_root: str | None = None, settings_path: str | None = None,
     skills_root = os.path.join(os.path.dirname(global_settings_path), "skills")
     codex_skills_root = codex_skills_root or os.path.expanduser("~/.codex/skills")
     codex_hooks_path = codex_hooks_path or os.path.join(os.path.dirname(codex_skills_root), "hooks.json")
+    codex_config_path = codex_config_path or os.path.join(os.path.dirname(codex_hooks_path), "config.toml")
     install_codex = os.path.isdir(os.path.dirname(codex_hooks_path))  # ~/.codex exists
 
     if dry_run:
@@ -292,6 +426,7 @@ def init(project_root: str | None = None, settings_path: str | None = None,
         if install_codex:
             emit(f"  would install Codex skills: {', '.join('/'+s for s in skills) or '(none)'} → {codex_skills_root}")
             emit(f"  would edit Codex hooks:    {codex_hooks_path}")
+            emit(f"  would edit Codex MCP:      {codex_config_path}")
             emit(f"    Codex Stop hook command: {hook_command()}")
         emit(f"  would edit global settings: {global_settings_path}")
         emit(f"    Stop hook command:        {hook_command()}"
@@ -329,6 +464,7 @@ def init(project_root: str | None = None, settings_path: str | None = None,
                 json.dump(codex_hooks, fh, indent=2)
                 fh.write("\n")
             emit(f"  ✓ Codex Stop hook installed: {codex_hooks_path}")
+        _install_codex_mcp_config(codex_config_path, emit=emit)
 
     # 4 (legacy override only): if --settings points at a non-global file, install
     # the Stop hook there, preserving everything. Default path is global (step 5).
@@ -408,5 +544,5 @@ def init(project_root: str | None = None, settings_path: str | None = None,
         emit(f"    UserPromptSubmit / PreCompact hooks also installed")
 
     emit("\n  Use Claude Code normally — sessions are ingested on Stop.")
-    emit("  When a session bloats, run /mr-handoff to start fresh cleanly.")
+    emit("  When a session bloats, MR Token will offer /mr-handoff to continue in a fresh session.")
     return 0

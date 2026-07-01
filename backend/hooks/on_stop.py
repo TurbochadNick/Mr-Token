@@ -42,15 +42,15 @@ def _compact_rec_line(rule: str, message: str, ctx_pct=None) -> str:
     """One short hook nudge. Full recommendation text belongs in status/why."""
     if rule == "fresh_handoff":
         if ctx_pct is not None and ctx_pct < CONTEXT_WARN_PCT:
-            return "  ·  long session: /mr-handoff at phase boundary"
-        return "  ·  fresh handoff: run /mr-handoff before more work"
+            return "  ·  long session: offer /mr-handoff at phase boundary"
+        return "  ·  context is pretty full — want me to run /mr-handoff now?"
     labels = {
         "retry_loop": "retry loop: inspect failing tool calls",
-        "huge_tool_output": "huge output: offload or summarize",
+        "huge_tool_output": "huge output: don't rerun; redirect or grep",
         "repeated_context": "repeated context: compact repeated blocks",
         "re_read_loop": "re-read loop: keep one result or narrow the read",
         "step_runaway": "step runaway: re-plan the approach",
-        "context_rot": "context rot: handoff at phase boundary",
+        "context_rot": "context getting full: offer handoff",
     }
     if rule in labels:
         return "  ·  " + labels[rule]

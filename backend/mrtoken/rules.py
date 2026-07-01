@@ -267,9 +267,10 @@ def rule_fresh_handoff(conn, tid: int) -> list:
     """, (tid,)).fetchone()[0] or 0
 
     return [_rec("fresh_handoff", "high",
-                 "Session shows handoff-worthy churn. Use /mr-handoff before a phase change "
-                 "or a risky next step; it trims stale history plus rate-limit and cost carry. "
-                 "If the current task is still moving cleanly and ctx is low, keep going.",
+                 "We've done a lot this session and context is getting full. "
+                 "If the current task is still moving cleanly, keep going; otherwise ask: "
+                 "'Do you want me to run /mr-handoff now so we can continue more efficiently "
+                 "in a new session?'",
                  {"signals": signals, "conversation_depth": n,
                   "input_growth_ratio": round(inp_last / inp_first, 2) if inp_first else None,
                   "cache_ratio_first_quarter": round(ratio_first, 3),
@@ -329,8 +330,8 @@ def rule_step_runaway(conn, tid: int) -> list:
     sev = "high" if n >= STEP_RUNAWAY_HIGH else "warn"
     return [_rec("step_runaway", sev,
                  f"{n} model calls in one session ({tools} tool calls) — an unusually high "
-                 f"step count. Steps compound token cost; consider /mr-handoff to reset or "
-                 f"re-planning the approach so the agent takes fewer, bigger steps.",
+                 f"step count. Steps compound token cost; offer /mr-handoff at the next "
+                 f"phase boundary or re-plan so the agent takes fewer, bigger steps.",
                  {"model_calls": n, "tool_calls": tools})]
 
 

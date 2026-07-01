@@ -23,11 +23,11 @@ DEBOUNCE_BAND = 10       # only re-fire after ctx climbs another 10 points
 
 def _tool_for(signals: set) -> tuple[str, str]:
     if "huge_tool_output" in signals:
-        return "offload", "a large tool output is sitting in context"
+        return "offload", "a large tool output already hit context; do not rerun it normally"
     if "re_read_loop" in signals or "repeated_context" in signals:
         return "offload", "the same content is being re-paid into context"
     if "context_rot" in signals:
-        return "handoff", "the session is deep and context is degrading"
+        return "handoff", "we've done a lot this session and context is getting full"
     return "offload", "reclaimable context"
 
 
@@ -41,9 +41,15 @@ def evaluate(ctx_pct, turns_to_full, signals_fired, *,
         return None
     tool, why = _tool_for(junk)
     turns_note = f", ~{turns_to_full} turns to full" if turns_to_full else ""
-    action = "on the big output" if tool == "offload" else "to start fresh"
-    msg = (f"⚠ context {ctx_pct}%{turns_note} and {why}. Use the `{tool}` tool {action} "
-           f"(see the mr-context manual) so you don't run out of context on junk.")
+    if tool == "offload":
+        action = ("redirect future noisy commands to a file and inspect narrow slices; "
+                  "use `offload` for saved bulk you must keep")
+    else:
+        action = ("we can continue this work more efficiently in a new session. "
+                  "Do you want me to run `handoff` now?")
+    msg = f"⚠ context {ctx_pct}%{turns_note} and {why}. {action}"
+    if tool == "offload":
+        msg += " (see the mr-context manual)."
     return {"severity": "warn", "tool": tool, "signals": sorted(junk),
             "ctx_pct": ctx_pct, "turns_to_full": turns_to_full, "message": msg}
 
@@ -144,15 +150,22 @@ def apply_ask_policy(session_id: str, iv: dict, *, improved_drop: int = 5) -> di
                     and ctx >= prior.get("ctx_pct", 0) - improved_drop)
     if inaction:
         iv["phase"] = "escalate"
+        if tool == "offload":
+            next_step = "Do the narrow-output plan now"
+        else:
+            next_step = "I can run `handoff` now so the work continues in a fresh session"
         iv["message"] = (f"⚠ STILL critical — context {ctx}% and the {tool}-able junk is unaddressed. "
-                         f"Run `{tool}` now (see the mr-context manual).")
+                         f"{next_step} (see the mr-context manual).")
         if iv.get("level") == "do":
             iv["message"] += "  [auto-action pending — ROADMAP 6.8]"
     else:
         iv["phase"] = "ask"
-        action = "on the big output" if tool == "offload" else "to start fresh"
-        iv["message"] = (f"{iv['message']}  → Reply `go` to run `{tool}` {action}, or it escalates "
-                         f"next turn if context stays critical.")
+        if tool == "handoff":
+            iv["message"] = (f"{iv['message']}  → Reply `go` and I will run `handoff`; "
+                             "otherwise we can keep going here.")
+        else:
+            iv["message"] = (f"{iv['message']}  → Reply `go` to run `{tool}` for the saved bulk, "
+                             "or it escalates next turn if context stays critical.")
     _write_ask(session_id, {"tool": tool, "ctx_pct": ctx})
     return iv
 
