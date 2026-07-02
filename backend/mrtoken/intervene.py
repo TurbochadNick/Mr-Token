@@ -21,29 +21,37 @@ PRESSURE_TURNS = 4       # this few projected turns-to-full = pressure
 DEBOUNCE_BAND = 10       # only re-fire after ctx climbs another 10 points
 
 
-def _tool_for(signals: set) -> tuple[str, str]:
+def _any_disposable(disposability: dict | None) -> bool:
+    return bool(disposability) and "disposable" in disposability.values()
+
+
+def _tool_for(signals: set, *, disposable: bool = False) -> tuple[str, str]:
     if "huge_tool_output" in signals:
         return "offload", "a large tool output already hit context; do not rerun it normally"
     if "re_read_loop" in signals or "repeated_context" in signals:
         return "offload", "the same content is being re-paid into context"
     if "context_rot" in signals:
         # context_rot alone can't tell disposable context (a reset wins) from
-        # load-bearing (a reset loses ~+20% — docs/COMPACTION-GATE.md, phase 1).
-        # Until a disposability gate exists, never lead with the destructive drop:
-        # nudge the reversible tool and leave handoff as an advisory option.
+        # load-bearing (a reset loses ~+20% — docs/COMPACTION-GATE.md). Gate 1:
+        # only a block classified disposable unlocks the destructive drop;
+        # otherwise nudge the reversible tool with handoff as an advisory option.
+        if disposable:
+            return "handoff", "we've done a lot this session and context is getting full"
         return "offload", "we've done a lot this session and context is getting full"
     return "offload", "reclaimable context"
 
 
-def evaluate(ctx_pct, turns_to_full, signals_fired, *,
+def evaluate(ctx_pct, turns_to_full, signals_fired, *, disposability: dict | None = None,
              pressure_pct: int = PRESSURE_PCT, pressure_turns: int = PRESSURE_TURNS) -> dict | None:
-    """Pure decision: return an intervention dict, or None. Agent-agnostic."""
+    """Pure decision: return an intervention dict, or None. Agent-agnostic.
+    `disposability` maps block ids to 'disposable'|'load_bearing' (Gate 1);
+    None (the default) means unknown and keeps the reversible-only behaviour."""
     pressure = (ctx_pct is not None and ctx_pct >= pressure_pct) or \
                (turns_to_full is not None and 0 < turns_to_full <= pressure_turns)
     junk = {s for s in (signals_fired or []) if s in RECLAIMABLE}
     if not (pressure and junk):
         return None
-    tool, why = _tool_for(junk)
+    tool, why = _tool_for(junk, disposable=_any_disposable(disposability))
     turns_note = f", ~{turns_to_full} turns to full" if turns_to_full else ""
     if tool == "offload" and junk == {"context_rot"}:
         # Advisory handoff mention only — clearly optional, agent's judgement.
@@ -87,14 +95,16 @@ def intervention_for_session(transcript_path: str | None = None,
     ctx_now = snap.get("context_now") or 0
     win = context_window(snap.get("context_max") or ctx_now)
     ctx_pct = min(99, int(ctx_now / win * 100)) if (ctx_now and win) else 0
-    return decide(session_id, ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"))
+    return decide(session_id, ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"),
+                  disposability=snap.get("disposability"))
 
 
-def decide(session_id: str, ctx_pct, turns_to_full, signals) -> dict | None:
+def decide(session_id: str, ctx_pct, turns_to_full, signals, *,
+           disposability: dict | None = None) -> dict | None:
     """Agent-agnostic decision core: evaluate → autonomy gate → debounce →
     measure-don't-degrade → ask-phase. Reused by Claude (transcript snapshot) and
     Codex (rollout-derived ctx %). Returns the intervention to surface, or None."""
-    iv = evaluate(ctx_pct, turns_to_full, signals)
+    iv = evaluate(ctx_pct, turns_to_full, signals, disposability=disposability)
     if not iv:
         return None
     from mrtoken.policy import autonomy  # per-tool autonomy / global kill switch

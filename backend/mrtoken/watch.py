@@ -40,6 +40,11 @@ COST_MILESTONES = [5, 25, 50, 100, 250, 500, 1000, 2000, 5000]
 DEBOUNCE_S = {"huge_tool_output": 20, "retry_loop": 60, "context": 120,
               "re_read_loop": 90}  # re-reads accumulate slowly — don't spam
 
+# COMPACTION-GATE Gate 1 (disposability): a read target untouched for at least
+# this many model responses is presumed disposable (safe to drop); anything
+# accessed more recently — or that tripped the re-read trigger — is load-bearing.
+K_DISPOSABLE_TURNS = 5
+
 
 def _load_prices():
     from mrtoken.ingest import load_prices, est_cost
@@ -143,6 +148,10 @@ class LiveMonitor:
         self.pending_read_hash[block.get("id")] = (key, h)
         g = self.read_groups.setdefault((key, h), {"req": 0, "done": 0, "out_tok": 0})
         g["req"] += 1
+        # per-block recency for the disposability gate — call indices only
+        # (mirrors context_block.first_seen/last_seen on the ingest side)
+        g.setdefault("first_call", self.model_calls)
+        g["last_call"] = self.model_calls
         if g["req"] >= self._re_read_trigger and self._debounce("re_read_loop"):
             self.signals_fired.append("re_read_loop")
             redundant = g["req"] - 1
@@ -267,6 +276,21 @@ class LiveMonitor:
             return None  # flat or shrinking — no imminent wall
         return max(1, round((warn - cur) / rate))
 
+    def disposability(self) -> dict[str, str]:
+        """Per-read-target disposability (COMPACTION-GATE Gate 1). Hash-keyed
+        metadata only — never content. A completed target is load-bearing when it
+        tripped the re-read trigger or was accessed within K_DISPOSABLE_TURNS
+        responses; only a target untouched at least that long is disposable."""
+        out: dict[str, str] = {}
+        for (tool, h), g in self.read_groups.items():
+            if not g.get("done"):
+                continue  # never completed — nothing of it sits in context
+            since = self.model_calls - g.get("last_call", self.model_calls)
+            load_bearing = (g["req"] >= self._re_read_trigger
+                            or since < K_DISPOSABLE_TURNS)
+            out[f"{tool}:{h[:12]}"] = "load_bearing" if load_bearing else "disposable"
+        return out
+
     def snapshot(self) -> dict:
         """Return current monitor state (for statusline and other consumers)."""
         return {
@@ -277,6 +301,7 @@ class LiveMonitor:
             "context_max": self._context_max,
             "turns_to_warn": self._turns_to_warn(),
             "signals_fired": list(self.signals_fired),
+            "disposability": self.disposability(),
         }
 
 

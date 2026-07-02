@@ -820,6 +820,61 @@ class BackendTest(unittest.TestCase):
         # Pressure with no reclaimable signal → still silent (unchanged).
         self.assertIsNone(evaluate(90, 1, ["low_cache"]))
 
+    def test_compaction_gate_disposability_unlocks_drop(self):
+        # COMPACTION-GATE phase 2 (Gate 1): a context_rot nudge may lead with the
+        # destructive `handoff` ONLY when some reclaimable block is classified
+        # disposable. Load-bearing, empty, or unknown (None — every caller that
+        # doesn't pass the input) keeps phase 1's reversible offload + advisory.
+        from mrtoken.intervene import evaluate
+        disp = {"read:abc123": "disposable", "read:def456": "load_bearing"}
+        iv = evaluate(85, None, ["context_rot"], disposability=disp)
+        self.assertEqual(iv["tool"], "handoff")             # drop unlocked
+        self.assertIn("Do you want me to run `handoff` now?", iv["message"])
+        for blocked in ({"read:def456": "load_bearing"}, {}, None):
+            iv = evaluate(85, None, ["context_rot"], disposability=blocked)
+            self.assertEqual(iv["tool"], "offload")         # phase-1 behaviour
+            self.assertIn("optional", iv["message"])
+        # The offload routes must ignore the gate — never a blind drop.
+        self.assertEqual(
+            evaluate(85, None, ["re_read_loop"], disposability=disp)["tool"], "offload")
+        self.assertEqual(
+            evaluate(85, None, ["huge_tool_output"], disposability=disp)["tool"], "offload")
+
+    def test_live_monitor_classifies_block_disposability(self):
+        # Gate 1's producer: a target read once and untouched for
+        # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target
+        # re-read repeatedly is load-bearing (speclib-like). Hash-keyed metadata
+        # only. (No transcript-replay plumbing exists yet for the 5D.3 golden
+        # fixtures — this synthetic feed covers the same two regimes.)
+        from mrtoken.watch import LiveMonitor, K_DISPOSABLE_TURNS
+
+        mon = LiveMonitor(emit=lambda _: None)
+
+        def response(i, blocks):
+            mon.feed({"type": "assistant", "message": {
+                "id": f"m{i}", "model": "x",
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+                "content": blocks}})
+
+        def read_block(tuid, target):
+            return {"type": "tool_use", "id": tuid, "name": "Read",
+                    "input": {"file_path": target}}
+
+        def result(tuid):
+            mon.feed({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": tuid, "content": "x" * 400}]}})
+
+        response(0, [read_block("t0", "/scan/notes.txt")])   # read once, early
+        result("t0")
+        for i in range(1, K_DISPOSABLE_TURNS + 1):           # re-read every turn
+            response(i, [read_block(f"s{i}", "/spec/refs.md")])
+            result(f"s{i}")
+
+        d = mon.disposability()
+        self.assertEqual(sorted(d.values()), ["disposable", "load_bearing"])
+        self.assertTrue(all(k.startswith("read:") for k in d))
+        self.assertIn("disposability", mon.snapshot())       # threaded to consumers
+
     def test_module_registry(self):
         # ROADMAP 7.2 (groundwork): register/toggle external token-saver modules +
         # emit an agent-registration snippet. No external code is run/trusted.
