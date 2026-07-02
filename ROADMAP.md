@@ -220,13 +220,12 @@ and used a turn-count proxy. Pilot 3 fixes exactly that.
   fixed-compact re-run on speclib to confirm real-compact also loses on load-bearing.
 
 ### B — Show it (dashboard — Nick's TS/web lane) *(I provide the contract, do NOT build)*
-- [~] **5B.1 Data-surface spec for Nick** — DRAFT complete in `docs/UI-INTEGRATION.md`: it now specs the
-  full v1 surface — `session_summary.v1` (+ new `is_low_activity` col) + `session_detail.v1` (per-model-call
-  timeline) + `export` flags (`--detail`/`--since`/`--redact`/`--codex`) + estimated↔actual join + example
-  queries + stability contract. Both prior "open questions" were already BUILT (session_detail view, --since);
-  this doc catches the spec up to the code. **Looping to refine; then commit.**
-- [ ] **5B.2 Coordination note to Nick** — what's ready + his two open questions now answered (draft; Zach
-  sends). ⚠ `docs/HANDOFF-TO-NICK.md` is STALE (still lists the two questions as open) — 5B.2 = refresh it.
+- [x] **5B.1 Data-surface spec for Nick** — done in `docs/UI-INTEGRATION.md`: full v1 surface —
+  `session_summary.v1` (+ `is_low_activity`) + `session_detail.v1` (per-model-call timeline) + `export`
+  flags (`--detail`/`--since`/`--redact`/`--codex`) + estimated↔actual join + example queries + stability
+  contract. Both prior "open questions" were already BUILT; the doc catches the spec up to the code.
+- [x] **5B.2 Coordination note to Nick** — DRAFT done: `docs/HANDOFF-TO-NICK.md` rewritten to the v1
+  surface, both questions marked answered, points to UI-INTEGRATION.md. ⏳ **Zach forwards to Nick** (outward).
 
 ### C — Grow it (pilots / GTM) *(materials in lane; outreach is Zach's)*
 - [x] **5C.1 Pilot one-pager / onboarding** — done by Codex: `docs/BETA-TESTER-NOTE.md` (paste-ready install

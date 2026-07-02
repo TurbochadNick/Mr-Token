@@ -29,7 +29,7 @@ is called out up front so the loop stops and asks instead of guessing.
 | Real in-the-wild ROI (cross-session linkage) | `roi-cross-session-linkage.md` | Codex / either | **done** (Fable) | met: on the live 76-session corpus B = acted n=3 / ignored n=12 (was 0/20); C headline unchanged; doc updated |
 | Compaction gate — phase 2 (disposability gate) | `compaction-gate-phase2.md` | Codex / Fable | **ready** | `evaluate()` takes a disposability input; a `context_rot` drop leads with `handoff` only for a disposable target; fixtures classify scanlib=disposable, speclib=load-bearing; `test-backend.sh` green |
 | Experiment closeout (speclib fixed-compact + reps) | `experiment-closeout.md` | Claude | **done** | real-compact on speclib (id25) $1.209 ≈ continue — confirms reset loses on load-bearing with the fixed arm; RESULTS + baton updated; spend $17.46/$20 |
-| 5B.2 — refresh the Nick note | `5b2-nick-note.md` | Claude draft, **Zach sends** | **ready** | `docs/HANDOFF-TO-NICK.md` matches the shipped v1 surface; two questions marked answered |
+| 5B.2 — refresh the Nick note | `5b2-nick-note.md` | Claude draft, **Zach sends** | **done (draft)** | `docs/HANDOFF-TO-NICK.md` rewritten to the v1 surface (session_detail + --since/--detail/--redact/--codex + is_low_activity), both questions marked answered, points to UI-INTEGRATION.md. ⏳ Zach forwards to Nick. |
 | K2 pane icon = Mr Token logo | _(brief TBD)_ | Claude | **BLOCKED** | no logo asset exists in-repo; source/create the logo, learn how K2 sets a pane icon, then wire it |
 
 ## Onboarding a new agent (e.g. Fable)
