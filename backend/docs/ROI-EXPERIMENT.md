@@ -258,18 +258,26 @@ Two methods, both honestly labelled (ROADMAP 2.1):
   mean est cost over the opening 5 calls across the whole corpus. Saving =
   `max(0, late_per_call − lean_per_call) × horizon`, summed. It is a *marginal*
   number (a fresh session re-accumulates), not a forever saving.
-- **B — acted vs ignored (corroboration; OBSERVATIONAL, selection-biased).** Split
-  fired sessions into "acted" (ended soon after the signal) vs "ignored"
-  (continued) and compare late-stage per-call cost.
+- **B — acted vs ignored (corroboration; OBSERVATIONAL, selection-biased).**
+  Cross-session linkage: a fired session counts as "acted" when a *separate*
+  top-level session (subagent transcripts excluded) started in the **same
+  project within 30 minutes** (`roi.LINKAGE_WINDOW_MIN`) of the fired session's
+  end; otherwise "ignored". Compare the cohorts' late-stage per-call cost.
 
 **First run on the 153-session backfill corpus (2026-06-23):** C projected
 ~$40.70 across 20 fired sessions (lean baseline ~$0.057/call). **B was degenerate:
 all 20 fell in "ignored", zero "acted"** — because `fresh_handoff` only fires once
-a session is already deep, so a within-session midpoint split can never yield an
-"acted-early" cohort. **Refinement needed:** a real B must detect that a *separate
-fresh session* started in the same project shortly after the fire (cross-session
-linkage, ROADMAP backlog), not split a single session. Until then, treat C as the
-estimate and B as not-yet-informative.
+a session is already deep, so the then-current within-session midpoint split could
+never yield an "acted-early" cohort.
+
+**Refinement implemented (2026-07-01, GOALS/roi-cross-session-linkage.md):** B now
+uses the cross-session linkage above. Re-run on the live 76-session project corpus
+(15 fired sessions): C projects ~$72.06 (lean baseline ~$0.157/call); **B is
+non-degenerate — acted n=3 at ~$0.981/call late-stage vs ignored n=12 at
+~$0.539/call.** Read honestly: acted sessions were the *costlier* ones — users
+restarted exactly the sessions whose burn got bad. That is a selection effect
+(the signal reached the right sessions), not evidence for or against the restart
+paying; C remains the headline estimate, B is corroborating context.
 
 ---
 

@@ -1844,9 +1844,62 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(m["projection"]["n_sessions"], 1)
             self.assertGreater(m["projection"]["projected_saving_usd"], 0)  # late burn > lean opening
             self.assertEqual(m["cohort"]["acted"]["n"] + m["cohort"]["ignored"]["n"], 1)
-            self.assertEqual(m["cohort"]["ignored"]["n"], 1)  # 12 calls past midpoint ≥ horizon
+            self.assertEqual(m["cohort"]["ignored"]["n"], 1)  # no linked follow-on session
             with contextlib.redirect_stdout(io.StringIO()):
                 print_roi_measure(conn, horizon=10)
+
+    def test_roi_measure_cross_session_linkage(self):
+        # GOALS/roi-cross-session-linkage.md: method B classifies a fired session
+        # as "acted" when a separate fresh session started in the same project
+        # within LINKAGE_WINDOW_MIN of its end — not by splitting one session at
+        # its midpoint (which made B degenerate: fresh_handoff only fires deep).
+        from mrtoken.roi import roi_measure
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+
+            def add_trace(sid, project, start, end, parent=None):
+                conn.execute(
+                    "INSERT INTO trace(session_id,parent_session_id,project_path,"
+                    "started_at,ended_at,ingested_at) VALUES(?,?,?,?,?,?)",
+                    (sid, parent, project, start, end, "t"))
+                return conn.execute("SELECT id FROM trace WHERE session_id=?",
+                                    (sid,)).fetchone()[0]
+
+            def add_calls(tid, hour, n=6, cost=0.1):
+                for i in range(n):
+                    conn.execute(
+                        "INSERT INTO model_call(trace_id,timestamp,est_cost_usd) "
+                        "VALUES(?,?,?)",
+                        (tid, f"2026-07-01T{hour:02d}:{i:02d}:00Z", cost))
+
+            def fire(tid):
+                conn.execute(
+                    "INSERT INTO recommendation(trace_id,rule,severity,message,"
+                    "created_at) VALUES(?,?,?,?,?)",
+                    (tid, "fresh_handoff", "high", "start fresh", "t"))
+
+            # ACTED: ends 10:05, fresh same-project session starts 10:20 (≤30m).
+            t1 = add_trace("acted1", "/p/alpha", "2026-07-01T09:00:00Z",
+                           "2026-07-01T10:05:00Z")
+            add_calls(t1, 9); fire(t1)
+            add_trace("follow1", "/p/alpha", "2026-07-01T10:20:00Z", None)
+            # IGNORED: next same-project session starts 6h later (outside window).
+            t2 = add_trace("ign1", "/p/beta", "2026-07-01T09:00:00Z",
+                           "2026-07-01T10:00:00Z")
+            add_calls(t2, 9); fire(t2)
+            add_trace("late1", "/p/beta", "2026-07-01T16:00:00Z", None)
+            # IGNORED: a subagent transcript in-window must NOT count as acting.
+            t3 = add_trace("ign2", "/p/gamma", "2026-07-01T09:00:00Z",
+                           "2026-07-01T10:00:00Z")
+            add_calls(t3, 9); fire(t3)
+            add_trace("sub1", "/p/gamma", "2026-07-01T10:10:00Z", None, parent="ign2")
+            conn.commit()
+
+            m = roi_measure(conn, horizon=10)
+            self.assertEqual(m["cohort"]["acted"]["n"], 1)      # non-degenerate B
+            self.assertEqual(m["cohort"]["ignored"]["n"], 2)
+            self.assertIsNotNone(m["cohort"]["acted"]["late_per_call_usd"])
+            self.assertEqual(m["projection"]["n_sessions"], 3)  # C unchanged
 
     def test_fleet_counts_codex_sessions(self):
         # fleet must count Codex sessions (source='codex'), not just claude_code.

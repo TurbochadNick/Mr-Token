@@ -26,7 +26,7 @@ is called out up front so the loop stops and asks instead of guessing.
 | Goal | File | Lane | Status | Loop exit (1-line) |
 |---|---|---|---|---|
 | Compaction gate — phase 1 (gate the DROP path) | `compaction-gate-phase1.md` | Codex / either | **done** (Fable, commit 0d92e55) | met, except full-green blocked by a PRE-EXISTING drift: `test_experiment_runner_groundwork` asserts the 100k threshold 89325c4 changed to 30k — needs Zach's call |
-| Real in-the-wild ROI (cross-session linkage) | `roi-cross-session-linkage.md` | Codex / either | **ready** | `roi --measure` emits a non-degenerate acted-vs-ignored number (method B no longer all-"ignored") |
+| Real in-the-wild ROI (cross-session linkage) | `roi-cross-session-linkage.md` | Codex / either | **done** (Fable) | met: on the live 76-session corpus B = acted n=3 / ignored n=12 (was 0/20); C headline unchanged; doc updated |
 | Experiment closeout (speclib fixed-compact + reps) | `experiment-closeout.md` | Claude | **ready** (needs ~$3 of the $20) | speclib fixed-compact n≥2 recorded; `ROI-EXPERIMENT.md` RESULTS updated |
 | 5B.2 — refresh the Nick note | `5b2-nick-note.md` | Claude draft, **Zach sends** | **ready** | `docs/HANDOFF-TO-NICK.md` matches the shipped v1 surface; two questions marked answered |
 | K2 pane icon = Mr Token logo | _(brief TBD)_ | Claude | **BLOCKED** | no logo asset exists in-repo; source/create the logo, learn how K2 sets a pane icon, then wire it |

@@ -13,6 +13,7 @@ Two things it reports:
 """
 from __future__ import annotations
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 HUGE_TOOL_CHARS = 40_000
 
@@ -105,6 +106,50 @@ def _corpus_lean_per_call(conn: sqlite3.Connection, k: int = 5) -> tuple[float, 
     return float(row[0] or 0.0), int(row[1] or 0)
 
 
+# B's "acted" signal: a separate fresh session started in the same project within
+# this many minutes of the fired session's end. Judgement knob
+# (GOALS/roi-cross-session-linkage.md): tight enough that the restart plausibly
+# answers the nudge, loose enough to survive a coffee break.
+LINKAGE_WINDOW_MIN = 30
+
+
+def _ts(value: str | None):
+    """Parse an ISO-8601 timestamp to an aware UTC datetime, or None."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _acted_by_linkage(conn: sqlite3.Connection, tid: int) -> bool:
+    """True when a separate top-level session (not a subagent transcript) started
+    in the same project within LINKAGE_WINDOW_MIN of this session's end."""
+    row = conn.execute(
+        "SELECT session_id, project_path, ended_at FROM trace WHERE id=?", (tid,)).fetchone()
+    if not row:
+        return False
+    sid, project, ended = row
+    if not project:
+        return False
+    if not ended:  # older ingests may lack ended_at; fall back to the last call
+        ended = conn.execute(
+            "SELECT MAX(timestamp) FROM model_call WHERE trace_id=?", (tid,)).fetchone()[0]
+    t_end = _ts(ended)
+    if not t_end:
+        return False
+    t_max = t_end + timedelta(minutes=LINKAGE_WINDOW_MIN)
+    for (started,) in conn.execute(
+            "SELECT started_at FROM trace WHERE project_path=? AND session_id<>? "
+            "AND parent_session_id IS NULL AND started_at IS NOT NULL", (project, sid)):
+        t_start = _ts(started)
+        if t_start and t_end < t_start <= t_max:
+            return True
+    return False
+
+
 def _session_late_per_call(conn: sqlite3.Connection, tid: int):
     """Mean est cost/call over a session's 2nd half (proxy for post-fire burn).
     Returns (per_call_usd, calls_after_midpoint) or None if too few calls."""
@@ -122,8 +167,9 @@ def _session_late_per_call(conn: sqlite3.Connection, tid: int):
 def roi_measure(conn: sqlite3.Connection, horizon: int = 10, k: int = 5) -> dict:
     """C: project the saving of acting on a fresh_handoff over the next `horizon`
     calls (late-stage burn minus a lean-restart baseline). B: split fired sessions
-    into acted (ended soon after the signal) vs ignored (continued) and compare
-    their late-stage per-call cost."""
+    into acted (a separate fresh session started in the same project within
+    LINKAGE_WINDOW_MIN of the fired session's end — cross-session linkage) vs
+    ignored, and compare their late-stage per-call cost."""
     lean, lean_n = _corpus_lean_per_call(conn, k)
     fired = [r[0] for r in conn.execute(
         "SELECT DISTINCT trace_id FROM recommendation WHERE rule='fresh_handoff'")]
@@ -136,10 +182,10 @@ def roi_measure(conn: sqlite3.Connection, horizon: int = 10, k: int = 5) -> dict
         lp = _session_late_per_call(conn, tid)
         if not lp:
             continue
-        late_per_call, after = lp
+        late_per_call, _after = lp
         proj["n_sessions"] += 1
         proj["projected_saving_usd"] += max(0.0, late_per_call - lean) * horizon
-        bucket = acted if after < horizon else ignored
+        bucket = acted if _acted_by_linkage(conn, tid) else ignored
         bucket["n"] += 1
         bucket["sum"] += late_per_call
     proj["projected_saving_usd"] = round(proj["projected_saving_usd"], 2)
@@ -167,12 +213,16 @@ def print_roi_measure(conn: sqlite3.Connection, horizon: int = 10) -> None:
     print(f"\n  B · acted vs ignored (OBSERVATIONAL — selection bias, not causal):")
     a, ig = c["acted"], c["ignored"]
     def ppc(x): return f"${x:,.4f}/call" if x is not None else "—"
-    print(f"    acted   (ended <{horizon} calls after signal): n={a['n']:<3} late cost {ppc(a['late_per_call_usd'])}")
-    print(f"    ignored (continued ≥{horizon} calls):           n={ig['n']:<3} late cost {ppc(ig['late_per_call_usd'])}")
+    print(f"    acted   (fresh same-project session ≤{LINKAGE_WINDOW_MIN}m after end): n={a['n']:<3} late cost {ppc(a['late_per_call_usd'])}")
+    print(f"    ignored (no linked follow-on session):              n={ig['n']:<3} late cost {ppc(ig['late_per_call_usd'])}")
     if a["late_per_call_usd"] and ig["late_per_call_usd"]:
         delta = ig["late_per_call_usd"] - a["late_per_call_usd"]
         print(f"    → ignored sessions ran {ppc(abs(delta))} {'higher' if delta>0 else 'lower'} late-stage;")
-        print(f"      consistent with carry escalation, but confounded by task choice.")
+        if delta > 0:
+            print(f"      consistent with carry escalation, but confounded by task choice.")
+        else:
+            print(f"      i.e. users restarted exactly the costliest sessions — a selection")
+            print(f"      effect, not evidence the restart didn't pay.")
     print(f"  {'─'*64}\n")
 
 
