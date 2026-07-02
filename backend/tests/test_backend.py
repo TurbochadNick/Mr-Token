@@ -875,6 +875,69 @@ class BackendTest(unittest.TestCase):
         self.assertTrue(all(k.startswith("read:") for k in d))
         self.assertIn("disposability", mon.snapshot())       # threaded to consumers
 
+    def test_compaction_gate_runway_suppresses_near_done(self):
+        # COMPACTION-GATE phase 3 (Gate 2): near-done suppresses the nudge
+        # entirely — even under pressure, even on disposable context — because
+        # with little runway the reset overhead exceeds the carry it saves.
+        # No/ambiguous runway data falls back to phase-2 behaviour.
+        from mrtoken.intervene import evaluate, _near_done
+        disp = {"read:abc123": "disposable"}
+        near = {"calls": 20, "window": 8, "errors_first_half": 3,
+                "errors_second_half": 0, "recent_writes": 2}   # red→green + landing
+        # Near-done: suppress everything, drop and offload nudges alike.
+        self.assertIsNone(evaluate(85, None, ["context_rot"],
+                                   disposability=disp, progress=near))
+        self.assertIsNone(evaluate(85, None, ["huge_tool_output"], progress=near))
+        # Mid-session (errors flat) + disposable → the drop stays allowed.
+        flat = {"calls": 20, "window": 8, "errors_first_half": 2,
+                "errors_second_half": 2, "recent_writes": 2}
+        self.assertEqual(evaluate(85, None, ["context_rot"], disposability=disp,
+                                  progress=flat)["tool"], "handoff")
+        # No runway data → exact phase-2 behaviour.
+        self.assertEqual(evaluate(85, None, ["context_rot"],
+                                  disposability=disp)["tool"], "handoff")
+        self.assertEqual(evaluate(85, None, ["context_rot"])["tool"], "offload")
+        # The proxy demands positive evidence on EVERY axis (under-suppression
+        # bias): early session, thin window, still-red late half, or no durable
+        # writes each block the near-done call.
+        for not_near in (
+            {**near, "calls": 4},                    # too early
+            {**near, "window": 4},                   # thin window
+            {**near, "errors_second_half": 2},       # late half still red
+            {**near, "recent_writes": 0},            # nothing durable landing
+            None, {},
+        ):
+            self.assertFalse(_near_done(not_near))
+
+    def test_live_monitor_progress_feeds_runway_proxy(self):
+        # Gate 2's producer: errors early → green + edits landing late reads as
+        # near-done; metadata only (is_error flags + tool names).
+        from mrtoken.watch import LiveMonitor, RECENT_ERROR_WINDOW
+        from mrtoken.intervene import _near_done
+
+        mon = LiveMonitor(emit=lambda _: None)
+
+        def turn(i, tool_name, is_error):
+            mon.feed({"type": "assistant", "message": {
+                "id": f"m{i}", "model": "x",
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+                "content": [{"type": "tool_use", "id": f"t{i}", "name": tool_name,
+                             "input": {"i": i}}]}})
+            mon.feed({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"t{i}",
+                 "content": "x", "is_error": is_error}]}})
+
+        for i in range(RECENT_ERROR_WINDOW // 2):        # first half: failing runs
+            turn(i, "Bash", True)
+        for i in range(RECENT_ERROR_WINDOW // 2, RECENT_ERROR_WINDOW):
+            turn(i, "Edit", False)                        # second half: green + edits
+        p = mon.progress()
+        self.assertEqual(p["window"], RECENT_ERROR_WINDOW)
+        self.assertGreater(p["errors_first_half"], p["errors_second_half"])
+        self.assertGreaterEqual(p["recent_writes"], 1)
+        self.assertTrue(_near_done(p))
+        self.assertIn("progress", mon.snapshot())         # threaded to consumers
+
     def test_module_registry(self):
         # ROADMAP 7.2 (groundwork): register/toggle external token-saver modules +
         # emit an agent-registration snippet. No external code is run/trusted.

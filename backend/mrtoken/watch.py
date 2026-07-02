@@ -45,6 +45,10 @@ DEBOUNCE_S = {"huge_tool_output": 20, "retry_loop": 60, "context": 120,
 # accessed more recently — or that tripped the re-read trigger — is load-bearing.
 K_DISPOSABLE_TURNS = 5
 
+# COMPACTION-GATE Gate 2 (runway): tools whose use means durable artifacts are
+# landing — one input to the near-done proxy. Names only, never content.
+WRITE_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
+
 
 def _load_prices():
     from mrtoken.ingest import load_prices, est_cost
@@ -92,6 +96,7 @@ class LiveMonitor:
         self._seen_msg_ids: set[str] = set()  # dedup usage per API response (msg.id)
         self._ctx_history: list[int] = []     # recent per-response context sizes (trajectory)
         self.errors_recent: list[int] = []   # 1/0 per recent model call
+        self.writes_recent: list[int] = []   # 1/0 per recent call: did it edit/write?
         self.last_emit: dict[str, float] = {}
         self.last_cost_milestone = 0.0
         self.pending_tools: dict[str, str] = {}  # tool_use_id -> tool_name
@@ -212,6 +217,9 @@ class LiveMonitor:
                 self.errors_recent.append(0)  # one slot per response; may flip on tool_result
                 if len(self.errors_recent) > RECENT_ERROR_WINDOW:
                     self.errors_recent.pop(0)
+                self.writes_recent.append(0)  # flips below if this response edits/writes
+                if len(self.writes_recent) > RECENT_ERROR_WINDOW:
+                    self.writes_recent.pop(0)
 
             # register requested tools (blocks are split across the response's lines)
             for b in (msg.get("content") or []):
@@ -220,6 +228,8 @@ class LiveMonitor:
                     self.pending_tools[b.get("id")] = name
                     key = (name or "").lower()
                     self.tool_counts[key] = self.tool_counts.get(key, 0) + 1
+                    if key in WRITE_TOOLS and self.writes_recent:
+                        self.writes_recent[-1] = 1
                     self._track_read(b, key)
             self._reclassify()
 
@@ -291,6 +301,21 @@ class LiveMonitor:
             out[f"{tool}:{h[:12]}"] = "load_bearing" if load_bearing else "disposable"
         return out
 
+    def progress(self) -> dict:
+        """Recent-turn progress metadata for the runway proxy (COMPACTION-GATE
+        Gate 2). Error flags come from tool_result.is_error (exit status — the
+        closest metadata-only stand-in for tests going red→green); writes are
+        tool names only. Never content."""
+        errs = self.errors_recent
+        half = len(errs) // 2
+        return {
+            "calls": self.model_calls,
+            "window": len(errs),
+            "errors_first_half": sum(errs[:half]) if half else None,
+            "errors_second_half": sum(errs[half:]) if half else None,
+            "recent_writes": sum(self.writes_recent),
+        }
+
     def snapshot(self) -> dict:
         """Return current monitor state (for statusline and other consumers)."""
         return {
@@ -302,6 +327,7 @@ class LiveMonitor:
             "turns_to_warn": self._turns_to_warn(),
             "signals_fired": list(self.signals_fired),
             "disposability": self.disposability(),
+            "progress": self.progress(),
         }
 
 

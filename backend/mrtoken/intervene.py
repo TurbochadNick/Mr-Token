@@ -21,6 +21,31 @@ PRESSURE_TURNS = 4       # this few projected turns-to-full = pressure
 DEBOUNCE_BAND = 10       # only re-fire after ctx climbs another 10 points
 
 
+# Runway gate (COMPACTION-GATE Gate 2) thresholds. Near-done needs POSITIVE
+# evidence on every axis — missing a suppression is cheap, suppressing a real
+# win is the costly error, so anything ambiguous counts as runway-remaining.
+NEAR_DONE_MIN_CALLS = 8          # too early in a session to call it near-done
+NEAR_DONE_MIN_WINDOW = 6        # need most of the error window populated
+NEAR_DONE_MAX_LATE_ERRORS = 1   # late half must be (nearly) green
+
+
+def _near_done(progress: dict | None) -> bool:
+    """Conservative runway proxy: the task looks near-done only when errors are
+    trending down to (nearly) green AND durable artifacts landed recently."""
+    if not progress:
+        return False
+    if progress.get("calls", 0) < NEAR_DONE_MIN_CALLS:
+        return False
+    if (progress.get("window") or 0) < NEAR_DONE_MIN_WINDOW:
+        return False
+    e1, e2 = progress.get("errors_first_half"), progress.get("errors_second_half")
+    if e1 is None or e2 is None:
+        return False
+    improving = e2 < e1 and e2 <= NEAR_DONE_MAX_LATE_ERRORS
+    landing = (progress.get("recent_writes") or 0) >= 1
+    return improving and landing
+
+
 def _any_disposable(disposability: dict | None) -> bool:
     return bool(disposability) and "disposable" in disposability.values()
 
@@ -42,14 +67,21 @@ def _tool_for(signals: set, *, disposable: bool = False) -> tuple[str, str]:
 
 
 def evaluate(ctx_pct, turns_to_full, signals_fired, *, disposability: dict | None = None,
+             progress: dict | None = None,
              pressure_pct: int = PRESSURE_PCT, pressure_turns: int = PRESSURE_TURNS) -> dict | None:
     """Pure decision: return an intervention dict, or None. Agent-agnostic.
     `disposability` maps block ids to 'disposable'|'load_bearing' (Gate 1);
-    None (the default) means unknown and keeps the reversible-only behaviour."""
+    `progress` carries recent-turn error/write metadata (Gate 2). None for
+    either (the default) means unknown and keeps the prior-phase behaviour."""
     pressure = (ctx_pct is not None and ctx_pct >= pressure_pct) or \
                (turns_to_full is not None and 0 < turns_to_full <= pressure_turns)
     junk = {s for s in (signals_fired or []) if s in RECLAIMABLE}
     if not (pressure and junk):
+        return None
+    if _near_done(progress):
+        # Gate 2: with little runway left, summary + re-establish costs more
+        # than the remaining turns' carry — even on disposable context. Say
+        # nothing and let the agent finish.
         return None
     tool, why = _tool_for(junk, disposable=_any_disposable(disposability))
     turns_note = f", ~{turns_to_full} turns to full" if turns_to_full else ""
@@ -96,15 +128,16 @@ def intervention_for_session(transcript_path: str | None = None,
     win = context_window(snap.get("context_max") or ctx_now)
     ctx_pct = min(99, int(ctx_now / win * 100)) if (ctx_now and win) else 0
     return decide(session_id, ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"),
-                  disposability=snap.get("disposability"))
+                  disposability=snap.get("disposability"), progress=snap.get("progress"))
 
 
 def decide(session_id: str, ctx_pct, turns_to_full, signals, *,
-           disposability: dict | None = None) -> dict | None:
+           disposability: dict | None = None, progress: dict | None = None) -> dict | None:
     """Agent-agnostic decision core: evaluate → autonomy gate → debounce →
     measure-don't-degrade → ask-phase. Reused by Claude (transcript snapshot) and
     Codex (rollout-derived ctx %). Returns the intervention to surface, or None."""
-    iv = evaluate(ctx_pct, turns_to_full, signals, disposability=disposability)
+    iv = evaluate(ctx_pct, turns_to_full, signals,
+                  disposability=disposability, progress=progress)
     if not iv:
         return None
     from mrtoken.policy import autonomy  # per-tool autonomy / global kill switch
