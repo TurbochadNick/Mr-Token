@@ -44,12 +44,14 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
-- **State (2026-07-01):** v0.5.8. All this session's work is on branch
-  `experiment/compaction-regime-map` (pushed) — **not merged to `main`, PR not opened.** Covers: the
-  5A regime-map experiment, compaction-gate spec, `GOALS/` loop briefs, 5B.1 (`UI-INTEGRATION.md`) +
-  5B.2 brief, and **Fable enablement** (`ONBOARDING.md` incl. K2 parallel-session coordination;
-  Fable role added to the orchestration model). Global (not in-repo): `/which-model` snapshot updated
-  for Fable's 2026-07-01 reinstatement.
+- **State (2026-07-02):** v0.5.8. This session's work is **MERGED to `main`** via PR #18
+  (merge commit `24cef87`): 5A regime-map experiment (DONE), compaction-gate spec + **phase 1**
+  (Fable) + **phase-2 brief**, ROI `--measure` cross-session linkage (Fable), `GOALS/` loop briefs,
+  5B.1 (`UI-INTEGRATION.md`) + 5B.2 (`HANDOFF-TO-NICK.md` refreshed — ⏳ Zach forwards to Nick), and
+  Fable enablement (`ONBOARDING.md` + K2 coordination). Branch `experiment/compaction-regime-map`
+  kept (not deleted) for Fable's in-flight phase-2 → that will be a NEW PR off `main`. Global (not
+  in-repo): `/which-model` snapshot updated for Fable's 2026-07-01 reinstatement. Experiment spend
+  **$17.46/$20**.
 - **Reconciled:** Adopt build-work (5C.1/5C.2) was already done by Codex —
   `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
   `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**
