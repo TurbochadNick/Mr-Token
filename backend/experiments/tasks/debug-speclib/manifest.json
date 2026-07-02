@@ -1,0 +1,14 @@
+{
+  "id": "debug-speclib",
+  "type": "debug-failing-suite",
+  "description": "Fix one buggy function in each of 24 modules until the suite passes. The correct behavior lives ONLY in each module's BEHAVIOR REFERENCE docstring (the test pins outputs with a one-way digest, so nothing can be copied from it), and every module has distinct logic + unique constants — forcing the agent to read all 24 references, which bloats context past 100k.",
+  "prompt_file": "TASK.md",
+  "oracle": "oracle.sh",
+  "seed_dir": "seed",
+  "immutable_files": ["test_speclib.py"],
+  "reset_threshold_tokens": 100000,
+  "handoff_phase1_turns": 35,
+  "agent": {"model": "claude-sonnet-4-6", "effort": "medium", "temperature": 0},
+  "max_steps": 160,
+  "note": "Load-bearing successor to debug-hugelib: property-based + digest-pinned tests leak no answers, so the reference docstrings are the only source of behavior. Confirm it crosses 100k with one continue pilot before the full matrix."
+}

@@ -258,15 +258,99 @@ Two methods, both honestly labelled (ROADMAP 2.1):
   mean est cost over the opening 5 calls across the whole corpus. Saving =
   `max(0, late_per_call − lean_per_call) × horizon`, summed. It is a *marginal*
   number (a fresh session re-accumulates), not a forever saving.
-- **B — acted vs ignored (corroboration; OBSERVATIONAL, selection-biased).** Split
-  fired sessions into "acted" (ended soon after the signal) vs "ignored"
-  (continued) and compare late-stage per-call cost.
+- **B — acted vs ignored (corroboration; OBSERVATIONAL, selection-biased).**
+  Cross-session linkage: a fired session counts as "acted" when a *separate*
+  top-level session (subagent transcripts excluded) started in the **same
+  project within 30 minutes** (`roi.LINKAGE_WINDOW_MIN`) of the fired session's
+  end; otherwise "ignored". Compare the cohorts' late-stage per-call cost.
 
 **First run on the 153-session backfill corpus (2026-06-23):** C projected
 ~$40.70 across 20 fired sessions (lean baseline ~$0.057/call). **B was degenerate:
 all 20 fell in "ignored", zero "acted"** — because `fresh_handoff` only fires once
-a session is already deep, so a within-session midpoint split can never yield an
-"acted-early" cohort. **Refinement needed:** a real B must detect that a *separate
-fresh session* started in the same project shortly after the fire (cross-session
-linkage, ROADMAP backlog), not split a single session. Until then, treat C as the
-estimate and B as not-yet-informative.
+a session is already deep, so the then-current within-session midpoint split could
+never yield an "acted-early" cohort.
+
+**Refinement implemented (2026-07-01, GOALS/roi-cross-session-linkage.md):** B now
+uses the cross-session linkage above. Re-run on the live 76-session project corpus
+(15 fired sessions): C projects ~$72.06 (lean baseline ~$0.157/call); **B is
+non-degenerate — acted n=3 at ~$0.981/call late-stage vs ignored n=12 at
+~$0.539/call.** Read honestly: acted sessions were the *costlier* ones — users
+restarted exactly the sessions whose burn got bad. That is a selection effect
+(the signal reached the right sessions), not evidence for or against the restart
+paying; C remains the headline estimate, B is corroborating context.
+
+---
+
+## RESULTS — the regime map (5A.4/5A.5, controlled runs, 2026-07-01)
+
+We ran the controlled trial (Exp 1 style: continue vs reset arms, objective completion
+oracle, exact cache-weighted cost) across **three engineered fixtures** to find *when*
+resetting pays. Model `claude-sonnet-4-6`, temp 0, threshold = the context level at which
+the reset arms fire. `continue` = never reset; `handoff` = reset into a fresh session
+seeded with a compact summary; `compact` = same real reset (fixed this run — see caveat).
+Cost is the honest cache-weighted burn from the transcript. Total spend ~$16.75 of $20.
+
+| Regime | Fixture | Threshold | continue | handoff | compact | Verdict |
+|---|---|---|---|---|---|---|
+| **Low pressure** | debug-hugelib (n=4) | 30k | **$0.327** | $0.413 (+26%) | $0.394 (+20%) | reset **LOSES** |
+| **High pressure, load-bearing** | debug-speclib | 100k | $1.237 | $1.478 (+20%) | $1.209¹ (≈wash) | reset **TIES/LOSES** |
+| **High pressure, disposable** | debug-scanlib (n=2) | 100k | $1.423 | $1.112 (−22%) | **$1.029 (−28%)** | reset **WINS** |
+
+All arms completed the oracle in every regime (equal quality; no arm traded correctness
+for cost). ¹ speclib `compact` = the **real-reset** arm now (id25, $1.209, peak 104k) — a wash
+vs continue ($1.237): the reset dropped context but had to re-read the load-bearing refs, so the
+re-establish cost ate the savings. This **confirms with the fixed compact arm** what `handoff` (+20%)
+showed — early reset does not pay on load-bearing context — instead of resting on `handoff` alone.
+The **same real-reset compact wins −28% on disposable (scanlib)**: identical mechanism, opposite
+regime. (The pre-trim 226k-config continue pilot, id15/completed=0, is excluded from these numbers.)
+
+### The answer to "when does compacting early pay?"
+
+**Not when context is merely large — when it is DISPOSABLE.** Early reset pays iff the
+accumulated context is *reclaimable* (won't be needed again) **and** substantial work
+remains. This is exactly the working model:
+
+> pays iff  `reclaimable × per-turn-carry-cost × turns_remaining  >  summary + re-establish + re-read_risk`
+
+The three fixtures move the terms:
+- **Low pressure (hugelib):** `turns_remaining` and pressure both small → reset is pure
+  overhead. Loses.
+- **Load-bearing (speclib):** context is large but every reference is *needed again*, so
+  `re-read_risk` is maximal and the burst-read leaves `turns_remaining` small → reset
+  must re-read what it dropped → thrash. Loses (handoff +20%).
+- **Disposable (scanlib):** the ~120k of notes is read once and never needed again
+  (`re-read_risk ≈ 0`) while the reset fires early (large `turns_remaining`) → the reset
+  drops the notes and finishes from tiny per-module docstrings. **Wins ~30%.** Note
+  `compact` took *more* steps (69 vs 58) yet cost less — proof the saving is per-turn
+  carry cost, not fewer turns.
+
+The decisive term is **re-read_risk** (is the dropped context needed again?), **not raw
+context size.** A "compact when you hit 100k" rule keyed only on size would *help* on
+scanlib and *hurt* on speclib.
+
+### Product implication (feeds the Phase-6 intervention engine)
+
+The nudge to "compact/handoff now" must be gated on **reclaimable-junk × remaining-runway**,
+not raw context size — empirical support for the third gate in the open research thread.
+The engine already has pressure + reclaimable-junk signals; it **lacks remaining-runway**
+(turns-to-task-done), which this experiment shows is load-bearing for the decision. Firing
+"compact!" when the big context is still needed (load-bearing) would raise cost, not cut it.
+
+### Harness caveat (fixed, and a fixture calibration note)
+
+- **`compact` arm was degenerate before this run.** It resumed the same session
+  (`--resume`), which *reloads full context* — no reclaim unless the run hits Claude Code's
+  ~200k auto-compaction window. Below the window, compact ≡ continue (debug-speclib id17:
+  zero context drop, cost = continue). **Fixed** in `runner.py` to a real reset (fresh
+  session + summary), which is what produced the scanlib compact win. Headless `claude -p`
+  exposes no `/compact`, so fresh-session-with-summary is the faithful emulation.
+- **Fixtures** live in `backend/experiments/tasks/`: `debug-speclib` (load-bearing:
+  property + one-way SHA-256 digest tests, 24 distinct modules — refs are mandatory) and
+  `debug-scanlib` (disposable: ~120k of no-op design notes + tiny per-module refs). Both
+  generate via `generate_seed.py` (buggy seed + `--solution`), oracle-validated.
+- **Caveats:** small n (2–4/arm) with high rollout variance (temp 0 still varies read
+  strategy; scanlib continue peaked 98k–120k across two reps). The scanlib win (~30%) is
+  large relative to that spread and reproduced across compact's two reps ($1.005/$1.052),
+  but these are directional magnitudes, not tight estimates. A fixed-compact re-run on
+  speclib (to confirm real-compact also loses on load-bearing, not just handoff) is the
+  one open follow-up; skipped here to keep budget buffer.

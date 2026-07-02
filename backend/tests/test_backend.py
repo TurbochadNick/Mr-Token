@@ -632,7 +632,11 @@ class BackendTest(unittest.TestCase):
         spec.loader.exec_module(runner)
         task = os.path.join(exp, "tasks", "debug-hugelib")
         manifest = runner.load_manifest(task)
-        self.assertEqual(manifest["reset_threshold_tokens"], 100_000)
+        # reset_threshold_tokens is a per-fixture / per-study knob (89325c4 moved
+        # debug-hugelib to 30k for the low-pressure arm study). This groundwork test
+        # checks the plumbing, not a specific value — assert it's a positive int.
+        self.assertIsInstance(manifest["reset_threshold_tokens"], int)
+        self.assertGreater(manifest["reset_threshold_tokens"], 0)
 
         cont = runner.drive_agent(task, manifest, "/tmp/unused", "continue", mock=True)
         self.assertEqual(cont["reset_fired"], 0)
@@ -731,7 +735,8 @@ class BackendTest(unittest.TestCase):
         self.assertIsNotNone(iv)
         self.assertEqual(iv["tool"], "offload")
         self.assertIsNotNone(evaluate(40, 2, ["re_read_loop"]))        # low turns-to-full + junk
-        self.assertEqual(evaluate(85, None, ["context_rot"])["tool"], "handoff")
+        # COMPACTION-GATE phase 1: context_rot alone no longer leads with the drop.
+        self.assertEqual(evaluate(85, None, ["context_rot"])["tool"], "offload")
         self.assertIsNone(evaluate(90, 1, ["low_cache"]))   # pressure but junk isn't reclaimable
         self.assertIsNone(evaluate(30, 20, ["huge_tool_output"]))  # junk but no pressure
         self.assertIsNone(evaluate(10, None, []))           # clean → silent
@@ -789,15 +794,31 @@ class BackendTest(unittest.TestCase):
             finally:
                 dd.central_default = orig
 
-    def test_handoff_intervention_is_consent_offer(self):
+    def test_compaction_gate_context_rot_defaults_reversible(self):
+        # COMPACTION-GATE phase 1: context_rot alone carries no disposable-vs-
+        # load-bearing information (the 5A regime map shows a reset WINS on
+        # disposable context and LOSES ~+20% on load-bearing), so the nudge must
+        # not lead with the destructive drop. It routes to reversible `offload`;
+        # handoff is mentioned only as an explicitly optional judgement call.
         from mrtoken.intervene import evaluate
         iv = evaluate(83, None, ["context_rot"])
         self.assertIsNotNone(iv)
-        self.assertEqual(iv["tool"], "handoff")
+        self.assertEqual(iv["tool"], "offload")             # not a lead-with-drop handoff
         self.assertIn("we've done a lot", iv["message"])
-        self.assertIn("continue this work more efficiently in a new session", iv["message"])
-        self.assertIn("Do you want me to run `handoff` now?", iv["message"])
-        self.assertNotIn("Run `handoff` now", iv["message"])
+        self.assertIn("`handoff`", iv["message"])           # still surfaced as an option...
+        self.assertIn("optional", iv["message"])            # ...but clearly optional
+        self.assertNotIn("Do you want me to run `handoff` now?", iv["message"])
+        # Disposable regime (scanlib-like): huge output under pressure → offload, unchanged.
+        self.assertEqual(evaluate(85, None, ["huge_tool_output"])["tool"], "offload")
+        # Load-bearing regime (speclib-like): re-paid content → offload, unchanged.
+        self.assertEqual(evaluate(85, None, ["re_read_loop"])["tool"], "offload")
+        self.assertEqual(evaluate(85, None, ["repeated_context"])["tool"], "offload")
+        # context_rot alongside a load-bearing signal → the plain offload path.
+        both = evaluate(85, None, ["context_rot", "re_read_loop"])
+        self.assertEqual(both["tool"], "offload")
+        self.assertNotIn("optional", both["message"])
+        # Pressure with no reclaimable signal → still silent (unchanged).
+        self.assertIsNone(evaluate(90, 1, ["low_cache"]))
 
     def test_module_registry(self):
         # ROADMAP 7.2 (groundwork): register/toggle external token-saver modules +
@@ -1827,9 +1848,62 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(m["projection"]["n_sessions"], 1)
             self.assertGreater(m["projection"]["projected_saving_usd"], 0)  # late burn > lean opening
             self.assertEqual(m["cohort"]["acted"]["n"] + m["cohort"]["ignored"]["n"], 1)
-            self.assertEqual(m["cohort"]["ignored"]["n"], 1)  # 12 calls past midpoint ≥ horizon
+            self.assertEqual(m["cohort"]["ignored"]["n"], 1)  # no linked follow-on session
             with contextlib.redirect_stdout(io.StringIO()):
                 print_roi_measure(conn, horizon=10)
+
+    def test_roi_measure_cross_session_linkage(self):
+        # GOALS/roi-cross-session-linkage.md: method B classifies a fired session
+        # as "acted" when a separate fresh session started in the same project
+        # within LINKAGE_WINDOW_MIN of its end — not by splitting one session at
+        # its midpoint (which made B degenerate: fresh_handoff only fires deep).
+        from mrtoken.roi import roi_measure
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+
+            def add_trace(sid, project, start, end, parent=None):
+                conn.execute(
+                    "INSERT INTO trace(session_id,parent_session_id,project_path,"
+                    "started_at,ended_at,ingested_at) VALUES(?,?,?,?,?,?)",
+                    (sid, parent, project, start, end, "t"))
+                return conn.execute("SELECT id FROM trace WHERE session_id=?",
+                                    (sid,)).fetchone()[0]
+
+            def add_calls(tid, hour, n=6, cost=0.1):
+                for i in range(n):
+                    conn.execute(
+                        "INSERT INTO model_call(trace_id,timestamp,est_cost_usd) "
+                        "VALUES(?,?,?)",
+                        (tid, f"2026-07-01T{hour:02d}:{i:02d}:00Z", cost))
+
+            def fire(tid):
+                conn.execute(
+                    "INSERT INTO recommendation(trace_id,rule,severity,message,"
+                    "created_at) VALUES(?,?,?,?,?)",
+                    (tid, "fresh_handoff", "high", "start fresh", "t"))
+
+            # ACTED: ends 10:05, fresh same-project session starts 10:20 (≤30m).
+            t1 = add_trace("acted1", "/p/alpha", "2026-07-01T09:00:00Z",
+                           "2026-07-01T10:05:00Z")
+            add_calls(t1, 9); fire(t1)
+            add_trace("follow1", "/p/alpha", "2026-07-01T10:20:00Z", None)
+            # IGNORED: next same-project session starts 6h later (outside window).
+            t2 = add_trace("ign1", "/p/beta", "2026-07-01T09:00:00Z",
+                           "2026-07-01T10:00:00Z")
+            add_calls(t2, 9); fire(t2)
+            add_trace("late1", "/p/beta", "2026-07-01T16:00:00Z", None)
+            # IGNORED: a subagent transcript in-window must NOT count as acting.
+            t3 = add_trace("ign2", "/p/gamma", "2026-07-01T09:00:00Z",
+                           "2026-07-01T10:00:00Z")
+            add_calls(t3, 9); fire(t3)
+            add_trace("sub1", "/p/gamma", "2026-07-01T10:10:00Z", None, parent="ign2")
+            conn.commit()
+
+            m = roi_measure(conn, horizon=10)
+            self.assertEqual(m["cohort"]["acted"]["n"], 1)      # non-degenerate B
+            self.assertEqual(m["cohort"]["ignored"]["n"], 2)
+            self.assertIsNotNone(m["cohort"]["acted"]["late_per_call_usd"])
+            self.assertEqual(m["projection"]["n_sessions"], 3)  # C unchanged
 
     def test_fleet_counts_codex_sessions(self):
         # fleet must count Codex sessions (source='codex'), not just claude_code.

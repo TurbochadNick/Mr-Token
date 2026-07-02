@@ -202,21 +202,37 @@ and used a turn-count proxy. Pilot 3 fixes exactly that.
 - [x] **5A.2 Token-threshold reset** — runner records `peak_input_tokens` + `crossed_threshold` from the
   transcript (validated against real input-side tokens, not a turn guess). Mock-verified. *(v0.5.4)*
 - [x] **5A.3 Wire the `compact` arm** — done (`--resume` to completion); `--mock` validates all 3 arms. *(v0.5.4)*
-- [ ] **5A.4 Run the matrix** — continue/compact/handoff × pilot-3 × K=5–10, interleaved. `[claude]`
-  **FUNDED: $20 cap** (greenlit 2026-07-01). Start with one cheap `--arm continue` confirm-pilot on
-  debug-hugelib (does it cross 100k?), then the matrix; each run passes `--budget-usd` and stops before
-  the cap. Fast-follow to the Adopt focus.
-- [ ] **5A.5 Analyze + record** — apply the pre-registered rule (≥5% signal, ≥10–15% win vs BOTH arms at
-  equal completion), write the result into `docs/ROI-EXPERIMENT.md`.
+- [x] **5A.4 Run the matrix** — continue/compact/handoff across THREE fixtures. `[claude]`
+  **FUNDED $20 cap; ~$16.75 spent.** Ran a regime sweep, not a single point:
+  - *Low pressure* (debug-hugelib, 30k, n=4): continue $0.327 < compact $0.394 (+20%) < handoff
+    $0.413 (+26%) — reset LOSES (net-negative), not separable.
+  - *High pressure, load-bearing* (debug-speclib, 100k): continue $1.237 ≈ compact (degenerate) <
+    handoff $1.478 (+20%) — reset TIES/LOSES; refs must be re-read.
+  - *High pressure, disposable* (debug-scanlib, 100k, n=2): continue $1.423 > handoff $1.112 (−22%)
+    > compact $1.029 (−28%) — reset **WINS ~30%** at equal completion.
+  - Also fixed a harness bug: the `compact` arm used to `--resume` (reloads full context, no reclaim
+    below the ~200k window) → now a real reset. See `docs/ROI-EXPERIMENT.md` "RESULTS".
+- [x] **5A.5 Analyze + record** — DONE, written to `docs/ROI-EXPERIMENT.md` (RESULTS section).
+  **Answer:** early compaction pays when accumulated context is DISPOSABLE (reclaimable, low
+  re-read risk) with work remaining — NOT when it's merely large. Decisive term = re-read_risk,
+  not raw size. Product implication: gate the "compact now" nudge on reclaimable-junk ×
+  remaining-runway (the engine lacks remaining-runway — Phase-6 refinement). Open follow-up:
+  fixed-compact re-run on speclib to confirm real-compact also loses on load-bearing.
 
 ### B — Show it (dashboard — Nick's TS/web lane) *(I provide the contract, do NOT build)*
-- [ ] **5B.1 Data-surface spec for Nick** — `session_summary.v1` + `session_detail.v1` + `--since`, with the
-  estimated↔actual join and example queries. (backend doc — in lane)
-- [ ] **5B.2 Coordination note to Nick** — what's ready + his two open questions now answered (draft; Zach sends).
+- [x] **5B.1 Data-surface spec for Nick** — done in `docs/UI-INTEGRATION.md`: full v1 surface —
+  `session_summary.v1` (+ `is_low_activity`) + `session_detail.v1` (per-model-call timeline) + `export`
+  flags (`--detail`/`--since`/`--redact`/`--codex`) + estimated↔actual join + example queries + stability
+  contract. Both prior "open questions" were already BUILT; the doc catches the spec up to the code.
+- [x] **5B.2 Coordination note to Nick** — DRAFT done: `docs/HANDOFF-TO-NICK.md` rewritten to the v1
+  surface, both questions marked answered, points to UI-INTEGRATION.md. ⏳ **Zach forwards to Nick** (outward).
 
 ### C — Grow it (pilots / GTM) *(materials in lane; outreach is Zach's)*
-- [ ] **5C.1 Pilot one-pager / onboarding** — from `INTERVIEW-KIT.md` + the v0.4.5 capabilities (draft).
-- [ ] **5C.2 BYU TTO pilot framing / weekly report** — Zach-driven; I can draft.
+- [x] **5C.1 Pilot one-pager / onboarding** — done by Codex: `docs/BETA-TESTER-NOTE.md` (paste-ready install
+  + what-to-expect + privacy + feedback + uninstall, for the v0.5.8 beta). *(Reconciled 2026-07-01.)*
+- [x] **5C.2 BYU TTO pilot framing** — done by Codex: `docs/BYU-TTO-PILOT.md` (what it does / doesn't, pilot
+  scope) + `docs/BETA-TESTING.md` + `beta.py`/`beta_evidence.py` tooling. *(Reconciled 2026-07-01.)*
+  **Remaining for Adopt = Zach-driven outreach** (contact testers per `INTERVIEW-KIT.md`) — not a loop task.
 
 ### D — Internal feedback & observability *(backend mine; ~zero budget; do BEFORE 5A.4)*
 We've validated Mr Token ad hoc (dogfood + the `validate` *proxy*). This adds a continuous internal loop
@@ -266,8 +282,17 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
 - [x] **6.7 Measure-don't-degrade**
   → done: commit `7a397d8`. `outcomes.py` central store; proc engine auto-captures ctx-delta effect per
     tool; a tool trending negative auto-disables via policy (→ off) + says how to re-enable. 71 tests green.
+- [ ] **6.8-pre The compaction gate** — spec'd in `docs/COMPACTION-GATE.md`; phase-1 brief in
+  `GOALS/compaction-gate-phase1.md` (`[claude]`/`[codex]`). The 5A regime map shows `pressure ∧
+  reclaimable-junk` is necessary but not sufficient — a reset WINS on disposable context, LOSES (+20%)
+  on load-bearing. `intervene.py` already routes re_read/repeated/huge → `offload` (safe); the gap is
+  the lone DROP path `context_rot → handoff`, which fires on a generic pressure signal with no
+  disposability info. Fix, phased: (1) make that drop safe-by-default; (2) disposability gate
+  (per-block turns-since-access); (3) remaining-runway proxy (near-done suppression). **Acceptance =
+  the two fixtures** (fire-drop on debug-scanlib, suppress-drop on debug-speclib; add to 5D.3). Prereq for 6.8.
 - [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
-  help, at equal quality. **⚑ decision per tool** before it defaults to auto.
+  help, at equal quality, AND only in the disposable ∧ runway-remaining regime (see 6.8-pre).
+  **⚑ decision per tool** before it defaults to auto.
 
 ## Phase 7 — Prove the value + plug-and-play hub *(from Rosson's feedback)*
 

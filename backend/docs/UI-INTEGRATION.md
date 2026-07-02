@@ -60,6 +60,7 @@ Safe on any DB: if the backend tables don't exist yet it returns
 | `title` | text | session title if present |
 | `started_at`, `ended_at` | text | ISO8601 |
 | `model_calls` | int | assistant turns |
+| `is_low_activity` | int | 1 if the session has too few model calls to be meaningful (near-empty / aborted) — gray out or filter in the UI |
 | `input_tokens` | int | **real** (non-cached input) |
 | `output_tokens` | int | **real** |
 | `cache_read_tokens` | int | **real** |
@@ -124,11 +125,72 @@ A small "estimated → actual" delta is a nice trust signal for evaluators.
 
 ---
 
+## `session_detail` — per-model-call timeline (the drill-down panel)
+
+Both of the earlier open questions are now **shipped**: there's a `session_detail`
+view (one row per model call, for a drill-down / timeline panel) and a `--since`
+filter on `export` (for incremental refresh). Metadata only — token/cost/tool counts
+per call, **no prompt or content** (privacy invariant holds).
+
+```sql
+SELECT timestamp, model, input_tokens, output_tokens, cache_read_tokens,
+       cache_write_tokens, reasoning_tokens, est_cost_usd, tool_calls, tool_errors
+FROM session_detail
+WHERE session_id = ?          -- prefix match with LIKE ? || '%' also fine
+ORDER BY timestamp;           -- the view is unordered; always ORDER BY timestamp
+```
+
+| column | type | meaning |
+|---|---|---|
+| `session_id` | text | **join key** ↔ `events.session_id` |
+| `trace_id` | int | backend trace PK (same as `session_summary.trace_id`) |
+| `model_call_id` | int | per-call PK; stable tiebreaker for equal timestamps |
+| `timestamp` | text | ISO8601 of the model call — the x-axis for a timeline |
+| `model` | text | model id for this call |
+| `input_tokens` | int | **real** non-cached input for THIS call |
+| `output_tokens` | int | **real** output for THIS call |
+| `cache_read_tokens` | int | **real**, this call |
+| `cache_write_tokens` | int | **real**, this call |
+| `reasoning_tokens` | int | extended-thinking tokens (0/NULL when none) |
+| `est_cost_usd` | real | per-call API-equivalent estimate — **label as estimate** |
+| `tool_calls` | int | tool calls attributed to this model call |
+| `tool_errors` | int | of which errored |
+
+**Drill-down uses:** cumulative-sum `input+cache_read` per row to draw the
+context-growth curve; `est_cost_usd` per row for a cost-per-turn sparkline;
+`tool_errors` to mark trouble spots. Roll up to the session with `session_summary`;
+expand a session into this timeline on click.
+
+---
+
+## Export command reference (Option B surface)
+
+```bash
+mrtoken-transcript export [session-prefix] [--db PATH]     # session_summary.v1 (one obj/session)
+mrtoken-transcript export <session-prefix> --detail        # session_detail.v1 (per-call timeline)
+mrtoken-transcript export --since 2026-07-01T00:00:00       # only sessions started at/after (incremental)
+mrtoken-transcript export <session-prefix> --redact        # drop project_path + title (safe to share)
+mrtoken-transcript export [...] --codex                     # read the central Codex DB instead
+```
+
+`--detail` requires a session prefix (it's a single-session timeline). `--since`
+filters `started_at`; combine with a prefix to page. Detail JSON:
+
+```json
+{ "schema": "mrtoken.session_detail.v1", "tool_version": "0.5.x",
+  "session_prefix": "…", "calls": [ { …one object per model call… } ] }
+```
+
+---
+
 ## Stability contract
 
-- `schema: "mrtoken.session_summary.v1"` — I'll bump the version if columns change
-  meaning or are removed. Additive columns won't bump it.
-- The view name `session_summary` and the join key `session_id` are stable.
-- Open questions for you: do you want a `--since <iso>` filter on `export`, and/or
-  a `session_detail` view (per-model-call timeline) for a drill-down panel? Say
-  the word and I'll add them.
+- **Schemas:** `mrtoken.session_summary.v1` and `mrtoken.session_detail.v1`. I bump the
+  version only if a column changes meaning or is removed; **additive columns won't bump it**
+  (e.g. `is_low_activity` was added to summary without a bump — code defensively, select
+  columns by name, don't assume position).
+- The view names `session_summary` / `session_detail` and the join key `session_id` are stable.
+- `est_cost_usd` is an API-equivalent **estimate**, not a bill — always label it as such.
+- Metadata-only guarantee: no view or export field carries prompt text, source, or secrets.
+- Both open questions are now answered (see above) — nothing left pending from my side for v1.
+  Ping me if you want an aggregate/rollup view (e.g. per-project or per-day) for the landing page.

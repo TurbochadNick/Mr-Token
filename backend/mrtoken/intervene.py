@@ -27,7 +27,11 @@ def _tool_for(signals: set) -> tuple[str, str]:
     if "re_read_loop" in signals or "repeated_context" in signals:
         return "offload", "the same content is being re-paid into context"
     if "context_rot" in signals:
-        return "handoff", "we've done a lot this session and context is getting full"
+        # context_rot alone can't tell disposable context (a reset wins) from
+        # load-bearing (a reset loses ~+20% — docs/COMPACTION-GATE.md, phase 1).
+        # Until a disposability gate exists, never lead with the destructive drop:
+        # nudge the reversible tool and leave handoff as an advisory option.
+        return "offload", "we've done a lot this session and context is getting full"
     return "offload", "reclaimable context"
 
 
@@ -41,7 +45,12 @@ def evaluate(ctx_pct, turns_to_full, signals_fired, *,
         return None
     tool, why = _tool_for(junk)
     turns_note = f", ~{turns_to_full} turns to full" if turns_to_full else ""
-    if tool == "offload":
+    if tool == "offload" and junk == {"context_rot"}:
+        # Advisory handoff mention only — clearly optional, agent's judgement.
+        action = ("use `offload` for saved bulk you must keep; a `handoff` to a fresh "
+                  "session is optional and only pays if the loaded context is no "
+                  "longer needed for the remaining work")
+    elif tool == "offload":
         action = ("redirect future noisy commands to a file and inspect narrow slices; "
                   "use `offload` for saved bulk you must keep")
     else:

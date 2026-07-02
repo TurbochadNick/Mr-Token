@@ -6,8 +6,8 @@
   "oracle": "oracle.sh",
   "seed_dir": "seed",
   "immutable_files": ["test_hugelib.py"],
-  "reset_threshold_tokens": 100000,
-  "handoff_phase1_turns": 16,
+  "reset_threshold_tokens": 30000,
+  "handoff_phase1_turns": 5,
   "agent": {"model": "claude-sonnet-4-6", "effort": "medium", "temperature": 0},
   "max_steps": 120,
   "note": "Engineered for reliable bloat via forced large reads (16 modules, each with a large reference block). Confirm it crosses 100k with one continue pilot before the full matrix."
