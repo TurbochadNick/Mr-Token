@@ -48,10 +48,14 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   (merge commit `24cef87`): 5A regime-map experiment (DONE), compaction-gate spec + **phase 1**
   (Fable) + **phase-2 brief**, ROI `--measure` cross-session linkage (Fable), `GOALS/` loop briefs,
   5B.1 (`UI-INTEGRATION.md`) + 5B.2 (`HANDOFF-TO-NICK.md` refreshed — ⏳ Zach forwards to Nick), and
-  Fable enablement (`ONBOARDING.md` + K2 coordination). Branch `experiment/compaction-regime-map`
-  kept (not deleted) for Fable's in-flight phase-2 → that will be a NEW PR off `main`. Global (not
-  in-repo): `/which-model` snapshot updated for Fable's 2026-07-01 reinstatement. Experiment spend
-  **$17.46/$20**.
+  Fable enablement (`ONBOARDING.md` + K2 coordination). Global (not in-repo): `/which-model`
+  snapshot updated for Fable's 2026-07-01 reinstatement. Experiment spend **$17.46/$20**.
+- **Compaction gate COMPLETE (Fable, 2026-07-02): phases 2+3 in PR #19** (same
+  `experiment/compaction-regime-map` branch — phase 3 builds on phase 2, one review unit).
+  Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 90 backend tests green;
+  default-None inputs keep old callers byte-identical. **6.8 L3 auto-act is now unblocked**
+  (disposable ∧ runway-remaining only, warn-only until 6.7 outcomes validate). Still open from
+  the gate work: 5D.3 golden replay of the scanlib/speclib fixtures (no replay plumbing yet).
 - **Reconciled:** Adopt build-work (5C.1/5C.2) was already done by Codex —
   `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
   `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**
