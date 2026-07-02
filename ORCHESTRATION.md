@@ -85,8 +85,10 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   - **`GOALS/` created — loop-ready task briefs** (README + 3 briefs: compaction-gate-phase1,
     roi-cross-session-linkage, experiment-closeout). Each is self-contained for `/loop` or a Codex
     hand-off. Uncommitted with the 5B.1 draft.
-  - **Open follow-ups:** (a) fixed-compact re-run on speclib (confirm real-compact also loses on
-    load-bearing); (b) more reps for tighter magnitudes.
+  - **Closeout DONE:** real-reset compact on speclib (id25, $1.209, peak 104k) ≈ continue ($1.237) —
+    confirms with the fixed compact arm that early reset doesn't pay on load-bearing (was resting on
+    handoff +20% alone). Same real-compact wins −28% on disposable scanlib. Spend **$17.46/$20**.
+    Open follow-up: (b) more reps for tighter magnitudes. Work is on PR **#18** (→ main, not merged).
 - **5B.1 (Nick data-surface spec) — DRAFT, looping.** `docs/UI-INTEGRATION.md` now specs the full v1
   surface (summary + `session_detail.v1` timeline + export `--detail`/`--since`/`--redact`/`--codex` +
   `is_low_activity` + join + stability). Both prior open questions were already built; the doc catches up

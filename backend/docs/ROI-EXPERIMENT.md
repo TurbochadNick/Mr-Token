@@ -293,12 +293,16 @@ Cost is the honest cache-weighted burn from the transcript. Total spend ~$16.75 
 | Regime | Fixture | Threshold | continue | handoff | compact | Verdict |
 |---|---|---|---|---|---|---|
 | **Low pressure** | debug-hugelib (n=4) | 30k | **$0.327** | $0.413 (+26%) | $0.394 (+20%) | reset **LOSES** |
-| **High pressure, load-bearing** | debug-speclib (n≈1) | 100k | $1.237 | $1.478 (+20%) | $1.225¹ | reset **TIES/LOSES** |
+| **High pressure, load-bearing** | debug-speclib | 100k | $1.237 | $1.478 (+20%) | $1.209¹ (≈wash) | reset **TIES/LOSES** |
 | **High pressure, disposable** | debug-scanlib (n=2) | 100k | $1.423 | $1.112 (−22%) | **$1.029 (−28%)** | reset **WINS** |
 
 All arms completed the oracle in every regime (equal quality; no arm traded correctness
-for cost). ¹ speclib `compact` is the **pre-fix degenerate arm** (see Harness caveat), so
-the load-bearing "reset loses" verdict rests on `handoff` (the genuine reset there, +20%).
+for cost). ¹ speclib `compact` = the **real-reset** arm now (id25, $1.209, peak 104k) — a wash
+vs continue ($1.237): the reset dropped context but had to re-read the load-bearing refs, so the
+re-establish cost ate the savings. This **confirms with the fixed compact arm** what `handoff` (+20%)
+showed — early reset does not pay on load-bearing context — instead of resting on `handoff` alone.
+The **same real-reset compact wins −28% on disposable (scanlib)**: identical mechanism, opposite
+regime. (The pre-trim 226k-config continue pilot, id15/completed=0, is excluded from these numbers.)
 
 ### The answer to "when does compacting early pay?"
 
