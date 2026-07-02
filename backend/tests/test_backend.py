@@ -632,7 +632,11 @@ class BackendTest(unittest.TestCase):
         spec.loader.exec_module(runner)
         task = os.path.join(exp, "tasks", "debug-hugelib")
         manifest = runner.load_manifest(task)
-        self.assertEqual(manifest["reset_threshold_tokens"], 100_000)
+        # reset_threshold_tokens is a per-fixture / per-study knob (89325c4 moved
+        # debug-hugelib to 30k for the low-pressure arm study). This groundwork test
+        # checks the plumbing, not a specific value — assert it's a positive int.
+        self.assertIsInstance(manifest["reset_threshold_tokens"], int)
+        self.assertGreater(manifest["reset_threshold_tokens"], 0)
 
         cont = runner.drive_agent(task, manifest, "/tmp/unused", "continue", mock=True)
         self.assertEqual(cont["reset_fired"], 0)
