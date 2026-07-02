@@ -25,7 +25,7 @@ is called out up front so the loop stops and asks instead of guessing.
 
 | Goal | File | Lane | Status | Loop exit (1-line) |
 |---|---|---|---|---|
-| Compaction gate — phase 1 (gate the DROP path) | `compaction-gate-phase1.md` | Codex / either | **ready** | `context_rot` no longer leads with a destructive `handoff` w/o a disposability signal; `./scripts/test-backend.sh` green incl. new regime tests |
+| Compaction gate — phase 1 (gate the DROP path) | `compaction-gate-phase1.md` | Codex / either | **done** (Fable, commit 0d92e55) | met, except full-green blocked by a PRE-EXISTING drift: `test_experiment_runner_groundwork` asserts the 100k threshold 89325c4 changed to 30k — needs Zach's call |
 | Real in-the-wild ROI (cross-session linkage) | `roi-cross-session-linkage.md` | Codex / either | **ready** | `roi --measure` emits a non-degenerate acted-vs-ignored number (method B no longer all-"ignored") |
 | Experiment closeout (speclib fixed-compact + reps) | `experiment-closeout.md` | Claude | **ready** (needs ~$3 of the $20) | speclib fixed-compact n≥2 recorded; `ROI-EXPERIMENT.md` RESULTS updated |
 | 5B.2 — refresh the Nick note | `5b2-nick-note.md` | Claude draft, **Zach sends** | **ready** | `docs/HANDOFF-TO-NICK.md` matches the shipped v1 surface; two questions marked answered |
