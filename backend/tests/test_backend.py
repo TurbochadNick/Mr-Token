@@ -731,7 +731,8 @@ class BackendTest(unittest.TestCase):
         self.assertIsNotNone(iv)
         self.assertEqual(iv["tool"], "offload")
         self.assertIsNotNone(evaluate(40, 2, ["re_read_loop"]))        # low turns-to-full + junk
-        self.assertEqual(evaluate(85, None, ["context_rot"])["tool"], "handoff")
+        # COMPACTION-GATE phase 1: context_rot alone no longer leads with the drop.
+        self.assertEqual(evaluate(85, None, ["context_rot"])["tool"], "offload")
         self.assertIsNone(evaluate(90, 1, ["low_cache"]))   # pressure but junk isn't reclaimable
         self.assertIsNone(evaluate(30, 20, ["huge_tool_output"]))  # junk but no pressure
         self.assertIsNone(evaluate(10, None, []))           # clean → silent
@@ -789,15 +790,31 @@ class BackendTest(unittest.TestCase):
             finally:
                 dd.central_default = orig
 
-    def test_handoff_intervention_is_consent_offer(self):
+    def test_compaction_gate_context_rot_defaults_reversible(self):
+        # COMPACTION-GATE phase 1: context_rot alone carries no disposable-vs-
+        # load-bearing information (the 5A regime map shows a reset WINS on
+        # disposable context and LOSES ~+20% on load-bearing), so the nudge must
+        # not lead with the destructive drop. It routes to reversible `offload`;
+        # handoff is mentioned only as an explicitly optional judgement call.
         from mrtoken.intervene import evaluate
         iv = evaluate(83, None, ["context_rot"])
         self.assertIsNotNone(iv)
-        self.assertEqual(iv["tool"], "handoff")
+        self.assertEqual(iv["tool"], "offload")             # not a lead-with-drop handoff
         self.assertIn("we've done a lot", iv["message"])
-        self.assertIn("continue this work more efficiently in a new session", iv["message"])
-        self.assertIn("Do you want me to run `handoff` now?", iv["message"])
-        self.assertNotIn("Run `handoff` now", iv["message"])
+        self.assertIn("`handoff`", iv["message"])           # still surfaced as an option...
+        self.assertIn("optional", iv["message"])            # ...but clearly optional
+        self.assertNotIn("Do you want me to run `handoff` now?", iv["message"])
+        # Disposable regime (scanlib-like): huge output under pressure → offload, unchanged.
+        self.assertEqual(evaluate(85, None, ["huge_tool_output"])["tool"], "offload")
+        # Load-bearing regime (speclib-like): re-paid content → offload, unchanged.
+        self.assertEqual(evaluate(85, None, ["re_read_loop"])["tool"], "offload")
+        self.assertEqual(evaluate(85, None, ["repeated_context"])["tool"], "offload")
+        # context_rot alongside a load-bearing signal → the plain offload path.
+        both = evaluate(85, None, ["context_rot", "re_read_loop"])
+        self.assertEqual(both["tool"], "offload")
+        self.assertNotIn("optional", both["message"])
+        # Pressure with no reclaimable signal → still silent (unchanged).
+        self.assertIsNone(evaluate(90, 1, ["low_cache"]))
 
     def test_module_registry(self):
         # ROADMAP 7.2 (groundwork): register/toggle external token-saver modules +
