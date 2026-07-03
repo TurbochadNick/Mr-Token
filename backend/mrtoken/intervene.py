@@ -46,8 +46,20 @@ def _near_done(progress: dict | None) -> bool:
     return improving and landing
 
 
-def _any_disposable(disposability: dict | None) -> bool:
-    return bool(disposability) and "disposable" in disposability.values()
+def _disposable_source(disposability: dict | None) -> str | None:
+    """Where the disposable verdict came from. 'disposable' is the recency
+    PROXY (LiveMonitor); 'disposable_confirmed' is an EXPLICIT confirmation
+    (reserved for the mr-context/toolbox channel). The distinction matters:
+    the proxy cannot tell the win regime from the lose regime at pressure time
+    (falsified on the 5A reset points — PR #19), so only explicit may escalate."""
+    if not disposability:
+        return None
+    vals = set(disposability.values())
+    if "disposable_confirmed" in vals:
+        return "explicit"
+    if "disposable" in vals:
+        return "proxy"
+    return None
 
 
 def _tool_for(signals: set, *, disposable: bool = False) -> tuple[str, str]:
@@ -83,7 +95,8 @@ def evaluate(ctx_pct, turns_to_full, signals_fired, *, disposability: dict | Non
         # than the remaining turns' carry — even on disposable context. Say
         # nothing and let the agent finish.
         return None
-    tool, why = _tool_for(junk, disposable=_any_disposable(disposability))
+    src = _disposable_source(disposability)
+    tool, why = _tool_for(junk, disposable=src is not None)
     turns_note = f", ~{turns_to_full} turns to full" if turns_to_full else ""
     if tool == "offload" and junk == {"context_rot"}:
         # Advisory handoff mention only — clearly optional, agent's judgement.
@@ -93,6 +106,13 @@ def evaluate(ctx_pct, turns_to_full, signals_fired, *, disposability: dict | Non
     elif tool == "offload":
         action = ("redirect future noisy commands to a file and inspect narrow slices; "
                   "use `offload` for saved bulk you must keep")
+    elif src == "proxy":
+        # Proxy-unlocked drop: the recency signal can't see future re-need, so
+        # frame it as a question the agent answers, with the reversible out.
+        action = ("some large context looks droppable (read once, untouched for "
+                  "several turns) — only you can tell if it's truly done with. If "
+                  "none of it is needed again, `handoff` to a fresh session pays; "
+                  "if you'll need those refs, use `offload` instead. Run `handoff`?")
     else:
         action = ("we can continue this work more efficiently in a new session. "
                   "Do you want me to run `handoff` now?")
@@ -100,7 +120,8 @@ def evaluate(ctx_pct, turns_to_full, signals_fired, *, disposability: dict | Non
     if tool == "offload":
         msg += " (see the mr-context manual)."
     return {"severity": "warn", "tool": tool, "signals": sorted(junk),
-            "ctx_pct": ctx_pct, "turns_to_full": turns_to_full, "message": msg}
+            "ctx_pct": ctx_pct, "turns_to_full": turns_to_full, "message": msg,
+            **({"disposability_source": src} if tool == "handoff" else {})}
 
 
 def intervention_for_session(transcript_path: str | None = None,
@@ -144,6 +165,12 @@ def decide(session_id: str, ctx_pct, turns_to_full, signals, *,
     level = autonomy(iv["tool"])
     if level == "off" or not should_fire(session_id, iv["ctx_pct"]):
         return None
+    # The recency proxy can't distinguish the drop-wins regime from the
+    # drop-loses one at pressure time (falsified on the 5A reset points —
+    # PR #19). A proxy-unlocked drop may TELL (a consent question), but only
+    # an explicit disposability confirmation may escalate to ask/do.
+    if iv.get("disposability_source") == "proxy" and level in ("ask", "do"):
+        level = "tell"
     iv["level"] = level
     # measure-don't-degrade (6.7): did the PRIOR recommendation for this session help?
     if session_id:

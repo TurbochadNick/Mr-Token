@@ -829,7 +829,11 @@ class BackendTest(unittest.TestCase):
         disp = {"read:abc123": "disposable", "read:def456": "load_bearing"}
         iv = evaluate(85, None, ["context_rot"], disposability=disp)
         self.assertEqual(iv["tool"], "handoff")             # drop unlocked
-        self.assertIn("Do you want me to run `handoff` now?", iv["message"])
+        self.assertEqual(iv["disposability_source"], "proxy")
+        # Proxy-unlocked drop reads as a QUESTION with the reversible out —
+        # the proxy can't see future re-need (PR #19 finding).
+        self.assertIn("Run `handoff`?", iv["message"])
+        self.assertIn("`offload` instead", iv["message"])
         for blocked in ({"read:def456": "load_bearing"}, {}, None):
             iv = evaluate(85, None, ["context_rot"], disposability=blocked)
             self.assertEqual(iv["tool"], "offload")         # phase-1 behaviour
@@ -839,6 +843,36 @@ class BackendTest(unittest.TestCase):
             evaluate(85, None, ["re_read_loop"], disposability=disp)["tool"], "offload")
         self.assertEqual(
             evaluate(85, None, ["huge_tool_output"], disposability=disp)["tool"], "offload")
+
+    def test_proxy_drop_never_escalates_past_tell(self):
+        # PR #19 finding: the recency proxy can't tell the drop-wins regime from
+        # the drop-loses one at pressure time, so a proxy-unlocked drop is capped
+        # at L1 tell even when policy says ask/do. Only an EXPLICIT disposability
+        # confirmation (disposable_confirmed — the future mr-context/toolbox
+        # channel) may escalate. This is the line 6.8 auto-act must not cross.
+        import mrtoken.datadir as dd
+        import mrtoken.policy as policy
+        from mrtoken import intervene
+        with tempfile.TemporaryDirectory() as tmp:
+            o_cd, p_cp = dd.central_default, policy._config_path
+            dd.central_default = lambda: tmp
+            policy._config_path = lambda: os.path.join(tmp, "config.json")
+            saved = os.environ.pop("MRTOKEN_INTERVENE", None)
+            try:
+                policy.set_autonomy("handoff", "do")
+                iv = intervene.decide("gx1", 85, None, ["context_rot"],
+                                      disposability={"read:a": "disposable"})
+                self.assertEqual(iv["tool"], "handoff")
+                self.assertEqual(iv["level"], "tell")   # capped: proxy never auto-acts
+                self.assertNotIn("phase", iv)           # never entered the ask policy
+                iv2 = intervene.decide("gx2", 85, None, ["context_rot"],
+                                       disposability={"read:a": "disposable_confirmed"})
+                self.assertEqual(iv2["tool"], "handoff")
+                self.assertEqual(iv2["level"], "do")    # explicit may escalate
+            finally:
+                dd.central_default, policy._config_path = o_cd, p_cp
+                if saved is not None:
+                    os.environ["MRTOKEN_INTERVENE"] = saved
 
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
