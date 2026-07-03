@@ -44,12 +44,26 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
-- **State (2026-07-01):** v0.5.8. All this session's work is on branch
-  `experiment/compaction-regime-map` (pushed) — **not merged to `main`, PR not opened.** Covers: the
-  5A regime-map experiment, compaction-gate spec, `GOALS/` loop briefs, 5B.1 (`UI-INTEGRATION.md`) +
-  5B.2 brief, and **Fable enablement** (`ONBOARDING.md` incl. K2 parallel-session coordination;
-  Fable role added to the orchestration model). Global (not in-repo): `/which-model` snapshot updated
-  for Fable's 2026-07-01 reinstatement.
+- **State (2026-07-02):** v0.5.8. This session's work is **MERGED to `main`** via PR #18
+  (merge commit `24cef87`): 5A regime-map experiment (DONE), compaction-gate spec + **phase 1**
+  (Fable) + **phase-2 brief**, ROI `--measure` cross-session linkage (Fable), `GOALS/` loop briefs,
+  5B.1 (`UI-INTEGRATION.md`) + 5B.2 (`HANDOFF-TO-NICK.md` refreshed — ⏳ Zach forwards to Nick), and
+  Fable enablement (`ONBOARDING.md` + K2 coordination). Global (not in-repo): `/which-model`
+  snapshot updated for Fable's 2026-07-01 reinstatement. Experiment spend **$17.46/$20**.
+- **Compaction gate COMPLETE (Fable, 2026-07-02): phases 2+3 in PR #19** (same
+  `experiment/compaction-regime-map` branch — phase 3 builds on phase 2, one review unit).
+  Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 90 backend tests green;
+  default-None inputs keep old callers byte-identical.
+- **⚠ Gate 1 proxy FALSIFIED at the real reset point (Fable, 2026-07-02, evidence on PR #19).**
+  Built the 5D.3 replay oracle (`backend/experiments/replay_gate.py`, `a3804fd`) and ran the
+  real 5A phase-1 transcripts through the gate: scanlib → drop ✓, but speclib `2whh9wno` →
+  93% disposable share → drop **in the +20% lose regime**; the other speclib run says offload
+  purely on 1–2 calls of read-timing jitter. Recency can't see future re-need. Stopped per the
+  phase-2 brief; no classifier tweak committed (early-singleton variant tried + reverted).
+  **Option 1 IMPLEMENTED (`b9a52c6`):** proxy-unlocked drop = consent question, capped at L1
+  tell in decide(); only an explicit `disposable_confirmed` (mr-context/toolbox channel, not
+  yet built) escalates — the hard line for 6.8 L3. Open follow-ups: huge-block-only unlock
+  (needs more fixture regimes), 6.7 outcomes learning, golden fixtures once contract reviewed.
 - **Reconciled:** Adopt build-work (5C.1/5C.2) was already done by Codex —
   `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
   `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**

@@ -132,6 +132,16 @@ regression so the classifier can't silently regress.
 
 ## Risks / limits
 
+- **Validated limit (2026-07-02, evidence on PR #19):** replaying the real 5A phase-1
+  transcripts (EOF = the actual reset point) shows the recency proxy does NOT separate the
+  regimes at pressure time — scanlib → 100% disposable share (drop ✓), but speclib run
+  `2whh9wno` → 93% disposable share (drop would fire in the +20% LOSE regime); the other
+  speclib run says offload purely on 1–2 calls of read-timing jitter. What separates the
+  regimes is whether the FUTURE task re-needs the refs, which last-access bookkeeping cannot
+  observe. Consequence (implemented): a proxy-unlocked drop is capped at **L1 tell**, phrased
+  as a consent question naming `offload` as the reversible out; only an explicit
+  `disposable_confirmed` (mr-context/toolbox channel, not yet built) may escalate to ask/do.
+  **6.8 L3 must never auto-act on the proxy alone.** Repro: `backend/experiments/replay_gate.py`.
 - Proxies are imperfect: "disposable" can be wrong (a block re-becomes relevant), so Gate 1
   should bias toward `offload` (reversible: content is preserved) over `handoff` (destructive)
   when uncertain. 6.7 remains the backstop.

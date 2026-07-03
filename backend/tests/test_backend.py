@@ -820,6 +820,158 @@ class BackendTest(unittest.TestCase):
         # Pressure with no reclaimable signal → still silent (unchanged).
         self.assertIsNone(evaluate(90, 1, ["low_cache"]))
 
+    def test_compaction_gate_disposability_unlocks_drop(self):
+        # COMPACTION-GATE phase 2 (Gate 1): a context_rot nudge may lead with the
+        # destructive `handoff` ONLY when some reclaimable block is classified
+        # disposable. Load-bearing, empty, or unknown (None — every caller that
+        # doesn't pass the input) keeps phase 1's reversible offload + advisory.
+        from mrtoken.intervene import evaluate
+        disp = {"read:abc123": "disposable", "read:def456": "load_bearing"}
+        iv = evaluate(85, None, ["context_rot"], disposability=disp)
+        self.assertEqual(iv["tool"], "handoff")             # drop unlocked
+        self.assertEqual(iv["disposability_source"], "proxy")
+        # Proxy-unlocked drop reads as a QUESTION with the reversible out —
+        # the proxy can't see future re-need (PR #19 finding).
+        self.assertIn("Run `handoff`?", iv["message"])
+        self.assertIn("`offload` instead", iv["message"])
+        for blocked in ({"read:def456": "load_bearing"}, {}, None):
+            iv = evaluate(85, None, ["context_rot"], disposability=blocked)
+            self.assertEqual(iv["tool"], "offload")         # phase-1 behaviour
+            self.assertIn("optional", iv["message"])
+        # The offload routes must ignore the gate — never a blind drop.
+        self.assertEqual(
+            evaluate(85, None, ["re_read_loop"], disposability=disp)["tool"], "offload")
+        self.assertEqual(
+            evaluate(85, None, ["huge_tool_output"], disposability=disp)["tool"], "offload")
+
+    def test_proxy_drop_never_escalates_past_tell(self):
+        # PR #19 finding: the recency proxy can't tell the drop-wins regime from
+        # the drop-loses one at pressure time, so a proxy-unlocked drop is capped
+        # at L1 tell even when policy says ask/do. Only an EXPLICIT disposability
+        # confirmation (disposable_confirmed — the future mr-context/toolbox
+        # channel) may escalate. This is the line 6.8 auto-act must not cross.
+        import mrtoken.datadir as dd
+        import mrtoken.policy as policy
+        from mrtoken import intervene
+        with tempfile.TemporaryDirectory() as tmp:
+            o_cd, p_cp = dd.central_default, policy._config_path
+            dd.central_default = lambda: tmp
+            policy._config_path = lambda: os.path.join(tmp, "config.json")
+            saved = os.environ.pop("MRTOKEN_INTERVENE", None)
+            try:
+                policy.set_autonomy("handoff", "do")
+                iv = intervene.decide("gx1", 85, None, ["context_rot"],
+                                      disposability={"read:a": "disposable"})
+                self.assertEqual(iv["tool"], "handoff")
+                self.assertEqual(iv["level"], "tell")   # capped: proxy never auto-acts
+                self.assertNotIn("phase", iv)           # never entered the ask policy
+                iv2 = intervene.decide("gx2", 85, None, ["context_rot"],
+                                       disposability={"read:a": "disposable_confirmed"})
+                self.assertEqual(iv2["tool"], "handoff")
+                self.assertEqual(iv2["level"], "do")    # explicit may escalate
+            finally:
+                dd.central_default, policy._config_path = o_cd, p_cp
+                if saved is not None:
+                    os.environ["MRTOKEN_INTERVENE"] = saved
+
+    def test_live_monitor_classifies_block_disposability(self):
+        # Gate 1's producer: a target read once and untouched for
+        # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target
+        # re-read repeatedly is load-bearing (speclib-like). Hash-keyed metadata
+        # only. (No transcript-replay plumbing exists yet for the 5D.3 golden
+        # fixtures — this synthetic feed covers the same two regimes.)
+        from mrtoken.watch import LiveMonitor, K_DISPOSABLE_TURNS
+
+        mon = LiveMonitor(emit=lambda _: None)
+
+        def response(i, blocks):
+            mon.feed({"type": "assistant", "message": {
+                "id": f"m{i}", "model": "x",
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+                "content": blocks}})
+
+        def read_block(tuid, target):
+            return {"type": "tool_use", "id": tuid, "name": "Read",
+                    "input": {"file_path": target}}
+
+        def result(tuid):
+            mon.feed({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": tuid, "content": "x" * 400}]}})
+
+        response(0, [read_block("t0", "/scan/notes.txt")])   # read once, early
+        result("t0")
+        for i in range(1, K_DISPOSABLE_TURNS + 1):           # re-read every turn
+            response(i, [read_block(f"s{i}", "/spec/refs.md")])
+            result(f"s{i}")
+
+        d = mon.disposability()
+        self.assertEqual(sorted(d.values()), ["disposable", "load_bearing"])
+        self.assertTrue(all(k.startswith("read:") for k in d))
+        self.assertIn("disposability", mon.snapshot())       # threaded to consumers
+
+    def test_compaction_gate_runway_suppresses_near_done(self):
+        # COMPACTION-GATE phase 3 (Gate 2): near-done suppresses the nudge
+        # entirely — even under pressure, even on disposable context — because
+        # with little runway the reset overhead exceeds the carry it saves.
+        # No/ambiguous runway data falls back to phase-2 behaviour.
+        from mrtoken.intervene import evaluate, _near_done
+        disp = {"read:abc123": "disposable"}
+        near = {"calls": 20, "window": 8, "errors_first_half": 3,
+                "errors_second_half": 0, "recent_writes": 2}   # red→green + landing
+        # Near-done: suppress everything, drop and offload nudges alike.
+        self.assertIsNone(evaluate(85, None, ["context_rot"],
+                                   disposability=disp, progress=near))
+        self.assertIsNone(evaluate(85, None, ["huge_tool_output"], progress=near))
+        # Mid-session (errors flat) + disposable → the drop stays allowed.
+        flat = {"calls": 20, "window": 8, "errors_first_half": 2,
+                "errors_second_half": 2, "recent_writes": 2}
+        self.assertEqual(evaluate(85, None, ["context_rot"], disposability=disp,
+                                  progress=flat)["tool"], "handoff")
+        # No runway data → exact phase-2 behaviour.
+        self.assertEqual(evaluate(85, None, ["context_rot"],
+                                  disposability=disp)["tool"], "handoff")
+        self.assertEqual(evaluate(85, None, ["context_rot"])["tool"], "offload")
+        # The proxy demands positive evidence on EVERY axis (under-suppression
+        # bias): early session, thin window, still-red late half, or no durable
+        # writes each block the near-done call.
+        for not_near in (
+            {**near, "calls": 4},                    # too early
+            {**near, "window": 4},                   # thin window
+            {**near, "errors_second_half": 2},       # late half still red
+            {**near, "recent_writes": 0},            # nothing durable landing
+            None, {},
+        ):
+            self.assertFalse(_near_done(not_near))
+
+    def test_live_monitor_progress_feeds_runway_proxy(self):
+        # Gate 2's producer: errors early → green + edits landing late reads as
+        # near-done; metadata only (is_error flags + tool names).
+        from mrtoken.watch import LiveMonitor, RECENT_ERROR_WINDOW
+        from mrtoken.intervene import _near_done
+
+        mon = LiveMonitor(emit=lambda _: None)
+
+        def turn(i, tool_name, is_error):
+            mon.feed({"type": "assistant", "message": {
+                "id": f"m{i}", "model": "x",
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+                "content": [{"type": "tool_use", "id": f"t{i}", "name": tool_name,
+                             "input": {"i": i}}]}})
+            mon.feed({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"t{i}",
+                 "content": "x", "is_error": is_error}]}})
+
+        for i in range(RECENT_ERROR_WINDOW // 2):        # first half: failing runs
+            turn(i, "Bash", True)
+        for i in range(RECENT_ERROR_WINDOW // 2, RECENT_ERROR_WINDOW):
+            turn(i, "Edit", False)                        # second half: green + edits
+        p = mon.progress()
+        self.assertEqual(p["window"], RECENT_ERROR_WINDOW)
+        self.assertGreater(p["errors_first_half"], p["errors_second_half"])
+        self.assertGreaterEqual(p["recent_writes"], 1)
+        self.assertTrue(_near_done(p))
+        self.assertIn("progress", mon.snapshot())         # threaded to consumers
+
     def test_module_registry(self):
         # ROADMAP 7.2 (groundwork): register/toggle external token-saver modules +
         # emit an agent-registration snippet. No external code is run/trusted.

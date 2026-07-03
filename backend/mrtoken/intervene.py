@@ -21,29 +21,82 @@ PRESSURE_TURNS = 4       # this few projected turns-to-full = pressure
 DEBOUNCE_BAND = 10       # only re-fire after ctx climbs another 10 points
 
 
-def _tool_for(signals: set) -> tuple[str, str]:
+# Runway gate (COMPACTION-GATE Gate 2) thresholds. Near-done needs POSITIVE
+# evidence on every axis — missing a suppression is cheap, suppressing a real
+# win is the costly error, so anything ambiguous counts as runway-remaining.
+NEAR_DONE_MIN_CALLS = 8          # too early in a session to call it near-done
+NEAR_DONE_MIN_WINDOW = 6        # need most of the error window populated
+NEAR_DONE_MAX_LATE_ERRORS = 1   # late half must be (nearly) green
+
+
+def _near_done(progress: dict | None) -> bool:
+    """Conservative runway proxy: the task looks near-done only when errors are
+    trending down to (nearly) green AND durable artifacts landed recently."""
+    if not progress:
+        return False
+    if progress.get("calls", 0) < NEAR_DONE_MIN_CALLS:
+        return False
+    if (progress.get("window") or 0) < NEAR_DONE_MIN_WINDOW:
+        return False
+    e1, e2 = progress.get("errors_first_half"), progress.get("errors_second_half")
+    if e1 is None or e2 is None:
+        return False
+    improving = e2 < e1 and e2 <= NEAR_DONE_MAX_LATE_ERRORS
+    landing = (progress.get("recent_writes") or 0) >= 1
+    return improving and landing
+
+
+def _disposable_source(disposability: dict | None) -> str | None:
+    """Where the disposable verdict came from. 'disposable' is the recency
+    PROXY (LiveMonitor); 'disposable_confirmed' is an EXPLICIT confirmation
+    (reserved for the mr-context/toolbox channel). The distinction matters:
+    the proxy cannot tell the win regime from the lose regime at pressure time
+    (falsified on the 5A reset points — PR #19), so only explicit may escalate."""
+    if not disposability:
+        return None
+    vals = set(disposability.values())
+    if "disposable_confirmed" in vals:
+        return "explicit"
+    if "disposable" in vals:
+        return "proxy"
+    return None
+
+
+def _tool_for(signals: set, *, disposable: bool = False) -> tuple[str, str]:
     if "huge_tool_output" in signals:
         return "offload", "a large tool output already hit context; do not rerun it normally"
     if "re_read_loop" in signals or "repeated_context" in signals:
         return "offload", "the same content is being re-paid into context"
     if "context_rot" in signals:
         # context_rot alone can't tell disposable context (a reset wins) from
-        # load-bearing (a reset loses ~+20% — docs/COMPACTION-GATE.md, phase 1).
-        # Until a disposability gate exists, never lead with the destructive drop:
-        # nudge the reversible tool and leave handoff as an advisory option.
+        # load-bearing (a reset loses ~+20% — docs/COMPACTION-GATE.md). Gate 1:
+        # only a block classified disposable unlocks the destructive drop;
+        # otherwise nudge the reversible tool with handoff as an advisory option.
+        if disposable:
+            return "handoff", "we've done a lot this session and context is getting full"
         return "offload", "we've done a lot this session and context is getting full"
     return "offload", "reclaimable context"
 
 
-def evaluate(ctx_pct, turns_to_full, signals_fired, *,
+def evaluate(ctx_pct, turns_to_full, signals_fired, *, disposability: dict | None = None,
+             progress: dict | None = None,
              pressure_pct: int = PRESSURE_PCT, pressure_turns: int = PRESSURE_TURNS) -> dict | None:
-    """Pure decision: return an intervention dict, or None. Agent-agnostic."""
+    """Pure decision: return an intervention dict, or None. Agent-agnostic.
+    `disposability` maps block ids to 'disposable'|'load_bearing' (Gate 1);
+    `progress` carries recent-turn error/write metadata (Gate 2). None for
+    either (the default) means unknown and keeps the prior-phase behaviour."""
     pressure = (ctx_pct is not None and ctx_pct >= pressure_pct) or \
                (turns_to_full is not None and 0 < turns_to_full <= pressure_turns)
     junk = {s for s in (signals_fired or []) if s in RECLAIMABLE}
     if not (pressure and junk):
         return None
-    tool, why = _tool_for(junk)
+    if _near_done(progress):
+        # Gate 2: with little runway left, summary + re-establish costs more
+        # than the remaining turns' carry — even on disposable context. Say
+        # nothing and let the agent finish.
+        return None
+    src = _disposable_source(disposability)
+    tool, why = _tool_for(junk, disposable=src is not None)
     turns_note = f", ~{turns_to_full} turns to full" if turns_to_full else ""
     if tool == "offload" and junk == {"context_rot"}:
         # Advisory handoff mention only — clearly optional, agent's judgement.
@@ -53,6 +106,13 @@ def evaluate(ctx_pct, turns_to_full, signals_fired, *,
     elif tool == "offload":
         action = ("redirect future noisy commands to a file and inspect narrow slices; "
                   "use `offload` for saved bulk you must keep")
+    elif src == "proxy":
+        # Proxy-unlocked drop: the recency signal can't see future re-need, so
+        # frame it as a question the agent answers, with the reversible out.
+        action = ("some large context looks droppable (read once, untouched for "
+                  "several turns) — only you can tell if it's truly done with. If "
+                  "none of it is needed again, `handoff` to a fresh session pays; "
+                  "if you'll need those refs, use `offload` instead. Run `handoff`?")
     else:
         action = ("we can continue this work more efficiently in a new session. "
                   "Do you want me to run `handoff` now?")
@@ -60,7 +120,8 @@ def evaluate(ctx_pct, turns_to_full, signals_fired, *,
     if tool == "offload":
         msg += " (see the mr-context manual)."
     return {"severity": "warn", "tool": tool, "signals": sorted(junk),
-            "ctx_pct": ctx_pct, "turns_to_full": turns_to_full, "message": msg}
+            "ctx_pct": ctx_pct, "turns_to_full": turns_to_full, "message": msg,
+            **({"disposability_source": src} if tool == "handoff" else {})}
 
 
 def intervention_for_session(transcript_path: str | None = None,
@@ -87,20 +148,29 @@ def intervention_for_session(transcript_path: str | None = None,
     ctx_now = snap.get("context_now") or 0
     win = context_window(snap.get("context_max") or ctx_now)
     ctx_pct = min(99, int(ctx_now / win * 100)) if (ctx_now and win) else 0
-    return decide(session_id, ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"))
+    return decide(session_id, ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"),
+                  disposability=snap.get("disposability"), progress=snap.get("progress"))
 
 
-def decide(session_id: str, ctx_pct, turns_to_full, signals) -> dict | None:
+def decide(session_id: str, ctx_pct, turns_to_full, signals, *,
+           disposability: dict | None = None, progress: dict | None = None) -> dict | None:
     """Agent-agnostic decision core: evaluate → autonomy gate → debounce →
     measure-don't-degrade → ask-phase. Reused by Claude (transcript snapshot) and
     Codex (rollout-derived ctx %). Returns the intervention to surface, or None."""
-    iv = evaluate(ctx_pct, turns_to_full, signals)
+    iv = evaluate(ctx_pct, turns_to_full, signals,
+                  disposability=disposability, progress=progress)
     if not iv:
         return None
     from mrtoken.policy import autonomy  # per-tool autonomy / global kill switch
     level = autonomy(iv["tool"])
     if level == "off" or not should_fire(session_id, iv["ctx_pct"]):
         return None
+    # The recency proxy can't distinguish the drop-wins regime from the
+    # drop-loses one at pressure time (falsified on the 5A reset points —
+    # PR #19). A proxy-unlocked drop may TELL (a consent question), but only
+    # an explicit disposability confirmation may escalate to ask/do.
+    if iv.get("disposability_source") == "proxy" and level in ("ask", "do"):
+        level = "tell"
     iv["level"] = level
     # measure-don't-degrade (6.7): did the PRIOR recommendation for this session help?
     if session_id:

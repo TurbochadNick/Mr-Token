@@ -40,6 +40,15 @@ COST_MILESTONES = [5, 25, 50, 100, 250, 500, 1000, 2000, 5000]
 DEBOUNCE_S = {"huge_tool_output": 20, "retry_loop": 60, "context": 120,
               "re_read_loop": 90}  # re-reads accumulate slowly — don't spam
 
+# COMPACTION-GATE Gate 1 (disposability): a read target untouched for at least
+# this many model responses is presumed disposable (safe to drop); anything
+# accessed more recently — or that tripped the re-read trigger — is load-bearing.
+K_DISPOSABLE_TURNS = 5
+
+# COMPACTION-GATE Gate 2 (runway): tools whose use means durable artifacts are
+# landing — one input to the near-done proxy. Names only, never content.
+WRITE_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
+
 
 def _load_prices():
     from mrtoken.ingest import load_prices, est_cost
@@ -87,6 +96,7 @@ class LiveMonitor:
         self._seen_msg_ids: set[str] = set()  # dedup usage per API response (msg.id)
         self._ctx_history: list[int] = []     # recent per-response context sizes (trajectory)
         self.errors_recent: list[int] = []   # 1/0 per recent model call
+        self.writes_recent: list[int] = []   # 1/0 per recent call: did it edit/write?
         self.last_emit: dict[str, float] = {}
         self.last_cost_milestone = 0.0
         self.pending_tools: dict[str, str] = {}  # tool_use_id -> tool_name
@@ -143,6 +153,10 @@ class LiveMonitor:
         self.pending_read_hash[block.get("id")] = (key, h)
         g = self.read_groups.setdefault((key, h), {"req": 0, "done": 0, "out_tok": 0})
         g["req"] += 1
+        # per-block recency for the disposability gate — call indices only
+        # (mirrors context_block.first_seen/last_seen on the ingest side)
+        g.setdefault("first_call", self.model_calls)
+        g["last_call"] = self.model_calls
         if g["req"] >= self._re_read_trigger and self._debounce("re_read_loop"):
             self.signals_fired.append("re_read_loop")
             redundant = g["req"] - 1
@@ -203,6 +217,9 @@ class LiveMonitor:
                 self.errors_recent.append(0)  # one slot per response; may flip on tool_result
                 if len(self.errors_recent) > RECENT_ERROR_WINDOW:
                     self.errors_recent.pop(0)
+                self.writes_recent.append(0)  # flips below if this response edits/writes
+                if len(self.writes_recent) > RECENT_ERROR_WINDOW:
+                    self.writes_recent.pop(0)
 
             # register requested tools (blocks are split across the response's lines)
             for b in (msg.get("content") or []):
@@ -211,6 +228,8 @@ class LiveMonitor:
                     self.pending_tools[b.get("id")] = name
                     key = (name or "").lower()
                     self.tool_counts[key] = self.tool_counts.get(key, 0) + 1
+                    if key in WRITE_TOOLS and self.writes_recent:
+                        self.writes_recent[-1] = 1
                     self._track_read(b, key)
             self._reclassify()
 
@@ -267,6 +286,36 @@ class LiveMonitor:
             return None  # flat or shrinking — no imminent wall
         return max(1, round((warn - cur) / rate))
 
+    def disposability(self) -> dict[str, str]:
+        """Per-read-target disposability (COMPACTION-GATE Gate 1). Hash-keyed
+        metadata only — never content. A completed target is load-bearing when it
+        tripped the re-read trigger or was accessed within K_DISPOSABLE_TURNS
+        responses; only a target untouched at least that long is disposable."""
+        out: dict[str, str] = {}
+        for (tool, h), g in self.read_groups.items():
+            if not g.get("done"):
+                continue  # never completed — nothing of it sits in context
+            since = self.model_calls - g.get("last_call", self.model_calls)
+            load_bearing = (g["req"] >= self._re_read_trigger
+                            or since < K_DISPOSABLE_TURNS)
+            out[f"{tool}:{h[:12]}"] = "load_bearing" if load_bearing else "disposable"
+        return out
+
+    def progress(self) -> dict:
+        """Recent-turn progress metadata for the runway proxy (COMPACTION-GATE
+        Gate 2). Error flags come from tool_result.is_error (exit status — the
+        closest metadata-only stand-in for tests going red→green); writes are
+        tool names only. Never content."""
+        errs = self.errors_recent
+        half = len(errs) // 2
+        return {
+            "calls": self.model_calls,
+            "window": len(errs),
+            "errors_first_half": sum(errs[:half]) if half else None,
+            "errors_second_half": sum(errs[half:]) if half else None,
+            "recent_writes": sum(self.writes_recent),
+        }
+
     def snapshot(self) -> dict:
         """Return current monitor state (for statusline and other consumers)."""
         return {
@@ -277,6 +326,8 @@ class LiveMonitor:
             "context_max": self._context_max,
             "turns_to_warn": self._turns_to_warn(),
             "signals_fired": list(self.signals_fired),
+            "disposability": self.disposability(),
+            "progress": self.progress(),
         }
 
 
