@@ -53,9 +53,17 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
 - **Compaction gate COMPLETE (Fable, 2026-07-02): phases 2+3 in PR #19** (same
   `experiment/compaction-regime-map` branch — phase 3 builds on phase 2, one review unit).
   Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 90 backend tests green;
-  default-None inputs keep old callers byte-identical. **6.8 L3 auto-act is now unblocked**
-  (disposable ∧ runway-remaining only, warn-only until 6.7 outcomes validate). Still open from
-  the gate work: 5D.3 golden replay of the scanlib/speclib fixtures (no replay plumbing yet).
+  default-None inputs keep old callers byte-identical.
+- **⚠ Gate 1 proxy FALSIFIED at the real reset point (Fable, 2026-07-02, evidence on PR #19).**
+  Built the 5D.3 replay oracle (`backend/experiments/replay_gate.py`, `a3804fd`) and ran the
+  real 5A phase-1 transcripts through the gate: scanlib → drop ✓, but speclib `2whh9wno` →
+  93% disposable share → drop **in the +20% lose regime**; the other speclib run says offload
+  purely on 1–2 calls of read-timing jitter. Recency can't see future re-need. Stopped per the
+  phase-2 brief; no classifier tweak committed (early-singleton variant tried + reverted).
+  **Design call needed** (options on the PR): demote proxy to consent-question + require the
+  explicit still-needed signal for ≥L2 (recommended now), huge-block-only unlock (follow-up
+  experiment), and 6.7 outcomes as the learning backstop regardless. **6.8 L3 must NOT auto-act
+  on the proxy alone.** Golden fixtures deferred until the contract is chosen.
 - **Reconciled:** Adopt build-work (5C.1/5C.2) was already done by Codex —
   `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
   `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**
