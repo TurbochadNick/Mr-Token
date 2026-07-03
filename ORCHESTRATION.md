@@ -50,10 +50,17 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   5B.1 (`UI-INTEGRATION.md`) + 5B.2 (`HANDOFF-TO-NICK.md` refreshed — ⏳ Zach forwards to Nick), and
   Fable enablement (`ONBOARDING.md` + K2 coordination). Global (not in-repo): `/which-model`
   snapshot updated for Fable's 2026-07-01 reinstatement. Experiment spend **$17.46/$20**.
-- **Compaction gate COMPLETE (Fable, 2026-07-02): phases 2+3 in PR #19** (same
-  `experiment/compaction-regime-map` branch — phase 3 builds on phase 2, one review unit).
-  Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 90 backend tests green;
-  default-None inputs keep old callers byte-identical.
+- **`disposable_confirmed` channel BUILT (Claude, 2026-07-03, PR #20).** The explicit path to 6.8 L3:
+  `confirm_disposable` MCP tool → session-scoped, metadata-only confirmation (call-index + ts, TTL
+  10 calls / 30 min); `intervention_for_session` merges a FRESH one so `decide()` can escalate; stale/
+  absent → proxy tell-only (fail-closed). Skill doc updated; 92 tests green. **Routing note:** kept
+  in-house rather than dispatched — Fable is a scarce cross-project contractor, and this was
+  de-risked + handleable, so not worth a contractor hour (see memory `fable-is-a-scarce-contractor`).
+- **Compaction gate COMPLETE + MERGED (Fable built, Claude reviewed 2026-07-03): PR #19 → `main`
+  merge commit `9131691`.** Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 91 backend
+  tests green; default-None inputs keep old callers byte-identical. Claude review: code correct,
+  `evaluate→decide` contract verified, the falsification independently reproduced (below). Merge-safe
+  because it enables NO auto-act (proxy capped at tell).
 - **⚠ Gate 1 proxy FALSIFIED at the real reset point (Fable, 2026-07-02, evidence on PR #19).**
   Built the 5D.3 replay oracle (`backend/experiments/replay_gate.py`, `a3804fd`) and ran the
   real 5A phase-1 transcripts through the gate: scanlib → drop ✓, but speclib `2whh9wno` →

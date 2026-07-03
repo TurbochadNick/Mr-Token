@@ -8,7 +8,7 @@ description: The context-efficiency manual — how to avoid running out of conte
 Goal: **don't run out of context on junk.** The context window fills with non-cacheable
 bulk — huge tool/file outputs, re-reads, repeated context — long before the *real* work
 needs it. This is how to spot it and what to do, using the Mr Token toolbox (the `offload`,
-`handoff`, and `compact` MCP tools, if registered — see `docs/MCP.md`).
+`handoff`, `compact`, and `confirm_disposable` MCP tools, if registered — see `docs/MCP.md`).
 
 ## The failure modes (what fills context with junk)
 - **Huge tool/file outputs** — one `Read` of a big file or a noisy command dumps 10k+ tokens
@@ -26,6 +26,12 @@ needs it. This is how to spot it and what to do, using the Mr Token toolbox (the
    host's compaction, e.g. `/compact`).
 4. **Deep into a long/multi-task session?** **`handoff`** — generate a compact handoff and start a
    FRESH session. Usually cheaper than compacting once you're truly deep.
+5. **Nudge asked you to confirm a drop?** When Mr Token says some big context *looks* droppable and
+   asks, it can't actually tell whether you'll re-open those refs — only you can. **First check what
+   the remaining work needs.** If that context is genuinely done with, call **`confirm_disposable`**
+   — that authorizes an escalating reset (`handoff`/`compact`). If you'll still need those refs,
+   `offload` instead. Never confirm reflexively: a wrong "yes" drops context you then re-read (the
+   +20% load-bearing loss the experiment found).
 
 ## Habits that prevent it (cheaper than any fix)
 - Read **targeted ranges**, not whole files; search/grep instead of dumping.

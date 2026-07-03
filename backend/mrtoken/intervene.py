@@ -13,6 +13,7 @@ config. L1 "tell" only — 6.6 adds ask, 6.8 adds do.
 """
 from __future__ import annotations
 import json, os
+from datetime import datetime, timezone
 
 # Reclaimable = junk a tool can actually fix (offload/handoff), not real work.
 RECLAIMABLE = {"huge_tool_output", "re_read_loop", "repeated_context", "context_rot"}
@@ -148,8 +149,13 @@ def intervention_for_session(transcript_path: str | None = None,
     ctx_now = snap.get("context_now") or 0
     win = context_window(snap.get("context_max") or ctx_now)
     ctx_pct = min(99, int(ctx_now / win * 100)) if (ctx_now and win) else 0
+    disp = snap.get("disposability") or {}
+    # Explicit disposability channel: a FRESH agent confirmation (confirm_disposable)
+    # unlocks an escalating drop the recency proxy alone cannot authorize (PR #19).
+    if session_id and _fresh_disposable_confirmation(session_id, snap.get("model_calls") or 0):
+        disp = {**disp, "explicit:session": "disposable_confirmed"}
     return decide(session_id, ctx_pct, snap.get("turns_to_warn"), snap.get("signals_fired"),
-                  disposability=snap.get("disposability"), progress=snap.get("progress"))
+                  disposability=disp, progress=snap.get("progress"))
 
 
 def decide(session_id: str, ctx_pct, turns_to_full, signals, *,
@@ -277,3 +283,76 @@ def should_fire(session_id: str, ctx_pct: int) -> bool:
     except OSError:
         pass
     return True
+
+
+# ── explicit disposability channel (GOALS/disposable-confirmed-channel.md) ──────
+# The recency proxy can't tell the win regime from the lose regime at pressure time
+# (falsified on the 5A reset points — PR #19), so it's capped at "tell". Only the
+# agent — the one party that knows whether the FUTURE work re-needs the loaded
+# context — can authorize an escalating drop, via the `confirm_disposable` tool. A
+# confirmation expires (context changes, so an old "yes, drop it" must not authorize
+# a later drop): valid within CONFIRM_TTL_CALLS more model calls AND CONFIRM_TTL_MIN
+# minutes, whichever is tighter. Stale/absent → the drop stays proxy-capped.
+CONFIRM_TTL_CALLS = 10
+CONFIRM_TTL_MIN = 30
+
+
+def _disposable_path(session_id: str) -> str:
+    from mrtoken.datadir import central_default
+    return os.path.join(central_default(), "state", f"disposable-{session_id}.json")
+
+
+def _session_calls(session_arg: str | None) -> tuple[str | None, int]:
+    """Resolve the current session's transcript → (session_id, model_calls). The id is
+    the transcript filename. Metadata only — nothing from the content is persisted."""
+    from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
+    path = resolve_path(session_arg)
+    if not path:
+        return None, 0
+    mon = LiveMonitor(emit=lambda _: None)
+    lines, _ = _iter_new_lines(path, 0)
+    for ln in lines:
+        try:
+            mon.feed(json.loads(ln))
+        except json.JSONDecodeError:
+            continue
+    sid = os.path.basename(path).rsplit(".", 1)[0]
+    return sid, mon.snapshot().get("model_calls", 0)
+
+
+def record_disposable_confirmation(session_arg: str | None = None) -> tuple[str | None, int]:
+    """Persist an explicit 'the loaded context is no longer needed' confirmation for the
+    current session. Returns (session_id, call_index) or (None, 0). Stores ONLY the call
+    index + a timestamp — never content. Called by the `confirm_disposable` toolbox tool."""
+    sid, calls = _session_calls(session_arg)
+    if not sid:
+        return None, 0
+    p = _disposable_path(sid)
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as fh:
+            json.dump({"confirmed_at_call": calls,
+                       "confirmed_at_ts": datetime.now(timezone.utc).isoformat()}, fh)
+    except OSError:
+        return None, 0
+    return sid, calls
+
+
+def _fresh_disposable_confirmation(session_id: str, current_calls: int) -> bool:
+    """True iff a still-valid confirmation exists (within BOTH the call and time TTLs).
+    Stale or absent → False, so the drop stays capped at the proxy's tell-only level."""
+    try:
+        with open(_disposable_path(session_id)) as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if current_calls - int(data.get("confirmed_at_call", -10 ** 9)) > CONFIRM_TTL_CALLS:
+        return False
+    ts = data.get("confirmed_at_ts")
+    if not ts:
+        return False
+    try:
+        age_min = (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds() / 60
+    except ValueError:
+        return False
+    return age_min <= CONFIRM_TTL_MIN

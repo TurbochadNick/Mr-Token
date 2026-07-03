@@ -874,6 +874,46 @@ class BackendTest(unittest.TestCase):
                 if saved is not None:
                     os.environ["MRTOKEN_INTERVENE"] = saved
 
+    def test_disposable_confirmation_channel(self):
+        # The explicit disposability channel (disposable-confirmed-channel.md):
+        # confirm_disposable records a session-scoped, metadata-only confirmation
+        # that a FRESH read merges as `disposable_confirmed` (unlocking escalation),
+        # and that goes stale by call-count OR by time (an old "yes" can't authorize
+        # a later drop). Falsified proxy → only this explicit path may escalate.
+        import datetime as _dt
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, toolbox
+        with tempfile.TemporaryDirectory() as tmp:
+            o_cd, o_sc = dd.central_default, intervene._session_calls
+            dd.central_default = lambda: tmp
+            intervene._session_calls = lambda arg: ("sess-x", 20)   # stub transcript resolution
+            try:
+                sid, call = intervene.record_disposable_confirmation()
+                self.assertEqual((sid, call), ("sess-x", 20))
+                # fresh: within CONFIRM_TTL_CALLS more calls
+                self.assertTrue(intervene._fresh_disposable_confirmation("sess-x", 25))
+                # stale by calls
+                self.assertFalse(intervene._fresh_disposable_confirmation(
+                    "sess-x", 20 + intervene.CONFIRM_TTL_CALLS + 1))
+                # absent session → not fresh (fail-closed: drop stays proxy-capped)
+                self.assertFalse(intervene._fresh_disposable_confirmation("other", 20))
+                # privacy: the record holds ONLY a call index + timestamp, no content
+                with open(intervene._disposable_path("sess-x")) as fh:
+                    data = json.load(fh)
+                self.assertEqual(set(data), {"confirmed_at_call", "confirmed_at_ts"})
+                # stale by time: an old confirmation expires even at the same turn
+                old = (_dt.datetime.now(_dt.timezone.utc)
+                       - _dt.timedelta(minutes=intervene.CONFIRM_TTL_MIN + 5)).isoformat()
+                with open(intervene._disposable_path("sess-t"), "w") as fh:
+                    json.dump({"confirmed_at_call": 20, "confirmed_at_ts": old}, fh)
+                self.assertFalse(intervene._fresh_disposable_confirmation("sess-t", 21))
+                # the tool is registered + toggleable like the others
+                self.assertIn("confirm_disposable", toolbox.TOOL_REGISTRY)
+                self.assertIn("confirm_disposable",
+                              [s["name"] for s in toolbox.enabled_tool_schemas()])
+            finally:
+                dd.central_default, intervene._session_calls = o_cd, o_sc
+
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
         # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target
@@ -1077,7 +1117,8 @@ class BackendTest(unittest.TestCase):
     def test_toolbox_handoff_compact_and_toggle(self):
         # ROADMAP 6.2: handoff (real) + compact (advisory) tools, each toggleable.
         from mrtoken import toolbox
-        self.assertEqual(set(toolbox.TOOL_REGISTRY), {"offload", "handoff", "compact"})
+        self.assertEqual(set(toolbox.TOOL_REGISTRY),
+                         {"offload", "handoff", "compact", "confirm_disposable"})
 
         orig_h = toolbox.build_handoff
         toolbox.build_handoff = lambda db, s: "# Handoff (stub)"
