@@ -60,10 +60,10 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   93% disposable share → drop **in the +20% lose regime**; the other speclib run says offload
   purely on 1–2 calls of read-timing jitter. Recency can't see future re-need. Stopped per the
   phase-2 brief; no classifier tweak committed (early-singleton variant tried + reverted).
-  **Design call needed** (options on the PR): demote proxy to consent-question + require the
-  explicit still-needed signal for ≥L2 (recommended now), huge-block-only unlock (follow-up
-  experiment), and 6.7 outcomes as the learning backstop regardless. **6.8 L3 must NOT auto-act
-  on the proxy alone.** Golden fixtures deferred until the contract is chosen.
+  **Option 1 IMPLEMENTED (`b9a52c6`):** proxy-unlocked drop = consent question, capped at L1
+  tell in decide(); only an explicit `disposable_confirmed` (mr-context/toolbox channel, not
+  yet built) escalates — the hard line for 6.8 L3. Open follow-ups: huge-block-only unlock
+  (needs more fixture regimes), 6.7 outcomes learning, golden fixtures once contract reviewed.
 - **Reconciled:** Adopt build-work (5C.1/5C.2) was already done by Codex —
   `BETA-TESTER-NOTE.md` (one-pager), `BYU-TTO-PILOT.md` (TTO framing), `BETA-TESTING.md`,
   `beta.py`/`beta_evidence.py`. Marked done in ROADMAP. Remaining Adopt = **Zach's outreach**
