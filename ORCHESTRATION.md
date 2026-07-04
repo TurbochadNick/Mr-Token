@@ -56,9 +56,19 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   escalate; stale/absent → proxy tell-only (fail-closed). Skill doc updated; 92 tests green. **Routing
   note:** kept in-house — Fable is a scarce cross-project contractor and this was de-risked + handleable,
   not worth a contractor hour (memory `fable-is-a-scarce-contractor`).
-  - **⏳ DEFERRED REVIEW (Zach's call):** batch a Fable review pass over recent diffs once more work
-    accumulates — esp. **PR #20 (Claude's own code on the safety-critical gate path)** which hasn't had
-    adversarial review. Batch > one-offs for a scarce contractor. Warranted before 6.8 flips auto-act on.
+  - **✅ FABLE REVIEW DONE (2026-07-03, this session).** Batch pass over PR #20 (primary) + the PR #19
+    gate path (spot-check). In-session logic is **correct and well-tested**: decide()'s proxy-cap /
+    explicit-escalation contract verified (incl. `test_proxy_drop_never_escalates_past_tell`), TTL
+    state machine sound + fail-closed, privacy invariant kept, snapshot↔consumer keys match, 92 tests
+    re-run green. **One real finding — a PRE-6.8 BLOCKER at the MCP boundary:** `confirm_disposable`
+    with no arg resolves "current session" by newest-mtime because the MCP server process has NO
+    session env (verified on the 10 live `mrtoken-transcript mcp` processes: neither
+    `CLAUDE_CODE_SESSION_ID` nor `MRTOKEN_SESSION` present). In a multi-session project (the normal
+    K2 two-pane state) session A's confirmation can land under session B's id → B escalates without
+    consent; at 6.8 `do` that's an auto-drop authorized by the wrong agent. Harmless at today's
+    `tell` default → PR #20 stays merge-safe; fix before any `do`. Full finding + recommended
+    fail-closed fix (refuse-on-ambiguity) + 3 minor hardening items:
+    **`GOALS/confirm-disposable-session-binding.md`** (status: ready).
 - **Compaction gate COMPLETE + MERGED (Fable built, Claude reviewed 2026-07-03): PR #19 → `main`
   merge commit `9131691`.** Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 91 backend
   tests green; default-None inputs keep old callers byte-identical. Claude review: code correct,
