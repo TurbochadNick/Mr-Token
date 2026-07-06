@@ -282,7 +282,7 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
 - [x] **6.7 Measure-don't-degrade**
   → done: commit `7a397d8`. `outcomes.py` central store; proc engine auto-captures ctx-delta effect per
     tool; a tool trending negative auto-disables via policy (→ off) + says how to re-enable. 71 tests green.
-- [ ] **6.8-pre The compaction gate** — spec'd in `docs/COMPACTION-GATE.md`; phase-1 brief in
+- [x] **6.8-pre The compaction gate** — spec'd in `docs/COMPACTION-GATE.md`; phase-1 brief in
   `GOALS/compaction-gate-phase1.md` (`[claude]`/`[codex]`). The 5A regime map shows `pressure ∧
   reclaimable-junk` is necessary but not sufficient — a reset WINS on disposable context, LOSES (+20%)
   on load-bearing. `intervene.py` already routes re_read/repeated/huge → `offload` (safe); the gap is
@@ -290,6 +290,8 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
   disposability info. Fix, phased: (1) make that drop safe-by-default; (2) disposability gate
   (per-block turns-since-access); (3) remaining-runway proxy (near-done suppression). **Acceptance =
   the two fixtures** (fire-drop on debug-scanlib, suppress-drop on debug-speclib; add to 5D.3). Prereq for 6.8.
+  → done: PR #19 merged the gate phases; `confirm_disposable` session-binding blocker fixed by Codex
+  on this branch. 94 backend tests green.
 - [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
   help, at equal quality, AND only in the disposable ∧ runway-remaining regime (see 6.8-pre).
   **⚑ decision per tool** before it defaults to auto.

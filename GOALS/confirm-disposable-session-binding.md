@@ -1,7 +1,11 @@
 # GOAL: Bind `confirm_disposable` to the CALLING session (fix the cross-session misdirect)
 
-**Lane:** Codex / Claude / Fable (backend Python, test-checkable) · **Status:** ready
+**Lane:** Codex / Claude / Fable (backend Python, test-checkable) · **Status:** done (Codex)
 **Est:** S–M · **Budget:** $0 · **Source:** Fable adversarial review of PR #20 (2026-07-03)
+
+**Done:** ambiguous no-arg calls now fail closed, explicit `session` calls still bind normally,
+the single-session no-arg path still works, `mr-context` explains the retry, and
+`./scripts/test-backend.sh` passes 94 tests.
 
 **Loop exit (done-criteria):**
 1. A `confirm_disposable` call from session A can never record a confirmation under session

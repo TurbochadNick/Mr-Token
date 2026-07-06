@@ -68,7 +68,10 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
     consent; at 6.8 `do` that's an auto-drop authorized by the wrong agent. Harmless at today's
     `tell` default → PR #20 stays merge-safe; fix before any `do`. Full finding + recommended
     fail-closed fix (refuse-on-ambiguity) + 3 minor hardening items:
-    **`GOALS/confirm-disposable-session-binding.md`** (status: ready).
+    **`GOALS/confirm-disposable-session-binding.md`**. **FIX DONE (Codex, this branch):** no-arg
+    confirmation now refuses when multiple recent transcripts are active in the cwd project bucket,
+    explicit `session` still binds normally, single-session no-arg still works, and `mr-context`
+    tells the agent how to retry. 94 backend tests green.
 - **Compaction gate COMPLETE + MERGED (Fable built, Claude reviewed 2026-07-03): PR #19 → `main`
   merge commit `9131691`.** Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 91 backend
   tests green; default-None inputs keep old callers byte-identical. Claude review: code correct,

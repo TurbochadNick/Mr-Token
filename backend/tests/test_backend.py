@@ -914,6 +914,97 @@ class BackendTest(unittest.TestCase):
             finally:
                 dd.central_default, intervene._session_calls = o_cd, o_sc
 
+    def test_confirm_disposable_refuses_ambiguous_no_arg_session(self):
+        # Regression for the MCP boundary bug: with two active panes in the same
+        # project, newest-mtime can be the OTHER session. No-arg confirmation must
+        # fail closed and record nothing until the caller passes its session id.
+        import time as _time
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, toolbox, watch
+        with tempfile.TemporaryDirectory() as tmp:
+            project = os.path.realpath(os.path.join(tmp, "repo"))
+            projects = os.path.join(tmp, "claude-projects")
+            state = os.path.join(tmp, "state")
+            os.makedirs(project, exist_ok=True)
+            escaped = project.replace("/", "-").replace(".", "-")
+            transcript_dir = os.path.join(projects, escaped)
+            os.makedirs(transcript_dir, exist_ok=True)
+
+            def assistant(sid, mid):
+                return {"type": "assistant", "sessionId": sid, "message": {
+                    "id": mid, "model": "x",
+                    "usage": {"input_tokens": 10, "output_tokens": 1}}}
+
+            a = os.path.join(transcript_dir, "sess-a.jsonl")
+            b = os.path.join(transcript_dir, "sess-b.jsonl")
+            write_jsonl(a, [assistant("sess-a", "a1"), assistant("sess-a", "a2")])
+            write_jsonl(b, [assistant("sess-b", "b1")])
+            now = _time.time()
+            os.utime(a, (now - 20, now - 20))
+            os.utime(b, (now, now))  # the other pane is newer
+
+            o_cd, o_projects, o_cwd = dd.central_default, watch.PROJECTS, os.getcwd()
+            saved_env = {k: os.environ.pop(k, None)
+                         for k in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
+            dd.central_default = lambda: state
+            watch.PROJECTS = projects
+            os.chdir(project)
+            try:
+                txt, err = toolbox.call_tool("confirm_disposable", {})
+                self.assertFalse(err)
+                self.assertIn("multiple active sessions", txt)
+                self.assertIn("session: <your session id>", txt)
+                self.assertFalse(os.path.exists(intervene._disposable_path("sess-b")))
+
+                txt2, err2 = toolbox.call_tool("confirm_disposable", {"session": "sess-a"})
+                self.assertFalse(err2)
+                self.assertIn("recorded", txt2)
+                self.assertTrue(os.path.exists(intervene._disposable_path("sess-a")))
+                self.assertFalse(os.path.exists(intervene._disposable_path("sess-b")))
+            finally:
+                os.chdir(o_cwd)
+                dd.central_default, watch.PROJECTS = o_cd, o_projects
+                for k, v in saved_env.items():
+                    if v is not None:
+                        os.environ[k] = v
+
+    def test_confirm_disposable_single_session_no_arg_still_works(self):
+        import time as _time
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, toolbox, watch
+        with tempfile.TemporaryDirectory() as tmp:
+            project = os.path.realpath(os.path.join(tmp, "repo"))
+            projects = os.path.join(tmp, "claude-projects")
+            state = os.path.join(tmp, "state")
+            os.makedirs(project, exist_ok=True)
+            escaped = project.replace("/", "-").replace(".", "-")
+            transcript_dir = os.path.join(projects, escaped)
+            os.makedirs(transcript_dir, exist_ok=True)
+            path = os.path.join(transcript_dir, "solo.jsonl")
+            write_jsonl(path, [{"type": "assistant", "sessionId": "solo", "message": {
+                "id": "m1", "model": "x",
+                "usage": {"input_tokens": 10, "output_tokens": 1}}}])
+            now = _time.time()
+            os.utime(path, (now, now))
+
+            o_cd, o_projects, o_cwd = dd.central_default, watch.PROJECTS, os.getcwd()
+            saved_env = {k: os.environ.pop(k, None)
+                         for k in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
+            dd.central_default = lambda: state
+            watch.PROJECTS = projects
+            os.chdir(project)
+            try:
+                txt, err = toolbox.call_tool("confirm_disposable", {})
+                self.assertFalse(err)
+                self.assertIn("recorded", txt)
+                self.assertTrue(os.path.exists(intervene._disposable_path("solo")))
+            finally:
+                os.chdir(o_cwd)
+                dd.central_default, watch.PROJECTS = o_cd, o_projects
+                for k, v in saved_env.items():
+                    if v is not None:
+                        os.environ[k] = v
+
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
         # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target

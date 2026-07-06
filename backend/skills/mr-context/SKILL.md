@@ -31,7 +31,8 @@ needs it. This is how to spot it and what to do, using the Mr Token toolbox (the
    the remaining work needs.** If that context is genuinely done with, call **`confirm_disposable`**
    — that authorizes an escalating reset (`handoff`/`compact`). If you'll still need those refs,
    `offload` instead. Never confirm reflexively: a wrong "yes" drops context you then re-read (the
-   +20% load-bearing loss the experiment found).
+   +20% load-bearing loss the experiment found). If the tool says multiple active sessions are open,
+   re-call it with your session id: `session: <value from Bash echo $CLAUDE_CODE_SESSION_ID>`.
 
 ## Habits that prevent it (cheaper than any fix)
 - Read **targeted ranges**, not whole files; search/grep instead of dumping.
