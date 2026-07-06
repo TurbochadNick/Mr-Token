@@ -294,7 +294,10 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
   on this branch. 94 backend tests green.
 - [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
   help, at equal quality, AND only in the disposable ∧ runway-remaining regime (see 6.8-pre).
-  **⚑ decision per tool** before it defaults to auto.
+  **⚑ decision per tool** before it defaults to auto. Contract brief:
+  `GOALS/6.8-l3-do-contract.md`. Current recommendation: first slice = `handoff`, action =
+  generate handoff text only, after explicit disposable confirmation + AFK escalation; defaults
+  remain warn-only.
 
 ## Phase 7 — Prove the value + plug-and-play hub *(from Rosson's feedback)*
 

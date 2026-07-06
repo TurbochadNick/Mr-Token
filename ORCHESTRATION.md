@@ -72,6 +72,11 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
     confirmation now refuses when multiple recent transcripts are active in the cwd project bucket,
     explicit `session` still binds normally, single-session no-arg still works, and `mr-context`
     tells the agent how to retry. 94 backend tests green.
+- **6.8 L3 NEXT GATE:** `do` has policy plumbing but no executor yet, and this Mac has no central
+  `~/.mrtoken/data/outcomes.db` sample to justify enabling a tool by default. New brief:
+  `GOALS/6.8-l3-do-contract.md`. Recommended first slice, if Zach approves: `handoff` only, where
+  auto-act means generating handoff text after explicit `disposable_confirmed` + AFK escalation.
+  Defaults stay warn-only.
 - **Compaction gate COMPLETE + MERGED (Fable built, Claude reviewed 2026-07-03): PR #19 → `main`
   merge commit `9131691`.** Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 91 backend
   tests green; default-None inputs keep old callers byte-identical. Claude review: code correct,
