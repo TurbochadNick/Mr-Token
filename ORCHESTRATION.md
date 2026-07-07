@@ -78,6 +78,10 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   generation; no new session, no `/compact`, no deletion, no network. Freemium meter + stubbed paid
   entitlement are in place, but defaults stay warn-only and flipping live / real billing are future
   decisions. 95 backend tests green.
+- **7.3 external module trust review DONE (Codex, 2026-07-07):** `backend/docs/MODULE-EVALUATION.md`
+  now selects Headroom as the first **sandbox-only** lab candidate and defers Ponytail as guidance
+  A/B work. Neither is installed, registered, or enabled by default. Next gate: pinned Headroom MCP
+  sandbox install, verify network/files written, then measure savings/quality before opt-in/drop.
 - **Compaction gate COMPLETE + MERGED (Fable built, Claude reviewed 2026-07-03): PR #19 → `main`
   merge commit `9131691`.** Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 91 backend
   tests green; default-None inputs keep old callers byte-identical. Claude review: code correct,
