@@ -320,12 +320,13 @@ both agents; sharp default (the savings report works out of the box), flexible h
     module's value shows in `savings` once recorded. **Remaining:** the measurement SHIM that records an
     external module's savings during use (folds into 7.3, since it needs the real tool wired). No external
     code vendored/run/trusted.
-- [~] **7.3 Evaluate headroom + ponytail as first modules** *(trust review done; sandbox measurement next)*
-  → trust review updated in `backend/docs/MODULE-EVALUATION.md` (2026-07-07). Decision: **Headroom**
-    is the first lab candidate, Ponytail is deferred as guidance/A-B work, neither is installed or
-    enabled by default. **Remaining:** sandbox-only pinned Headroom MCP install, verify network/files
-    written, add/run the measurement shim, then decide keep-off / opt-in / drop on measured savings
-    at equal quality. **⚑ separate approval before installing/running external code in a real agent.**
+- [~] **7.3 Evaluate headroom + ponytail as first modules** *(trust review + sandbox inspect done; measurement next)*
+  → `backend/docs/MODULE-EVALUATION.md` updated (2026-07-07). Decision: **Headroom** is the first
+    lab candidate; Ponytail is deferred as guidance/A-B work; neither is registered or enabled by
+    default. Pinned sandbox install `headroom-ai[mcp]==0.30.0` succeeded and showed a broad proxy/MCP
+    surface. **Remaining:** build a reversible proxy measurement harness, verify exact network/files
+    written under proxy mode, add/run the measurement shim, then decide keep-off / opt-in / drop at
+    equal quality. **⚑ separate approval before wrapping/routing a real agent.**
 
 ## Shipped: Phase 6 — the intervention engine (v0.5.0)
 The v2 vision realized — the agent's manual + toolbox + report card. MCP server +

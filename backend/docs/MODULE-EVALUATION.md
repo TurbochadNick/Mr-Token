@@ -31,7 +31,7 @@ Otherwise: leave it registered-but-off (opt-in) or drop it.
 
 ## Decision log
 
-### 2026-07-07 — trust review complete, no default enablement
+### 2026-07-07 — sandbox install inspection complete, no default enablement
 
 **Decision:** pick **Headroom** as the first lab candidate, but keep it **off by
 default** and do not install/register/run it in a real agent yet. Ponytail remains a
@@ -49,19 +49,38 @@ Why:
   savings are indirect (fewer steps/LOC/tokens), so it belongs in a later guidance A/B,
   not the first external token-saver measurement shim.
 
-**Do not enable by default. Do not `wrap` Claude/Codex. Do not install `[all]` for
-the first trial.** The next approved step should be a sandbox-only Headroom trial
-with a pinned version and the narrowest useful extra (`headroom-ai[mcp]` or a local
-checkout), update checks disabled where supported, and no memory/learning/output-shaper
-features enabled unless separately approved.
-
-Suggested first trial command shape, not yet run:
+**Sandbox result:** a pinned install of the narrow MCP extra succeeded under
+`/tmp/mrtoken-headroom-eval` with no agent registration:
 
 ```bash
 python3 -m venv /tmp/mrtoken-headroom-eval
-/tmp/mrtoken-headroom-eval/bin/pip install 'headroom-ai[mcp]==0.29.0'
+/tmp/mrtoken-headroom-eval/bin/pip install 'headroom-ai[mcp]==0.30.0'
 HEADROOM_UPDATE_CHECK=off /tmp/mrtoken-headroom-eval/bin/headroom doctor
 ```
+
+Findings from the sandbox:
+- `headroom-ai==0.30.0`; `headroom --version` reports `headroom, version 0.30.0`.
+- Even `[mcp]` installs a broad dependency/runtime surface: `litellm`, `openai`,
+  `huggingface-hub`, `tokenizers`, `mcp`, `uvicorn`, `ast-grep-cli`, and related
+  HTTP/server packages.
+- Venv size after install: about **349 MB**.
+- `headroom --help` exposes high-impact commands: `wrap`, `init`, `install`,
+  `proxy`, `learn`, `memory`, `update`, `dashboard`, `capture`, `tools`.
+- `headroom mcp --help` confirms the MCP path is coupled to a local proxy for
+  automatic compression: users route Claude/Codex traffic through
+  `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` or `headroom wrap`, and the MCP server
+  retrieves compressed originals from the proxy.
+- `headroom doctor --json` with no proxy running fails safely:
+  proxy not reachable at `http://127.0.0.1:8787`; Claude/Codex not routed; shell env
+  bypasses proxy; no savings recorded.
+- Help/version/doctor checks with `HOME=/tmp/mrtoken-headroom-home` did not create
+  files in that temp HOME.
+
+**Updated conclusion:** Headroom is viable as a lab candidate, but the first real
+measurement must be a sandbox/proxy harness, not a normal agent install. Do not run
+`headroom wrap`, `headroom init`, `headroom install`, `headroom mcp install`, or route
+real Claude/Codex through the proxy until the measurement harness is explicit and
+reversible.
 
 Candidate registry shape after a successful sandbox install, still disabled/off by
 policy until measured:
@@ -89,12 +108,13 @@ Evidence sources checked on 2026-07-07:
   Python library, proxy, wrapper, and **MCP tools**; claims local-first reversible
   compression; README currently reports 15-20% fewer tokens for coding agents and
   larger reductions for structured/log workloads.
-- **License / maturity:** Apache-2.0; PyPI package `headroom-ai` at 0.29.0 in the
-  checked repo metadata; marked beta; Python >=3.10; Rust extension built with
+- **License / maturity:** Apache-2.0; PyPI package `headroom-ai` at 0.30.0 in the
+  checked repo metadata/sandbox install; marked beta; Python >=3.10; Rust extension built with
   `maturin`.
-- **Install surface:** `pip install "headroom-ai[all]"` is broad. The first trial
-  should avoid `[all]` and use the smallest extra that exposes MCP. The npm package
-  is SDK-only and does not provide the CLI.
+- **Install surface:** `pip install "headroom-ai[mcp]"` is already broad. It brings
+  proxy/server/client dependencies and installs additional commands such as
+  `litellm`, `litellm-proxy`, `huggingface-cli`, `mcp`, `uvicorn`, `ast-grep`, and
+  `sg`. The npm package is SDK-only and does not provide the CLI.
 - **Privacy / egress:** likely acceptable only in narrow local modes. The project
   says Headroom runs locally and data stays on-machine, but proxy/wrap modes forward
   compressed prompts to the normal LLM provider, optional assets may be fetched from
@@ -132,8 +152,8 @@ Evidence sources checked on 2026-07-07:
 Headroom is picked for the first lab measurement. Before it can move from candidate
 to recommended module:
 
-1. Run a sandbox install with the narrow MCP extra, no agent wrapping.
-2. Record exact installed version, commands, network behavior, and files written.
+1. Build a reversible sandbox/proxy measurement harness; no real-agent wrapping.
+2. Verify exact network behavior under proxy mode and what Headroom stores locally.
 3. Add the measurement shim that records module savings/outcomes under the module
    name, or run a one-off before/after harness and write the result here.
 4. Decide `keep-off`, `opt-in`, or `drop` from measured savings at equal quality.
