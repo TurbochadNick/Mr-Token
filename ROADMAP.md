@@ -332,8 +332,9 @@ The v2 vision realized — the agent's manual + toolbox + report card. MCP serve
 `offload`/`handoff`/`compact` tools (both agents); the `mr-context` manual; the proc
 engine (pressure ∧ reclaimable-junk → in-the-moment nudge, Claude live); per-tool
 policy + kill switch; L2 ask + AFK escalation; measure-don't-degrade auto-disable.
-Default warn-only. Remaining: **6.8 L3 auto-act** (open — gated on outcome/experiment
-evidence, per-tool ⚑ decision) and the **Codex live-pressure tracker** (backlog).
+Default warn-only. Remaining: **6.8 L3 live enablement / real billing** (structure built inert;
+any live flip remains gated on outcome/experiment evidence and a per-tool decision) and the
+**Codex live-pressure tracker** (backlog).
 
 ## Shipped after the roadmap (v0.4.5–0.4.7)
 - [x] **Codex-dir backfill** — `ingest --backfill` now also sweeps `~/.codex/sessions/**` (+ archived_sessions)
