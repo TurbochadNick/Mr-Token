@@ -865,6 +865,7 @@ class BackendTest(unittest.TestCase):
                 self.assertEqual(iv["tool"], "handoff")
                 self.assertEqual(iv["level"], "tell")   # capped: proxy never auto-acts
                 self.assertNotIn("phase", iv)           # never entered the ask policy
+                self.assertNotIn("auto_act", iv)        # 6.8 executor never engaged
                 iv2 = intervene.decide("gx2", 85, None, ["context_rot"],
                                        disposability={"read:a": "disposable_confirmed"})
                 self.assertEqual(iv2["tool"], "handoff")
@@ -873,6 +874,106 @@ class BackendTest(unittest.TestCase):
                 dd.central_default, policy._config_path = o_cd, p_cp
                 if saved is not None:
                     os.environ["MRTOKEN_INTERVENE"] = saved
+
+    def test_autoact_l3_freemium_executor(self):
+        # ROADMAP 6.8 (Zach's 2026-07-06 decision): the L3 `do` executor is a
+        # freemium feature, built but DEFAULT-OFF. It EXECUTES only `handoff` at
+        # do+escalate+explicit-disposability; every other tool stays advisory; a
+        # metered 3-free-uses / paid-entitlement / degrade-to-manual layer sits on
+        # top of the 6.8-pre safety gates enforced upstream.
+        import mrtoken.autoact as autoact
+        import mrtoken.datadir as dd
+        import mrtoken.handoff as handoff
+        import mrtoken.policy as policy
+        from mrtoken import intervene, outcomes
+        with tempfile.TemporaryDirectory() as tmp:
+            o_cd, p_cp = dd.central_default, policy._config_path
+            o_build = handoff.build_handoff
+            dd.central_default = lambda: tmp
+            policy._config_path = lambda: os.path.join(tmp, "config.json")
+            outcomes.central_default = lambda: tmp
+            handoff.build_handoff = lambda db, sid: "# Handoff — continue in a fresh session\n\n## Goal\nx"
+            saved_iv = os.environ.pop("MRTOKEN_INTERVENE", None)
+            saved_lic = os.environ.pop("MRTOKEN_LICENSE", None)
+
+            def wired(tool="handoff", **kw):
+                iv = {"tool": tool, "level": "do", "phase": "escalate",
+                      "disposability_source": "explicit", "message": "base"}
+                iv.update(kw)
+                return iv
+            try:
+                # 1) trial: first free use EXECUTES and decrements the lifetime meter.
+                self.assertEqual(autoact.free_uses_left(), 3)
+                out = autoact.maybe_auto_act("s1", wired())
+                self.assertTrue(out["auto_act"]["acted"])
+                self.assertEqual(out["auto_act"]["reason"], "trial")
+                self.assertIn("# Handoff", out["message"])       # the generated handoff
+                self.assertEqual(autoact.free_uses_left(), 2)
+
+                # 2) only handoff is wired — other do-level tools stay advisory.
+                for t in ("offload", "compact", "confirm_disposable"):
+                    o = autoact.maybe_auto_act("s1", wired(t))
+                    self.assertNotIn("auto_act", o)
+                    self.assertIn("auto-action pending", o["message"])
+                self.assertEqual(autoact.free_uses_left(), 2)     # untouched by the above
+
+                # 3) handoff before escalation (first-ask) does NOT execute.
+                o = autoact.maybe_auto_act("s1", wired(phase="ask"))
+                self.assertNotIn("auto_act", o)
+
+                # 4) exhaust the free uses → degrade to manual + upsell, never hard-block,
+                #    meter never goes negative.
+                autoact.maybe_auto_act("s1", wired())
+                autoact.maybe_auto_act("s1", wired())
+                self.assertEqual(autoact.free_uses_left(), 0)
+                spent = autoact.maybe_auto_act("s1", wired())
+                self.assertFalse(spent["auto_act"]["acted"])
+                self.assertEqual(spent["auto_act"]["reason"], "spent")
+                self.assertIn("paid feature", spent["message"])
+                self.assertNotIn("# Handoff", spent["message"])   # nothing auto-generated
+                self.assertEqual(autoact.free_uses_left(), 0)
+
+                # 5) paid entitlement acts even with zero free uses left (env stub).
+                os.environ["MRTOKEN_LICENSE"] = "test-key"
+                paid = autoact.maybe_auto_act("s1", wired())
+                self.assertTrue(paid["auto_act"]["acted"])
+                self.assertEqual(paid["auto_act"]["reason"], "paid")
+                del os.environ["MRTOKEN_LICENSE"]
+
+                # 6) builder failure fails closed — no free use spent (config entitlement here).
+                policy._save({"entitlement": {"paid": True}})
+                handoff.build_handoff = lambda db, sid: "mrtoken handoff: no transcript found"
+                fail = autoact.maybe_auto_act("s1", wired())
+                self.assertFalse(fail["auto_act"]["acted"])
+                self.assertEqual(fail["auto_act"]["reason"], "builder_failed")
+                policy._save({})   # back to default (no entitlement)
+
+                # 7) a negative 6.7 trend auto-disables handoff BEFORE it can auto-act:
+                #    with the tool off, decide() returns None (never reaches the executor).
+                for _ in range(5):
+                    outcomes.record("handoff", -1)
+                self.assertIn("handoff", outcomes.enforce())
+                self.assertEqual(policy.autonomy("handoff"), "off")
+                self.assertIsNone(intervene.decide(
+                    "s2", 85, None, ["context_rot"],
+                    disposability={"read:a": "disposable_confirmed"}))
+
+                # 8) DEFAULT-OFF: with no config, handoff sits at `tell`, so the
+                #    explicit path never reaches `do` and nothing auto-acts.
+                policy._save({})
+                self.assertEqual(policy.autonomy("handoff"), "tell")
+                iv = intervene.decide("s3", 85, None, ["context_rot"],
+                                      disposability={"read:a": "disposable_confirmed"})
+                self.assertEqual(iv["level"], "tell")
+                self.assertNotIn("auto_act", iv)
+            finally:
+                dd.central_default, policy._config_path = o_cd, p_cp
+                outcomes.central_default = o_cd
+                handoff.build_handoff = o_build
+                if saved_iv is not None:
+                    os.environ["MRTOKEN_INTERVENE"] = saved_iv
+                if saved_lic is not None:
+                    os.environ["MRTOKEN_LICENSE"] = saved_lic
 
     def test_disposable_confirmation_channel(self):
         # The explicit disposability channel (disposable-confirmed-channel.md):

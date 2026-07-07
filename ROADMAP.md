@@ -292,12 +292,13 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
   the two fixtures** (fire-drop on debug-scanlib, suppress-drop on debug-speclib; add to 5D.3). Prereq for 6.8.
   → done: PR #19 merged the gate phases; `confirm_disposable` session-binding blocker fixed by Codex
   on this branch. 94 backend tests green.
-- [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
-  help, at equal quality, AND only in the disposable ∧ runway-remaining regime (see 6.8-pre).
-  **⚑ decision per tool** before it defaults to auto. Contract brief:
-  `GOALS/6.8-l3-do-contract.md`. Current recommendation: first slice = `handoff`, action =
-  generate handoff text only, after explicit disposable confirmation + AFK escalation; defaults
-  remain warn-only.
+- [~] **6.8 L3 Do (per tool)** — STRUCTURE BUILT, INERT (2026-07-06). Executor
+  `backend/mrtoken/autoact.py` wired for `handoff` only (do+escalate+explicit → generate
+  handoff text); freemium meter (3 free lifetime/install) + stubbed paid entitlement + upsell;
+  all **default-off** under the 6.8-pre gates. Enable auto-act only for tools 6.7 (and the gated
+  experiment) prove help, at equal quality, AND only in the disposable ∧ runway-remaining regime.
+  **⚑ decision per tool + real billing** are separate future flips. Contract + impl notes:
+  `GOALS/6.8-l3-do-contract.md`.
 
 ## Phase 7 — Prove the value + plug-and-play hub *(from Rosson's feedback)*
 

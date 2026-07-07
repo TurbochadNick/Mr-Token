@@ -193,7 +193,10 @@ def decide(session_id: str, ctx_pct, turns_to_full, signals, *,
         except Exception:
             pass
     if level in ("ask", "do"):
-        iv = apply_ask_policy(session_id, iv)  # first-ask vs AFK-escalation (+ act in 6.8)
+        iv = apply_ask_policy(session_id, iv)  # first-ask vs AFK-escalation
+        if iv.get("level") == "do":
+            from mrtoken.autoact import maybe_auto_act  # L3 executor (freemium, default-off)
+            iv = maybe_auto_act(session_id, iv)
     return iv
 
 
@@ -241,8 +244,8 @@ def apply_ask_policy(session_id: str, iv: dict, *, improved_drop: int = 5) -> di
             next_step = "I can run `handoff` now so the work continues in a fresh session"
         iv["message"] = (f"⚠ STILL critical — context {ctx}% and the {tool}-able junk is unaddressed. "
                          f"{next_step} (see the mr-context manual).")
-        if iv.get("level") == "do":
-            iv["message"] += "  [auto-action pending — ROADMAP 6.8]"
+        # do-level messaging (auto-act or its advisory/upsell fallback) is owned by
+        # autoact.maybe_auto_act, called from decide() right after this returns.
     else:
         iv["phase"] = "ask"
         if tool == "handoff":
