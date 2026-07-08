@@ -331,6 +331,37 @@ def cmd_modules(args):
         print(f"    {m['name']:14} {m.get('kind'):8} {m.get('command') or ''}{flag}")
 
 
+def cmd_module_measure(args):
+    from mrtoken import module_measure
+    import json
+    reports = []
+    if getattr(args, "before", None) or getattr(args, "after", None):
+        if not args.before or not args.after:
+            print("mrtoken module-measure: --before and --after must be used together")
+            sys.exit(1)
+        reports.append(module_measure.measure_files(
+            args.module, args.before, args.after, quality=args.quality,
+            record=args.record, session_id=args.session or "",
+        ))
+    if getattr(args, "headroom_log", None):
+        reports.append(module_measure.measure_headroom_log(
+            args.module, args.headroom_log, quality=args.quality,
+            record=args.record, session_id=args.session or "",
+        ))
+    if getattr(args, "probe_headroom", False):
+        reports.append(module_measure.probe_headroom_proxy(
+            headroom_bin=args.headroom_bin, timeout_s=args.timeout,
+            keep_sandbox=args.keep_sandbox,
+        ))
+    if not reports:
+        print("mrtoken module-measure: give --before/--after, --headroom-log, or --probe-headroom")
+        sys.exit(1)
+    if getattr(args, "json", False):
+        print(json.dumps(reports[0] if len(reports) == 1 else reports, indent=2))
+    else:
+        print("\n\n".join(module_measure.format_report(r) for r in reports))
+
+
 def cmd_mcp(args):
     """Run the MCP stdio server (the toolbox the agent calls). Register with
     `claude mcp add mrtoken -- mrtoken-transcript mcp` or Codex [mcp_servers]."""
@@ -422,6 +453,29 @@ def main(argv=None):
     p_modules.add_argument("--enable", metavar="NAME", help="enable a module")
     p_modules.add_argument("--disable", metavar="NAME", help="disable a module")
     p_modules.add_argument("--register", metavar="NAME", help="print agent-registration snippet")
+
+    p_module_measure = sub.add_parser("module-measure",
+        help="lab-only measurement harness for external token-saver modules")
+    p_module_measure.add_argument("--module", default="headroom",
+        help="module name used in savings/outcomes (default: headroom)")
+    p_module_measure.add_argument("--before", help="uncompressed/baseline text artifact")
+    p_module_measure.add_argument("--after", help="compressed/optimized text artifact")
+    p_module_measure.add_argument("--headroom-log",
+        help="Headroom proxy JSONL log with tokens_before/tokens_after fields")
+    p_module_measure.add_argument("--probe-headroom", action="store_true",
+        help="start a stateless local Headroom proxy health/file-write probe")
+    p_module_measure.add_argument("--headroom-bin", default="headroom",
+        help="Headroom binary for --probe-headroom (default: headroom)")
+    p_module_measure.add_argument("--timeout", type=float, default=8.0,
+        help="seconds to wait for the local proxy health endpoint")
+    p_module_measure.add_argument("--keep-sandbox", action="store_true",
+        help="leave the proxy probe sandbox on disk for manual inspection")
+    p_module_measure.add_argument("--quality", choices=["unknown", "pass", "fail", "neutral"],
+        default="unknown", help="quality verdict; only pass+positive delta counts as helped")
+    p_module_measure.add_argument("--record", action="store_true",
+        help="write realized savings/outcome under the module name")
+    p_module_measure.add_argument("--session", help="optional session id to attach to records")
+    p_module_measure.add_argument("--json", action="store_true", help="emit JSON")
 
     p_mcp = sub.add_parser("mcp",
         help="run the MCP stdio server (the agent toolbox: offload, …) — register with Claude/Codex")
@@ -548,7 +602,7 @@ def main(argv=None):
                 "export": cmd_export, "validate": cmd_validate, "corpus": cmd_corpus,
                 "explain": cmd_explain, "feedback": cmd_feedback, "mcp": cmd_mcp,
                 "config": cmd_config, "savings": cmd_savings, "modules": cmd_modules,
-                "watch": cmd_watch,
+                "module-measure": cmd_module_measure, "watch": cmd_watch,
                 "init": cmd_init, "uninstall": cmd_uninstall,
         "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
                 "offload-roi": cmd_offload_roi,

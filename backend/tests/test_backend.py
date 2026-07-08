@@ -1262,6 +1262,53 @@ class BackendTest(unittest.TestCase):
             finally:
                 savings.central_default = orig
 
+    def test_module_measure_records_savings_and_outcome(self):
+        # ROADMAP 7.3: external modules get a lab-only measurement shim that
+        # records realized savings/outcomes under the module name, without
+        # registering or running a real agent.
+        import mrtoken.savings as savings
+        import mrtoken.outcomes as outcomes
+        from mrtoken import module_measure
+        with tempfile.TemporaryDirectory() as tmp:
+            s_orig, o_orig = savings.central_default, outcomes.central_default
+            savings.central_default = lambda: tmp
+            outcomes.central_default = lambda: tmp
+            try:
+                before = os.path.join(tmp, "before.txt")
+                after = os.path.join(tmp, "after.txt")
+                with open(before, "w", encoding="utf-8") as handle:
+                    handle.write("noisy tool output\n" * 200)
+                with open(after, "w", encoding="utf-8") as handle:
+                    handle.write("compact summary\n" * 10)
+
+                report = module_measure.measure_files(
+                    "headroom", before, after, quality="pass",
+                    record=True, session_id="sess-module",
+                )
+
+                self.assertEqual(report["kind"], "file_pair")
+                self.assertGreater(report["tokens_saved"], 0)
+                realized = savings.realized()["by_tool"]["headroom"]
+                self.assertEqual(realized["tokens"], report["tokens_saved"])
+                self.assertEqual(realized["uses"], 1)
+                health = outcomes.health("headroom")
+                self.assertEqual((health["n"], health["helped"], health["hurt"]), (1, 1, 0))
+
+                log_path = os.path.join(tmp, "headroom.jsonl")
+                with open(log_path, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"tokens_before": 1000, "tokens_after": 650}) + "\n")
+                    handle.write(json.dumps({"tokens_before": 100, "tokens_after": 140}) + "\n")
+                    handle.write("not-json\n")
+                parsed = module_measure.measure_headroom_log("headroom", log_path)
+                self.assertEqual(parsed["rows_seen"], 3)
+                self.assertEqual(parsed["rows_measured"], 2)
+                self.assertEqual(parsed["bad_lines"], 1)
+                self.assertEqual(parsed["tokens_delta"], 310)
+                self.assertEqual(parsed["tokens_saved"], 310)
+            finally:
+                savings.central_default = s_orig
+                outcomes.central_default = o_orig
+
     def test_codex_live_pressure_and_decide(self):
         # ROADMAP B: live ctx % from a Codex rollout + the shared decide() core fires
         # for Codex too (proc engine no longer Claude-only).

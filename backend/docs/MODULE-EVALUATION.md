@@ -91,6 +91,61 @@ mrtoken-transcript modules --add headroom --kind mcp --command headroom --arg mc
 mrtoken-transcript modules --disable headroom
 ```
 
+### 2026-07-08 — reversible measurement harness added and proxy probe run, no agent routing
+
+**Decision:** add MR Token's lab harness, but keep Headroom off and unregistered in
+real agents. The new command is:
+
+```bash
+mrtoken-transcript module-measure
+```
+
+What it can do:
+- Compare a baseline text artifact to a compressed/optimized artifact:
+  `module-measure --module headroom --before raw.txt --after compressed.txt`.
+- Parse a Headroom proxy JSONL log containing `tokens_before` / `tokens_after`:
+  `module-measure --module headroom --headroom-log headroom-proxy.jsonl`.
+- Run a local-only Headroom proxy health/file-write probe:
+  `module-measure --probe-headroom --headroom-bin /tmp/mrtoken-headroom-eval/bin/headroom`.
+- Write measured positive token deltas to `savings` and explicit quality outcomes
+  to `outcomes` only when `--record` is passed. `quality=pass` plus positive token
+  delta counts as helped; `quality=fail` counts as hurt; unknown quality does not
+  create an outcome.
+
+Safety boundary:
+- The proxy probe uses an isolated temporary `HOME`, `XDG_DATA_HOME`, and `TMPDIR`.
+- It sets `HEADROOM_UPDATE_CHECK=off`, `HEADROOM_TELEMETRY=off`,
+  `HEADROOM_NO_SUBSCRIPTION_TRACKING=1`, and `HEADROOM_STATELESS=true`.
+- It starts only `headroom proxy` bound to `127.0.0.1`, hits a local health
+  endpoint, records files created under the sandbox, then stops the process.
+- It does **not** set `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, or launch Claude/Codex.
+- It does **not** run `headroom wrap`, `headroom init`, `headroom install`, or
+  `headroom mcp install`.
+
+Probe result:
+- The earlier `headroom-ai[mcp]==0.30.0` sandbox cannot start proxy mode:
+  it fails safely with `No module named 'fastapi'` and writes no files.
+- A separate reversible `/tmp/mrtoken-headroom-proxy-eval` venv with
+  `headroom-ai[proxy]==0.30.0` started proxy mode successfully under the harness.
+- Local endpoint checked: `GET http://127.0.0.1:<ephemeral>/livez` -> `200`.
+- Controlled env set by the harness:
+  `HEADROOM_UPDATE_CHECK=off`, `HEADROOM_TELEMETRY=off`,
+  `HEADROOM_NO_SUBSCRIPTION_TRACKING=1`, `HEADROOM_STATELESS=true`.
+- No `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` was set, and no Claude/Codex process
+  was launched. The proxy printed provider routes it *would* forward to if a client
+  were routed through it, but the probe only hit `/livez`.
+- Files written inside the temporary sandbox even with `--stateless`:
+  `home/.headroom/logs/proxy.log` (3993 bytes) and
+  `home/.headroom/subscription_state.json` (590 bytes). This is acceptable for a
+  lab sandbox, but it means "stateless" is not literally zero filesystem writes.
+
+Remaining evidence gate:
+1. Run controlled traffic through Headroom in the sandbox, capture its JSONL log,
+   and parse it with `module-measure --headroom-log`.
+2. Record savings only with an explicit equal-quality verdict.
+3. Decide keep-off / opt-in / drop. Any real-agent routing still needs separate
+   Zach approval.
+
 Evidence sources checked on 2026-07-07:
 - Headroom GitHub README: `https://github.com/headroomlabs-ai/headroom`
 - Headroom PyPI metadata: `https://pypi.org/project/headroom-ai/`

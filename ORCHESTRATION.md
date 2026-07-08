@@ -82,8 +82,14 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   `backend/docs/MODULE-EVALUATION.md` selects Headroom as the first lab candidate and defers Ponytail.
   A pinned `/tmp` install of `headroom-ai[mcp]==0.30.0` succeeded; even `[mcp]` brings a broad
   proxy/runtime surface and `headroom mcp` expects a local proxy plus agent routing. Nothing is
-  registered/enabled in real agents. Next gate: build a reversible proxy measurement harness and
-  verify network/files written before any wrap/routing or opt-in/drop decision.
+  registered/enabled in real agents. **Harness built (Codex, 2026-07-08):**
+  `mrtoken-transcript module-measure` can compare before/after artifacts, parse Headroom proxy JSONL
+  token deltas into module-named `savings`/`outcomes`, and run a stateless local Headroom proxy
+  health/file-write probe. Probe evidence: `[mcp]` extra cannot start proxy mode (`fastapi` missing);
+  separate pinned `[proxy]` venv starts on localhost and `/livez` returns 200, writing
+  `home/.headroom/logs/proxy.log` and `home/.headroom/subscription_state.json` under the temp sandbox.
+  Next gate: controlled proxy traffic + equal-quality verdict before any wrap/routing or opt-in/drop
+  decision.
 - **Compaction gate COMPLETE + MERGED (Fable built, Claude reviewed 2026-07-03): PR #19 → `main`
   merge commit `9131691`.** Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 91 backend
   tests green; default-None inputs keep old callers byte-identical. Claude review: code correct,
