@@ -318,15 +318,18 @@ both agents; sharp default (the savings report works out of the box), flexible h
     (`modules` key, shares the policy file); `mrtoken-transcript modules --add/--remove/--enable/--disable
     /--register` (emits Claude + Codex registration snippets). Savings/outcomes already key by name, so a
     module's value shows in `savings` once recorded. Measurement shim now exists as
-    `mrtoken-transcript module-measure` (file-pair, Headroom proxy-log parser, and stateless local proxy
-    probe). No external code vendored/run/trusted by default.
+    `mrtoken-transcript module-measure` (file-pair, Headroom proxy-log parser, stateless local proxy
+    probe, and offline synthetic traffic to a fake upstream). No external code vendored/run/trusted
+    by default.
 - [~] **7.3 Evaluate headroom + ponytail as first modules** *(trust review + sandbox inspect done; measurement next)*
   → `backend/docs/MODULE-EVALUATION.md` updated (2026-07-07). Decision: **Headroom** is the first
     lab candidate; Ponytail is deferred as guidance/A-B work; neither is registered or enabled by
     default. Pinned sandbox install `headroom-ai[mcp]==0.30.0` succeeded and showed a broad proxy/MCP
-    surface. Reversible measurement harness is built and a stateless local proxy probe succeeded
-    (`/livez` 200; sandbox file writes recorded). Remaining work is controlled Headroom traffic
-    through the proxy log, equal-quality verification, and decide keep-off / opt-in / drop.
+    surface. Reversible measurement harness is built; stateless local proxy probe and offline synthetic
+    localhost traffic both succeeded (`/livez` 200; fake upstream received one request; Headroom log
+    parsed 13,761 -> 13,761 input tokens, i.e. zero savings in safe mode). Remaining work is an explicit
+    decision on whether to run a less-constrained compression probe, then equal-quality verification and
+    keep-off / opt-in / drop.
     **⚑ separate approval before wrapping/routing a real agent.**
 
 ## Shipped: Phase 6 — the intervention engine (v0.5.0)

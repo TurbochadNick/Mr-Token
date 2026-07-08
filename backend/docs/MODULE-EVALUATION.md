@@ -107,6 +107,8 @@ What it can do:
   `module-measure --module headroom --headroom-log headroom-proxy.jsonl`.
 - Run a local-only Headroom proxy health/file-write probe:
   `module-measure --probe-headroom --headroom-bin /tmp/mrtoken-headroom-eval/bin/headroom`.
+- Run a synthetic localhost traffic probe with no real provider or agent:
+  `module-measure --synthetic-headroom-traffic --headroom-bin /tmp/mrtoken-headroom-proxy-eval/bin/headroom`.
 - Write measured positive token deltas to `savings` and explicit quality outcomes
   to `outcomes` only when `--record` is passed. `quality=pass` plus positive token
   delta counts as helped; `quality=fail` counts as hurt; unknown quality does not
@@ -121,6 +123,11 @@ Safety boundary:
 - It does **not** set `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, or launch Claude/Codex.
 - It does **not** run `headroom wrap`, `headroom init`, `headroom install`, or
   `headroom mcp install`.
+- The synthetic traffic probe runs non-stateless inside the same isolated sandbox
+  because Headroom disables `--log-file` in stateless mode. It sets
+  `HEADROOM_OFFLINE=1`, `HEADROOM_BINARIES_OFFLINE=1`, `HEADROOM_DISABLE_KOMPRESS=1`,
+  `HEADROOM_CCR_BACKEND=memory`, `HEADROOM_TIKTOKEN_LOAD_TIMEOUT_SECONDS=0`, and
+  routes `/v1/messages` to a fake localhost Anthropic endpoint.
 
 Probe result:
 - The earlier `headroom-ai[mcp]==0.30.0` sandbox cannot start proxy mode:
@@ -139,9 +146,28 @@ Probe result:
   `home/.headroom/subscription_state.json` (590 bytes). This is acceptable for a
   lab sandbox, but it means "stateless" is not literally zero filesystem writes.
 
+Synthetic traffic result:
+- Command:
+  `module-measure --synthetic-headroom-traffic --headroom-bin /tmp/mrtoken-headroom-proxy-eval/bin/headroom --timeout 12 --json`.
+- Result: `ok=true`; `GET /livez` returned `200`; one synthetic Anthropic-shaped
+  request with a large `tool_result` reached the fake localhost upstream; no real
+  Claude/Codex process or provider endpoint was used.
+- Headroom JSONL parse: `rows_seen=1`, `rows_measured=1`,
+  `input_tokens_original=13761`, `input_tokens_optimized=13761`, `tokens_saved=0`.
+  This proves the MR Token measurement loop, but it does **not** prove Headroom
+  savings because the safe probe disables Kompress and blocks binary downloads.
+- Offline controls worked for bundled tools: `difft` and `scc` were skipped with
+  `HEADROOM_BINARIES_OFFLINE=1` instead of being fetched.
+- Files written in the non-stateless traffic sandbox:
+  `headroom-proxy.jsonl`, `home/.headroom/logs/proxy.log`,
+  `home/.headroom/proxy_savings.json`, `home/.headroom/subscription_state.json`,
+  and a sandbox-local `tiktoken-cache/...` file. Keep treating traffic probes as
+  sandbox-only; do not infer "no filesystem writes."
+
 Remaining evidence gate:
-1. Run controlled traffic through Headroom in the sandbox, capture its JSONL log,
-   and parse it with `module-measure --headroom-log`.
+1. Decide whether to run a less-constrained compression probe (e.g. with Kompress
+   or pre-fetched helper binaries) to test actual savings; that is separate from
+   the safe synthetic loop.
 2. Record savings only with an explicit equal-quality verdict.
 3. Decide keep-off / opt-in / drop. Any real-agent routing still needs separate
    Zach approval.

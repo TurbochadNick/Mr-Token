@@ -1298,16 +1298,47 @@ class BackendTest(unittest.TestCase):
                 with open(log_path, "w", encoding="utf-8") as handle:
                     handle.write(json.dumps({"tokens_before": 1000, "tokens_after": 650}) + "\n")
                     handle.write(json.dumps({"tokens_before": 100, "tokens_after": 140}) + "\n")
+                    handle.write(json.dumps({
+                        "input_tokens_original": 500,
+                        "input_tokens_optimized": 350,
+                    }) + "\n")
                     handle.write("not-json\n")
                 parsed = module_measure.measure_headroom_log("headroom", log_path)
-                self.assertEqual(parsed["rows_seen"], 3)
-                self.assertEqual(parsed["rows_measured"], 2)
+                self.assertEqual(parsed["rows_seen"], 4)
+                self.assertEqual(parsed["rows_measured"], 3)
                 self.assertEqual(parsed["bad_lines"], 1)
-                self.assertEqual(parsed["tokens_delta"], 310)
-                self.assertEqual(parsed["tokens_saved"], 310)
+                self.assertEqual(parsed["tokens_delta"], 460)
+                self.assertEqual(parsed["tokens_saved"], 460)
             finally:
                 savings.central_default = s_orig
                 outcomes.central_default = o_orig
+
+    def test_module_measure_synthetic_upstream_fixture(self):
+        # The 7.3 Headroom traffic probe uses only localhost synthetic traffic:
+        # client -> Headroom proxy -> this fake Anthropic upstream.
+        from mrtoken import module_measure
+        server, thread, port = module_measure._start_fake_anthropic_upstream()
+        try:
+            payload = module_measure._synthetic_anthropic_payload(chars=4096)
+            raw = json.dumps(payload)
+            self.assertIn("tool_result", raw)
+            self.assertGreater(module_measure.estimate_tokens(raw), 900)
+
+            result = module_measure._post_json(
+                f"http://127.0.0.1:{port}/v1/messages",
+                payload,
+                timeout_s=2,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["status"], 200)
+            self.assertEqual(len(server.requests), 1)
+            self.assertEqual(server.requests[0]["path"], "/v1/messages")
+            self.assertIn("toolu_mrtoken_synthetic", server.requests[0]["body"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_codex_live_pressure_and_decide(self):
         # ROADMAP B: live ctx % from a Codex rollout + the shared decide() core fires

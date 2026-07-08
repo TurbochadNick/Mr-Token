@@ -353,8 +353,18 @@ def cmd_module_measure(args):
             headroom_bin=args.headroom_bin, timeout_s=args.timeout,
             keep_sandbox=args.keep_sandbox,
         ))
+    if getattr(args, "synthetic_headroom_traffic", False):
+        reports.append(module_measure.probe_headroom_synthetic_traffic(
+            headroom_bin=args.headroom_bin, timeout_s=args.timeout,
+            keep_sandbox=args.keep_sandbox,
+            synthetic_chars=args.synthetic_chars,
+            record=args.record,
+            quality=args.quality,
+            session_id=args.session or "",
+        ))
     if not reports:
-        print("mrtoken module-measure: give --before/--after, --headroom-log, or --probe-headroom")
+        print("mrtoken module-measure: give --before/--after, --headroom-log, "
+              "--probe-headroom, or --synthetic-headroom-traffic")
         sys.exit(1)
     if getattr(args, "json", False):
         print(json.dumps(reports[0] if len(reports) == 1 else reports, indent=2))
@@ -464,8 +474,12 @@ def main(argv=None):
         help="Headroom proxy JSONL log with tokens_before/tokens_after fields")
     p_module_measure.add_argument("--probe-headroom", action="store_true",
         help="start a stateless local Headroom proxy health/file-write probe")
+    p_module_measure.add_argument("--synthetic-headroom-traffic", action="store_true",
+        help="route one synthetic Anthropic request through Headroom to a fake localhost upstream")
     p_module_measure.add_argument("--headroom-bin", default="headroom",
-        help="Headroom binary for --probe-headroom (default: headroom)")
+        help="Headroom binary for Headroom probe modes (default: headroom)")
+    p_module_measure.add_argument("--synthetic-chars", type=int, default=48_000,
+        help="bytes/chars of synthetic tool-result payload (default 48000)")
     p_module_measure.add_argument("--timeout", type=float, default=8.0,
         help="seconds to wait for the local proxy health endpoint")
     p_module_measure.add_argument("--keep-sandbox", action="store_true",
