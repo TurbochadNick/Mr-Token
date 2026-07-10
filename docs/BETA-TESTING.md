@@ -54,7 +54,7 @@ Codex is a secondary beta path. After install, use Codex normally and look for a
 compact Stop-hook line like:
 
 ```text
-mr · codex gpt-5.5 · ctx 28% · ~681k tok · cache 96% · code · long session: /mr-handoff at phase boundary
+mr · codex gpt-5.6-terra · ctx 28% · ~681k tok · cache 96% · code · long session: /mr-handoff at phase boundary
 ```
 
 Inspect aggregate Codex data with:

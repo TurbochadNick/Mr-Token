@@ -30,7 +30,7 @@ tool names) — never raw prompts/source/secrets.
 | Agent | Model | Role here |
 |---|---|---|
 | **Claude** (lead) | `claude-opus-4-8` | interactive, planning, architecture, debugging, review/merge, talking with Zach |
-| **Codex** | GPT-5.x | async / fire-and-forget scoped work; failover when Claude is out of tokens |
+| **Codex** | GPT-5.6 (Terra default, Sol for hard runs) | async / fire-and-forget scoped work; failover when Claude is out of tokens |
 | **Fable** *(conditional)* | `claude-fable-5` | **proposed: peak-capability coding executor in the Python `backend/` lane** on scoped, test-checkable `GOALS/` briefs |
 
 **Fable's lane = the Python backend, because that's where it can run unattended safely:**
@@ -47,16 +47,16 @@ tool names) — never raw prompts/source/secrets.
 
 **Before committing to Fable here, A/B it.** Pre-suspension it briefly topped SWE-bench (~95%), but
 that's unverified post-reinstatement — run one real Mr Token brief on Fable vs Claude/Codex and judge
-on the actual diff (bench harness: `~/Projects/gate-pending/ai-council`, `python3 app.py`). This is a
-medium-confidence call; don't adopt on reputation alone.
+on the actual diff (A/B harness: run the two side-by-side in K2 panes on this workspace; the old
+`ai-council` panel was shelved 2026-07-09). This is a medium-confidence call; don't adopt on reputation alone.
 
 ## Availability & safety context (why this note exists)
 - Fable 5 was **suspended 2026-06-12** under a US export-control order (an Amazon report showed a
   prompt could bypass some safeguards and surface software vulnerabilities). **Controls were lifted
   and it was reinstated 2026-07-01** across Claude Code; Anthropic added a safety classifier that
   blocks the reported bypass in >99% of cases.
-- Practically usable now; through ~2026-07-07 it counts for up to ~50% of weekly usage limits on
-  Pro/Max/Team plans. Mr Token holds no secrets in-repo, but obey the CLAUDE.md secrets rules anyway.
+- Practically usable now; it can draw a large share of weekly usage limits on Pro/Max/Team plans —
+  check current limits before a long run. Mr Token holds no secrets in-repo, but obey the CLAUDE.md secrets rules anyway.
 - Routing source of truth: Claude's `/which-model` skill (Snapshot A now carries Fable's reinstated
   status). Re-verify standing periodically — model rankings move in weeks.
 

@@ -90,7 +90,7 @@ mrtoken-transcript uninstall      # see docs/UNINSTALL.md
 |---|---|
 | **Claude Code in a terminal** | The full ambient HUD: a bottom status bar (`mr · ctx 78% ⚠ · ~$1.20 · code · ⚠ compact soon`) plus a one-line nudge each turn. This is the whole point. |
 | **Claude Code desktop app** | Background ingestion runs, but the app does not render an ambient bar. Pull status on demand with `/mr-status` (and `/mr-why`, `/mr-handoff`). |
-| **Codex** | The Stop hook ingests each matched rollout into the central Codex DB and prints a compact usage line (`mr · codex gpt-5.5 · ctx 28% · ~681k tok · cache 96% · code · long session: /mr-handoff at phase boundary`). |
+| **Codex** | The Stop hook ingests each matched rollout into the central Codex DB and prints a compact usage line (`mr · codex gpt-5.6-terra · ctx 28% · ~681k tok · cache 96% · code · long session: /mr-handoff at phase boundary`). |
 
 The HUD updates as you work. When it flags something (context filling up, a
 retry loop, the same file re-read repeatedly), that is the moment to act.
