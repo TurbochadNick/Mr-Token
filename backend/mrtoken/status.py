@@ -77,6 +77,10 @@ def print_status(db_path: str | None, session_arg: str | None) -> int:
         gap = release_tag_warning()  # maintainer-facing; silent on non-git installs
         if gap:
             print(f"\n  {gap}")
+        from mrtoken.pricing import freshness_warning
+        stale = freshness_warning(load_prices())  # nudge to re-verify old rates
+        if stale:
+            print(f"\n  {stale}")
     except Exception:
         pass  # never let an update check break status
     print()

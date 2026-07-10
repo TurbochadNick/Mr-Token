@@ -41,13 +41,23 @@ def load_prices():
         return json.load(f)
 
 
-def price_for(prices, model: str):
+def matched_price_key(prices, model: str) -> str | None:
+    """The prices.json model key whose substring matches `model`, or None when the
+    model is empty or matches nothing — i.e. it would fall back to the Sonnet-shaped
+    `default` row. None IS the coverage signal: a None here means we are silently
+    under/over-pricing an unrecognized model. Keys are checked in insertion order,
+    so more-specific rows (e.g. gpt-5.6-terra) must precede generic ones (gpt-5.6)."""
     if not model:
-        return prices["models"]["default"]
-    for key, tbl in prices["models"].items():
+        return None
+    for key in prices["models"]:
         if key != "default" and key in model:
-            return tbl
-    return prices["models"]["default"]
+            return key
+    return None
+
+
+def price_for(prices, model: str):
+    key = matched_price_key(prices, model)
+    return prices["models"][key] if key else prices["models"]["default"]
 
 
 def est_cost(prices, model, usage) -> float:

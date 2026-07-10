@@ -1995,6 +1995,49 @@ class BackendTest(unittest.TestCase):
         # Unknown models still fall back to `default` (documented behavior).
         self.assertEqual(price_for(p, "some-unknown-model"), p["models"]["default"])
 
+    def test_matched_price_key_and_staleness(self):
+        from datetime import date, timedelta
+        from mrtoken.ingest import load_prices, matched_price_key
+        from mrtoken.pricing import price_staleness, freshness_warning, STALE_DAYS
+        p = load_prices()
+        # covered families return their key; unknown/empty return None (the coverage signal)
+        self.assertEqual(matched_price_key(p, "claude-fable-5"), "claude-fable-5")
+        self.assertEqual(matched_price_key(p, "gpt-5.6-terra"), "gpt-5.6-terra")
+        self.assertIsNone(matched_price_key(p, "totally-made-up-model"))
+        self.assertIsNone(matched_price_key(p, ""))
+        # freshness is date-driven and injectable for determinism
+        fresh = {"version": "2026-07-01", "models": {}}
+        self.assertEqual(price_staleness(fresh, date(2026, 7, 10)), (9, False))
+        self.assertIsNone(freshness_warning(fresh, date(2026, 7, 10)))
+        stale_day = date(2026, 7, 1) + timedelta(days=STALE_DAYS + 5)
+        age, is_stale = price_staleness(fresh, stale_day)
+        self.assertTrue(is_stale)
+        self.assertIsNotNone(freshness_warning(fresh, stale_day))
+        # unparseable version → no signal (not a crash)
+        self.assertIsNone(price_staleness({"version": "nope", "models": {}}))
+
+    def test_uncovered_models_flags_default_priced(self):
+        from mrtoken.ingest import ingest_file, load_prices, connect
+        from mrtoken.pricing import uncovered_models
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = os.path.join(tmp, "s.jsonl")
+            write_jsonl(transcript, [
+                {"type": "user", "message": {"content": "hi"}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u1", "cwd": tmp,
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "ok"}]}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u2", "cwd": tmp,
+                 "message": {"id": "m2", "model": "totally-made-up-9",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "ok"}]}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            ingest_file(conn, transcript, load_prices())
+            models = [m for m, _ in uncovered_models(conn, load_prices())]
+            self.assertIn("totally-made-up-9", models)   # priced at default → flagged
+            self.assertNotIn("claude-opus-4-8", models)  # has a real row → not flagged
+
     def test_low_activity_floor_drops_empty_and_hides_substubs(self):
         # The global Stop hook fires on every trivial desktop session. A
         # zero-model-call transcript must NOT be persisted; a sub-floor one (< 2
