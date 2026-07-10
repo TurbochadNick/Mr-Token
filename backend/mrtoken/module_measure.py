@@ -536,9 +536,7 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                 "--anthropic-api-url", f"http://127.0.0.1:{upstream_port}",
                 "--log-file", log_file,
             ]
-            if enable_kompress:
-                cmd.append("--force-kompress-all")
-            else:
+            if not enable_kompress:
                 cmd.extend(["--no-ccr-inject-tool", "--lossless", "--disable-kompress"])
             proc = subprocess.Popen(
                 cmd, env=env, cwd=sandbox, stdout=subprocess.PIPE,
