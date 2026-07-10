@@ -1,6 +1,6 @@
 # GOAL: Headroom less-constrained compression probe (7.3 measurement)
 
-**Lane:** Codex / Claude (harness exists; scoped, test-checkable) · **Status:** ready
+**Lane:** Codex / Claude (harness exists; scoped, test-checkable) · **Status:** done — drop (2026-07-10)
 **Est:** M · **Budget:** $0 API (fake localhost upstream — no real provider calls; ~500 MB
 disk in `/tmp`) · **Source:** MODULE-EVALUATION "remaining evidence gate" item 1;
 **greenlit by Zach 2026-07-10** (protocol designed by Fable, this brief).
