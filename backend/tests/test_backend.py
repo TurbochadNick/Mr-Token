@@ -2094,6 +2094,25 @@ class BackendTest(unittest.TestCase):
         # Unknown models still fall back to `default` (documented behavior).
         self.assertEqual(price_for(p, "some-unknown-model"), p["models"]["default"])
 
+    def test_date_aware_pricing_intro_window(self):
+        from mrtoken.ingest import load_prices, price_for, est_cost
+        p = load_prices()
+        # Sonnet 5: intro $2/$10 through 2026-08-31 (inclusive), sticker $3/$15 after.
+        intro = price_for(p, "claude-sonnet-5", at="2026-07-10T00:00:00Z")
+        self.assertEqual((intro["input"], intro["output"]), (2.0, 10.0))
+        self.assertEqual(price_for(p, "claude-sonnet-5", at="2026-08-31T23:59:59Z")["input"], 2.0)  # boundary inclusive
+        after = price_for(p, "claude-sonnet-5", at="2026-09-01")
+        self.assertEqual((after["input"], after["output"]), (3.0, 15.0))
+        # at=None → base/sticker: back-compat preserved for every existing caller
+        self.assertEqual(price_for(p, "claude-sonnet-5")["input"], 3.0)
+        # est_cost honours the window
+        u = {"input_tokens": 1_000_000, "output_tokens": 0,
+             "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+        self.assertAlmostEqual(est_cost(p, "claude-sonnet-5", u, at="2026-07-10T00:00:00Z"), 2.0, places=6)
+        self.assertAlmostEqual(est_cost(p, "claude-sonnet-5", u, at="2026-09-01"), 3.0, places=6)
+        # a model without effective windows is unaffected by `at`
+        self.assertEqual(price_for(p, "claude-opus-4-8", at="2026-07-10")["input"], 5.0)
+
     def test_matched_price_key_and_staleness(self):
         from datetime import date, timedelta
         from mrtoken.ingest import load_prices, matched_price_key

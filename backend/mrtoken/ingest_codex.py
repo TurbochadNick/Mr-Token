@@ -174,7 +174,7 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
                     "reasoning_tokens": reasoning,
                     "est_cost_usd": est_cost(prices, model, {
                         "input_tokens": fresh_in, "output_tokens": out,
-                        "cache_read_input_tokens": cached, "cache_creation_input_tokens": 0}),
+                        "cache_read_input_tokens": cached, "cache_creation_input_tokens": 0}, ts),
                 })
             elif t == "response_item":
                 pt = p.get("type")

@@ -47,11 +47,17 @@ failures = []
 print("MR Token pricing gate")
 print(f"version: {prices.get('version')}")
 
-# structural — every row carries all four numeric fields
+# structural — every row (and each effective window) carries all four numeric fields
 for name, row in prices.get("models", {}).items():
     bad = [f for f in FIELDS if not isinstance(row.get(f), (int, float))]
     if bad:
         failures.append(f"row '{name}' missing/non-numeric field(s): {', '.join(bad)}")
+    for w in (row.get("effective") or []):
+        if not w.get("until"):
+            failures.append(f"row '{name}' effective window missing 'until' date")
+        wbad = [f for f in FIELDS if not isinstance(w.get(f), (int, float))]
+        if wbad:
+            failures.append(f"row '{name}' effective window missing field(s): {', '.join(wbad)}")
 
 # coverage — required families must not fall to default
 for m in REQUIRED:

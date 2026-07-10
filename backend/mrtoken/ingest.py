@@ -117,13 +117,40 @@ def matched_price_key(prices, model: str) -> str | None:
     return None
 
 
-def price_for(prices, model: str):
+def _as_date(s):
+    """Date from a 'YYYY-MM-DD' string or the date prefix of an ISO timestamp;
+    None if unparseable."""
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _effective_row(row: dict, at) -> dict:
+    """If `at` (a date/ISO-timestamp string) falls within one of the row's optional
+    `effective` windows, return that window's rates overlaid on the row; else the
+    row's base (sticker) rates. A window applies when from <= at <= until (both
+    bounds optional and inclusive) — used for time-bounded rates like intro pricing."""
+    windows = row.get("effective")
+    at_date = _as_date(at) if at else None
+    if at_date is None or not isinstance(windows, list):
+        return row
+    for w in windows:
+        frm, until = _as_date(w.get("from")), _as_date(w.get("until"))
+        if (frm and at_date < frm) or (until and at_date > until):
+            continue
+        return {**row, **{k: v for k, v in w.items() if k in PRICE_FIELDS}}
+    return row
+
+
+def price_for(prices, model: str, at=None):
     key = matched_price_key(prices, model)
-    return prices["models"][key] if key else prices["models"]["default"]
+    row = prices["models"][key] if key else prices["models"]["default"]
+    return _effective_row(row, at)
 
 
-def est_cost(prices, model, usage) -> float:
-    p = price_for(prices, model)
+def est_cost(prices, model, usage, at=None) -> float:
+    p = price_for(prices, model, at)
     m = 1_000_000.0
     return round(
         usage.get("input_tokens", 0)               / m * p["input"]
@@ -359,7 +386,7 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
                         "service_tier": u.get("service_tier"),
                         "stop_reason": msg.get("stop_reason"),
                         "is_sidechain": 1 if o.get("isSidechain") else 0,
-                        "est_cost_usd": est_cost(prices, msg.get("model"), u),
+                        "est_cost_usd": est_cost(prices, msg.get("model"), u, ts),
                         "price_version": prices["version"],
                     })
                 # tool_use blocks requested by this assistant turn
