@@ -14,8 +14,10 @@ Codex line shapes used:
 
 Token mapping: Codex `input_tokens` INCLUDES cached, so fresh input = input − cached,
 and cached_input_tokens → cache_read. reasoning_output_tokens → reasoning_tokens.
-Cost is computed only if the model is in the price table (Claude-priced today), else
-left NULL — tokens are the ground truth, cost is a best-effort overlay.
+Cost comes from the shared price table (prices.json): GPT-5.6 tiers (sol/terra/luna,
+plus a bare-gpt-5.6 = Terra fallback) and legacy gpt-5.5 are priced directly; any other
+model falls back to the `default` row (approximate). Tokens are the ground truth, cost
+is a best-effort overlay.
 """
 from __future__ import annotations
 import bisect, hashlib, json, os

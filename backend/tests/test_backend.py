@@ -1969,6 +1969,32 @@ class BackendTest(unittest.TestCase):
             tc = conn.execute("SELECT COUNT(*) FROM tool_call WHERE trace_id=?", (tid,)).fetchone()[0]
             self.assertEqual(tc, 1)  # tool_use on the 2nd line still captured despite dedup
 
+    def test_price_table_covers_new_model_families(self):
+        # Regression: prices.json must price the current families directly, not
+        # silently fall through to the Sonnet-shaped `default` row.
+        from mrtoken.ingest import load_prices, price_for, est_cost
+        p = load_prices()
+        # Fable/Mythos must NOT resolve to default (3/15) — they are 10/50.
+        self.assertEqual((price_for(p, "claude-fable-5")["input"],
+                          price_for(p, "claude-fable-5")["output"]), (10.0, 50.0))
+        self.assertEqual(price_for(p, "claude-mythos-5")["input"], 10.0)
+        self.assertEqual(price_for(p, "claude-sonnet-5")["output"], 15.0)
+        self.assertEqual(price_for(p, "claude-opus-4-8")["input"], 5.0)
+        # OpenAI GPT-5.6 tiers — substring order matters: tier keys must match
+        # before the generic 'gpt-5.6', or every tier would price as Terra.
+        self.assertEqual(price_for(p, "gpt-5.6-sol")["output"], 30.0)
+        self.assertEqual(price_for(p, "gpt-5.6-terra")["output"], 15.0)
+        self.assertEqual(price_for(p, "gpt-5.6-luna")["output"], 6.0)
+        self.assertEqual(price_for(p, "gpt-5.6")["input"], 2.5)   # bare -> Terra
+        self.assertEqual(price_for(p, "gpt-5.5")["input"], 5.0)
+        # End-to-end cost for a Terra call (fresh in + out, no cache).
+        cost = est_cost(p, "gpt-5.6-terra", {
+            "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0})
+        self.assertAlmostEqual(cost, 2.5 + 15.0, places=6)
+        # Unknown models still fall back to `default` (documented behavior).
+        self.assertEqual(price_for(p, "some-unknown-model"), p["models"]["default"])
+
     def test_low_activity_floor_drops_empty_and_hides_substubs(self):
         # The global Stop hook fires on every trivial desktop session. A
         # zero-model-call transcript must NOT be persisted; a sub-floor one (< 2
