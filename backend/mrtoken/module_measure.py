@@ -453,6 +453,7 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                                      synthetic_chars: int = 48_000,
                                      payload_paths: list[str] | None = None,
                                      enable_kompress: bool = False,
+                                     asset_cache: str | None = None,
                                      record: bool = False,
                                      quality: str = "unknown",
                                      session_id: str = "") -> dict:
@@ -473,6 +474,17 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
 
     with ctx as sandbox:
         env = _safe_proxy_env(sandbox, stateless=False)
+        if asset_cache:
+            source = os.path.join(asset_cache, "hf")
+            if not os.path.isdir(source):
+                return {
+                    "kind": "headroom_synthetic_traffic",
+                    "ok": False,
+                    "error": f"Headroom asset cache not found: {source}",
+                    "sandbox": sandbox,
+                    "sandbox_removed": cleanup,
+                }
+            shutil.copytree(source, os.path.join(sandbox, "hf"))
         env.update({
             "HEADROOM_OFFLINE": "1",
             "HEADROOM_BINARIES_OFFLINE": "1",
@@ -582,6 +594,7 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                 "requests": requests,
                 "fake_upstream_requests": len(getattr(upstream, "requests", [])),
                 "kompress_requested": enable_kompress,
+                "asset_cache_used": bool(asset_cache),
                 "log_path": log_file,
                 "rows_seen": parsed["rows_seen"],
                 "rows_measured": parsed["rows_measured"],

@@ -360,6 +360,7 @@ def cmd_module_measure(args):
             synthetic_chars=args.synthetic_chars,
             payload_paths=args.payload or None,
             enable_kompress=args.enable_kompress,
+            asset_cache=args.asset_cache,
             record=args.record,
             quality=args.quality,
             session_id=args.session or "",
@@ -486,6 +487,8 @@ def main(argv=None):
         help="local tool-result file to send (repeatable; replaces the canned payload)")
     p_module_measure.add_argument("--enable-kompress", action="store_true",
         help="enable Kompress for the localhost-only traffic probe")
+    p_module_measure.add_argument("--asset-cache",
+        help="sandbox-local Headroom asset cache; copied into the probe sandbox")
     p_module_measure.add_argument("--timeout", type=float, default=8.0,
         help="seconds to wait for the local proxy health endpoint")
     p_module_measure.add_argument("--keep-sandbox", action="store_true",
