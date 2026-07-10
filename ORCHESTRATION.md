@@ -44,6 +44,14 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
+- **Headroom probe GREENLIT + protocol spec'd (Fable, 2026-07-10):** Zach approved the
+  less-constrained compression probe (MODULE-EVALUATION gate item 1). Fable designed the
+  protocol — relax ONLY compression capability (Kompress + audited asset pre-fetch), keep
+  every isolation hard line; quality = deterministic reversibility + needle checks, no LLM
+  judge; verdict thresholds fixed in the brief (drop <10% real-corpus median / opt-in ≥10%
+  at 100% quality / default-on unreachable from a probe). Dispatchable brief:
+  **`GOALS/headroom-compression-probe.md`** — handed to Codex 2026-07-10. Real-agent
+  wrapping/routing stays separately Zach-gated, unchanged.
 - **Claude resumed — pricing/accuracy hardening COMPLETE (2026-07-10):** The earlier
   "Codex takeover" note was on a wrong premise — Claude did NOT run out of tokens; it resumed
   and finished the full plan (`~/.claude/plans/dynamic-imagining-wind.md`, Zach-approved).
