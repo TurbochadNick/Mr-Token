@@ -413,11 +413,11 @@ def probe_headroom_proxy(headroom_bin: str = "headroom", timeout_s: float = 8.0,
         ctx = nullcontext(sandbox_root)
         cleanup = False
     elif keep_sandbox:
-        root = tempfile.mkdtemp(prefix="mrtoken-module-headroom-")
+        root = tempfile.mkdtemp(prefix="mrtoken-module-headroom-", dir="/tmp")
         ctx = nullcontext(root)
         cleanup = False
     else:
-        ctx = tempfile.TemporaryDirectory(prefix="mrtoken-module-headroom-")
+        ctx = tempfile.TemporaryDirectory(prefix="mrtoken-module-headroom-", dir="/tmp")
         cleanup = True
 
     with ctx as sandbox:
@@ -499,11 +499,11 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
     sandbox and reported.
     """
     if keep_sandbox:
-        root = tempfile.mkdtemp(prefix="mrtoken-module-headroom-traffic-")
+        root = tempfile.mkdtemp(prefix="mrtoken-module-headroom-traffic-", dir="/tmp")
         ctx = nullcontext(root)
         cleanup = False
     else:
-        ctx = tempfile.TemporaryDirectory(prefix="mrtoken-module-headroom-traffic-")
+        ctx = tempfile.TemporaryDirectory(prefix="mrtoken-module-headroom-traffic-", dir="/tmp")
         cleanup = True
 
     with ctx as sandbox:
