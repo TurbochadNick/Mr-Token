@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCHEMA = os.path.join(HERE, "schema.sql")
 PRICES = os.path.join(HERE, "prices.json")
+USER_PRICES = os.path.expanduser(os.path.join("~", ".mrtoken", "prices.json"))
+PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
 
 
 # Data-dir resolution lives in mrtoken.datadir (shared contract with the TS side,
@@ -36,9 +38,69 @@ def sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+def _merge_price_override(base: dict, override: dict, label: str) -> dict:
+    """Overlay an override onto the base price table. `version` (if given) and each
+    COMPLETE model row replace the base wholesale; base rows not named are kept. A
+    row missing any of the four rate fields is skipped with a warning (fail-safe)."""
+    merged = dict(base)
+    if override.get("version"):
+        merged["version"] = override["version"]
+    om = override.get("models")
+    if isinstance(om, dict):
+        models = dict(base.get("models", {}))
+        for name, row in om.items():
+            if isinstance(row, dict) and all(isinstance(row.get(f), (int, float)) for f in PRICE_FIELDS):
+                models[name] = row
+            else:
+                print(f"mrtoken: price override {label}: row '{name}' missing "
+                      f"{'/'.join(PRICE_FIELDS)} — ignoring that row", file=sys.stderr)
+        merged["models"] = models
+    return merged
+
+
+def _price_override(label: str, raw: str) -> dict | None:
+    """Load a price override from a file path, or (env only) inline JSON. Loud +
+    fail-safe: warn to stderr naming the source and return None on any problem."""
+    try:
+        if os.path.isfile(raw):
+            with open(raw, encoding="utf-8") as f:
+                text = f.read()
+        elif raw.lstrip().startswith("{"):
+            text = raw
+        else:
+            print(f"mrtoken: price override {label} is neither a readable file nor "
+                  f"inline JSON — ignoring", file=sys.stderr)
+            return None
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("top-level JSON is not an object")
+        return data
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"mrtoken: ignoring malformed price override {label}: {e}", file=sys.stderr)
+        return None
+
+
 def load_prices():
+    """Packaged prices.json with optional user overrides merged on top, low→high
+    precedence: ~/.mrtoken/prices.json, then $MRTOKEN_PRICES (a file path or inline
+    JSON). Overrides let a user correct rates without editing the package.
+
+    NOTE: est_cost is frozen per model_call AT INGEST, so an override only re-prices
+    calls ingested AFTER it takes effect — re-run `ingest`/`ingest --all` to
+    re-price existing sessions."""
     with open(PRICES) as f:
-        return json.load(f)
+        prices = json.load(f)
+    sources = []
+    if os.path.isfile(USER_PRICES):
+        sources.append(("~/.mrtoken/prices.json", USER_PRICES))
+    env = os.environ.get("MRTOKEN_PRICES")
+    if env:
+        sources.append(("$MRTOKEN_PRICES", env))
+    for label, raw in sources:
+        ov = _price_override(label, raw)
+        if ov:
+            prices = _merge_price_override(prices, ov, label)
+    return prices
 
 
 def matched_price_key(prices, model: str) -> str | None:

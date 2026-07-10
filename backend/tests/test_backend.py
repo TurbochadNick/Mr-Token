@@ -2137,6 +2137,40 @@ class BackendTest(unittest.TestCase):
             self.assertIn("totally-made-up-9", models)   # priced at default → flagged
             self.assertNotIn("claude-opus-4-8", models)  # has a real row → not flagged
 
+    def test_price_override_via_env_merges_over_base(self):
+        from mrtoken.ingest import load_prices, price_for
+        self.assertEqual(price_for(load_prices(), "claude-opus-4-8")["input"], 5.0)
+        prev = os.environ.get("MRTOKEN_PRICES")
+        try:
+            os.environ["MRTOKEN_PRICES"] = json.dumps({
+                "version": "override-test",
+                "models": {"claude-opus-4": {"input": 99.0, "output": 199.0,
+                                             "cache_read": 9.9, "cache_write": 12.0}}})
+            p = load_prices()
+            self.assertEqual(p["version"], "override-test")                   # version overridden
+            self.assertEqual(price_for(p, "claude-opus-4-8")["input"], 99.0)  # named row overridden
+            self.assertEqual(price_for(p, "claude-fable-5")["input"], 10.0)   # unnamed base rows kept
+        finally:
+            os.environ.pop("MRTOKEN_PRICES", None)
+            if prev is not None:
+                os.environ["MRTOKEN_PRICES"] = prev
+
+    def test_malformed_price_override_falls_back_to_base(self):
+        import contextlib, io
+        from mrtoken.ingest import load_prices, price_for
+        prev = os.environ.get("MRTOKEN_PRICES")
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):  # the warning is intended (loud); keep test output clean
+                os.environ["MRTOKEN_PRICES"] = "{ not valid json"
+                self.assertEqual(price_for(load_prices(), "claude-opus-4-8")["input"], 5.0)
+                # a row missing 3 of 4 fields is skipped, base kept (no KeyError downstream)
+                os.environ["MRTOKEN_PRICES"] = json.dumps({"models": {"claude-opus-4": {"input": 1.0}}})
+                self.assertEqual(price_for(load_prices(), "claude-opus-4-8")["input"], 5.0)
+        finally:
+            os.environ.pop("MRTOKEN_PRICES", None)
+            if prev is not None:
+                os.environ["MRTOKEN_PRICES"] = prev
+
     def test_low_activity_floor_drops_empty_and_hides_substubs(self):
         # The global Stop hook fires on every trivial desktop session. A
         # zero-model-call transcript must NOT be persisted; a sub-floor one (< 2
