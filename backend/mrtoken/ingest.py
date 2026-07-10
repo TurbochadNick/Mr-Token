@@ -105,6 +105,10 @@ SELECT
   COALESCE(SUM(mc.output_tokens), 0)                    AS output_tokens,
   COALESCE(SUM(mc.cache_read_input_tokens), 0)          AS cache_read_tokens,
   COALESCE(SUM(mc.cache_creation_input_tokens), 0)      AS cache_write_tokens,
+  -- reasoning is a SUBSET of output_tokens (Codex: input+output=total, reasoning ⊂
+  -- output; Claude folds it into output too), so this is an informational breakdown
+  -- and is deliberately NOT added into total_tokens below.
+  COALESCE(SUM(mc.reasoning_tokens), 0)                 AS reasoning_tokens,
   -- non-cached tokens (fresh input + output). The cache_read/write columns above
   -- carry the cached throughput; a true "in+out+cache" total balloons into the
   -- 100M+ range on cached sessions and is not a useful headline.
@@ -265,11 +269,16 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
                 # once per API message id, else tokens AND cost inflate ~2x. Tool_use
                 # blocks are split across those lines, so still scan each line, but
                 # link them to the single model_call (the response's first uuid).
+                # Dedup a response's repeated lines on message.id; fall back to the
+                # line uuid when id is absent so a re-emitted identical line can't
+                # double-count. (A split response with no shared id has no grouping
+                # key at all — unfixable — but real transcripts always carry id.)
                 mid = msg.get("id")
-                first_seen = mid is None or mid not in seen_msg_ids
-                if mid is not None and first_seen:
-                    seen_msg_ids[mid] = o.get("uuid")
-                link_uuid = seen_msg_ids.get(mid, o.get("uuid"))
+                dedup_key = mid or o.get("uuid")
+                first_seen = dedup_key is None or dedup_key not in seen_msg_ids
+                if dedup_key is not None and first_seen:
+                    seen_msg_ids[dedup_key] = o.get("uuid")
+                link_uuid = seen_msg_ids.get(dedup_key, o.get("uuid"))
                 if first_seen:
                     u = msg["usage"]
                     cc = u.get("cache_creation") or {}

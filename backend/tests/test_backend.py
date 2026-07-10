@@ -371,6 +371,83 @@ class BackendTest(unittest.TestCase):
                                   "message": {"id": "m", "usage": {"input_tokens": 1}}}])
             self.assertFalse(_is_codex_transcript(claude))
 
+    def test_codex_dedups_duplicate_token_count_and_flags_clamp(self):
+        from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.ingest import load_prices
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            usage = {"input_tokens": 5000, "cached_input_tokens": 4000,
+                     "output_tokens": 200, "reasoning_output_tokens": 50, "total_tokens": 5200}
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cxd", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.6-terra"}},
+                # identical token_count emitted twice for one turn → must count ONCE
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": usage}}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": usage}}},
+                # malformed: cached > input → fresh clamps to 0 and the anomaly is counted
+                {"timestamp": "2026-06-01T00:00:03Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 100, "cached_input_tokens": 400,
+                     "output_tokens": 10, "total_tokens": 110}}}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            r = ingest_codex_file(conn, codex, load_prices())
+            self.assertEqual(r["model_calls"], 2)      # dup collapsed to 1, + the clamp row
+            self.assertEqual(r["clamp_anomalies"], 1)  # cached>input surfaced, not silent
+            tid = conn.execute("SELECT id FROM trace WHERE session_id='cxd'").fetchone()[0]
+            rows = conn.execute("SELECT input_tokens, cache_read_input_tokens FROM model_call "
+                                "WHERE trace_id=? ORDER BY timestamp", (tid,)).fetchall()
+            self.assertEqual(tuple(rows[0]), (1000, 4000))  # fresh = 5000-4000
+            self.assertEqual(tuple(rows[1]), (0, 400))      # clamped: max(0, 100-400)=0
+
+    def test_reasoning_tokens_surfaced_in_session_summary(self):
+        from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.ingest import load_prices
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cxr", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.6-terra"}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 1000, "cached_input_tokens": 0, "output_tokens": 200,
+                     "reasoning_output_tokens": 50, "total_tokens": 1200}}}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            ingest_codex_file(conn, codex, load_prices())
+            rt, tot = conn.execute("SELECT reasoning_tokens, total_tokens FROM session_summary "
+                                   "WHERE session_id='cxr'").fetchone()
+            self.assertEqual(rt, 50)     # surfaced as an informational breakdown
+            self.assertEqual(tot, 1200)  # input(1000)+output(200); reasoning NOT double-added
+
+    def test_claude_dedup_falls_back_to_uuid_when_id_missing(self):
+        from mrtoken.ingest import ingest_file, load_prices
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = os.path.join(tmp, "s.jsonl")
+            usage = {"input_tokens": 100, "output_tokens": 50}
+            # two lines, NO message.id, same uuid → dedup on uuid to a single call
+            write_jsonl(transcript, [
+                {"type": "user", "message": {"content": "hi"}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u1", "cwd": tmp,
+                 "message": {"model": "claude-opus-4-8", "usage": usage,
+                             "content": [{"type": "text", "text": "ok"}]}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u1", "cwd": tmp,
+                 "message": {"model": "claude-opus-4-8", "usage": usage,
+                             "content": [{"type": "tool_use", "id": "t1", "name": "Read",
+                                          "input": {"file_path": "/x"}}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result",
+                             "tool_use_id": "t1", "content": "data"}]}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            r = ingest_file(conn, transcript, load_prices())
+            self.assertEqual(r["model_calls"], 1)  # deduped on uuid despite missing message.id
+
     def test_stop_hook_ingests_codex_rollout(self):
         # Codex live integration: the SAME Stop hook, given a session with no Claude
         # transcript, finds the matching Codex rollout and ingests it (source='codex').

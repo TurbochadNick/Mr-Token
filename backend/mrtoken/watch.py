@@ -184,9 +184,10 @@ class LiveMonitor:
             # id, else the live HUD inflates ~2x and disagrees with `status`.
             # Tool_use blocks are split across those lines, so scan them every line.
             mid = msg.get("id")
-            new_response = mid is None or mid not in self._seen_msg_ids
-            if mid is not None and new_response:
-                self._seen_msg_ids.add(mid)
+            dedup_key = mid or o.get("uuid")  # fall back to line uuid when id absent
+            new_response = dedup_key is None or dedup_key not in self._seen_msg_ids
+            if dedup_key is not None and new_response:
+                self._seen_msg_ids.add(dedup_key)
 
             if new_response:
                 self.model_calls += 1

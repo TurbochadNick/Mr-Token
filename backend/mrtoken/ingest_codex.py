@@ -123,6 +123,8 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
     model = None
     model_calls, tool_calls = [], []
     pending = {}  # call_id -> tool_call dict awaiting its output
+    seen_usage = set()   # dedup identical token_count re-emissions within a session
+    clamp_anomalies = 0  # records where cached_input > input (fresh clamped to 0)
 
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -149,14 +151,27 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
                 u = (p.get("info") or {}).get("last_token_usage") or {}
                 if not u or not (u.get("total_tokens") or u.get("output_tokens")):
                     continue
+                in_raw = u.get("input_tokens", 0) or 0
                 cached = u.get("cached_input_tokens", 0) or 0
-                fresh_in = max(0, (u.get("input_tokens", 0) or 0) - cached)
                 out = u.get("output_tokens", 0) or 0
+                reasoning = u.get("reasoning_output_tokens")
+                # Codex can re-emit an identical token_count for one turn; without a
+                # per-turn dedup each copy appends a model_call and inflates counts.
+                sig = (ts, in_raw, cached, out, reasoning)
+                if sig in seen_usage:
+                    continue
+                seen_usage.add(sig)
+                # Codex input_tokens INCLUDES cached, so fresh = input - cached. A
+                # malformed record with cached > input clamps fresh to 0; count those
+                # so the anomaly is observable (returned) rather than silently zeroed.
+                if cached > in_raw:
+                    clamp_anomalies += 1
+                fresh_in = max(0, in_raw - cached)
                 model_calls.append({
                     "timestamp": ts, "model": model,
                     "input_tokens": fresh_in, "output_tokens": out,
                     "cache_read_input_tokens": cached,
-                    "reasoning_tokens": u.get("reasoning_output_tokens"),
+                    "reasoning_tokens": reasoning,
                     "est_cost_usd": est_cost(prices, model, {
                         "input_tokens": fresh_in, "output_tokens": out,
                         "cache_read_input_tokens": cached, "cache_creation_input_tokens": 0}),
@@ -237,4 +252,5 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
              tc.get("is_error", 0), tc.get("started_at"), tc.get("ended_at")))
     conn.commit()
     return {"session_id": sid, "model_calls": len(model_calls),
-            "tool_calls": len(tool_calls), "skipped": False}
+            "tool_calls": len(tool_calls), "skipped": False,
+            "clamp_anomalies": clamp_anomalies}
