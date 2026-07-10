@@ -334,6 +334,7 @@ def cmd_modules(args):
 def cmd_module_measure(args):
     from mrtoken import module_measure
     import json
+    from pathlib import Path
     reports = []
     if getattr(args, "before", None) or getattr(args, "after", None):
         if not args.before or not args.after:
@@ -354,11 +355,16 @@ def cmd_module_measure(args):
             keep_sandbox=args.keep_sandbox,
         ))
     if getattr(args, "synthetic_headroom_traffic", False):
+        payloads = []
+        for group in args.payload or []:
+            for raw in group:
+                path = Path(raw)
+                payloads.extend(str(p) for p in sorted(path.rglob("*")) if p.is_file()) if path.is_dir() else payloads.append(str(path))
         reports.append(module_measure.probe_headroom_synthetic_traffic(
             headroom_bin=args.headroom_bin, timeout_s=args.timeout,
             keep_sandbox=args.keep_sandbox,
             synthetic_chars=args.synthetic_chars,
-            payload_paths=args.payload or None,
+            payload_paths=payloads or None,
             enable_kompress=args.enable_kompress,
             asset_cache=args.asset_cache,
             record=args.record,
@@ -483,8 +489,8 @@ def main(argv=None):
         help="Headroom binary for Headroom probe modes (default: headroom)")
     p_module_measure.add_argument("--synthetic-chars", type=int, default=48_000,
         help="bytes/chars of synthetic tool-result payload (default 48000)")
-    p_module_measure.add_argument("--payload", action="append",
-        help="local tool-result file to send (repeatable; replaces the canned payload)")
+    p_module_measure.add_argument("--payload", action="append", nargs="+",
+        help="local tool-result files or directories (repeatable; replaces the canned payload)")
     p_module_measure.add_argument("--enable-kompress", action="store_true",
         help="enable Kompress for the localhost-only traffic probe")
     p_module_measure.add_argument("--asset-cache",
