@@ -44,15 +44,18 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
-- **Codex takeover (2026-07-10):** Claude exhausted its token budget after committing the
-  pricing-coverage/staleness guard (`76c1105`) and token-accounting accuracy fixes
-  (`6c5de60`). Codex is now the active failover owner on
-  `experiment/compaction-regime-map` (two commits ahead of origin). The worktree was clean
-  at takeover and the branch diff passed `git diff origin/experiment/compaction-regime-map..HEAD --check`.
-  Next safe action: run the backend regression suite against those commits, then keep the
-  external-module work paused until Zach explicitly approves a less-constrained Headroom
-  compression probe; real-agent wrapping/routing remains separately gated. Claude can resume
-  from this note without a live relay.
+- **Claude resumed — pricing/accuracy hardening COMPLETE (2026-07-10):** The earlier
+  "Codex takeover" note was on a wrong premise — Claude did NOT run out of tokens; it resumed
+  and finished the full plan (`~/.claude/plans/dynamic-imagining-wind.md`, Zach-approved).
+  Also shipped first: model-lineup + pricing refresh for the new models (Fable/Mythos/Sonnet 5
+  + GPT-5.6 tiers), pushed earlier as `ad1035d..7790554`. Then five hardening workstreams on
+  `experiment/compaction-regime-map`: W1 price coverage + staleness guards + `scripts/check-pricing.sh`
+  (`76c1105`), W2 token-count accuracy fixes (`6c5de60`), W3 provenance + one canonical cost
+  caveat (`fb7d89e`), W4 user/env price override in `load_prices` (`e5330f9`), W5 date-aware
+  pricing incl. Sonnet 5 intro window (`ceb3f6f`). **107 backend + 35 TS tests green; pricing
+  gate passes.** Pushed to origin. External-module (Headroom) work remains PAUSED pending Zach's
+  approval of a less-constrained compression probe — untouched by this work; real-agent
+  wrapping/routing stays separately gated. Either agent can pick up from here.
 - **State (2026-07-02):** v0.5.8. This session's work is **MERGED to `main`** via PR #18
   (merge commit `24cef87`): 5A regime-map experiment (DONE), compaction-gate spec + **phase 1**
   (Fable) + **phase-2 brief**, ROI `--measure` cross-session linkage (Fable), `GOALS/` loop briefs,
