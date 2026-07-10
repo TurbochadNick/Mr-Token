@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCHEMA = os.path.join(HERE, "schema.sql")
 PRICES = os.path.join(HERE, "prices.json")
+USER_PRICES = os.path.expanduser(os.path.join("~", ".mrtoken", "prices.json"))
+PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
 
 
 # Data-dir resolution lives in mrtoken.datadir (shared contract with the TS side,
@@ -36,22 +38,119 @@ def sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+def _merge_price_override(base: dict, override: dict, label: str) -> dict:
+    """Overlay an override onto the base price table. `version` (if given) and each
+    COMPLETE model row replace the base wholesale; base rows not named are kept. A
+    row missing any of the four rate fields is skipped with a warning (fail-safe)."""
+    merged = dict(base)
+    if override.get("version"):
+        merged["version"] = override["version"]
+    om = override.get("models")
+    if isinstance(om, dict):
+        models = dict(base.get("models", {}))
+        for name, row in om.items():
+            if isinstance(row, dict) and all(isinstance(row.get(f), (int, float)) for f in PRICE_FIELDS):
+                models[name] = row
+            else:
+                print(f"mrtoken: price override {label}: row '{name}' missing "
+                      f"{'/'.join(PRICE_FIELDS)} — ignoring that row", file=sys.stderr)
+        merged["models"] = models
+    return merged
+
+
+def _price_override(label: str, raw: str) -> dict | None:
+    """Load a price override from a file path, or (env only) inline JSON. Loud +
+    fail-safe: warn to stderr naming the source and return None on any problem."""
+    try:
+        if os.path.isfile(raw):
+            with open(raw, encoding="utf-8") as f:
+                text = f.read()
+        elif raw.lstrip().startswith("{"):
+            text = raw
+        else:
+            print(f"mrtoken: price override {label} is neither a readable file nor "
+                  f"inline JSON — ignoring", file=sys.stderr)
+            return None
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("top-level JSON is not an object")
+        return data
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"mrtoken: ignoring malformed price override {label}: {e}", file=sys.stderr)
+        return None
+
+
 def load_prices():
+    """Packaged prices.json with optional user overrides merged on top, low→high
+    precedence: ~/.mrtoken/prices.json, then $MRTOKEN_PRICES (a file path or inline
+    JSON). Overrides let a user correct rates without editing the package.
+
+    NOTE: est_cost is frozen per model_call AT INGEST, so an override only re-prices
+    calls ingested AFTER it takes effect — re-run `ingest`/`ingest --all` to
+    re-price existing sessions."""
     with open(PRICES) as f:
-        return json.load(f)
+        prices = json.load(f)
+    sources = []
+    if os.path.isfile(USER_PRICES):
+        sources.append(("~/.mrtoken/prices.json", USER_PRICES))
+    env = os.environ.get("MRTOKEN_PRICES")
+    if env:
+        sources.append(("$MRTOKEN_PRICES", env))
+    for label, raw in sources:
+        ov = _price_override(label, raw)
+        if ov:
+            prices = _merge_price_override(prices, ov, label)
+    return prices
 
 
-def price_for(prices, model: str):
+def matched_price_key(prices, model: str) -> str | None:
+    """The prices.json model key whose substring matches `model`, or None when the
+    model is empty or matches nothing — i.e. it would fall back to the Sonnet-shaped
+    `default` row. None IS the coverage signal: a None here means we are silently
+    under/over-pricing an unrecognized model. Keys are checked in insertion order,
+    so more-specific rows (e.g. gpt-5.6-terra) must precede generic ones (gpt-5.6)."""
     if not model:
-        return prices["models"]["default"]
-    for key, tbl in prices["models"].items():
+        return None
+    for key in prices["models"]:
         if key != "default" and key in model:
-            return tbl
-    return prices["models"]["default"]
+            return key
+    return None
 
 
-def est_cost(prices, model, usage) -> float:
-    p = price_for(prices, model)
+def _as_date(s):
+    """Date from a 'YYYY-MM-DD' string or the date prefix of an ISO timestamp;
+    None if unparseable."""
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _effective_row(row: dict, at) -> dict:
+    """If `at` (a date/ISO-timestamp string) falls within one of the row's optional
+    `effective` windows, return that window's rates overlaid on the row; else the
+    row's base (sticker) rates. A window applies when from <= at <= until (both
+    bounds optional and inclusive) — used for time-bounded rates like intro pricing."""
+    windows = row.get("effective")
+    at_date = _as_date(at) if at else None
+    if at_date is None or not isinstance(windows, list):
+        return row
+    for w in windows:
+        frm, until = _as_date(w.get("from")), _as_date(w.get("until"))
+        if (frm and at_date < frm) or (until and at_date > until):
+            continue
+        return {**row, **{k: v for k, v in w.items() if k in PRICE_FIELDS}}
+    return row
+
+
+def price_for(prices, model: str, at=None):
+    key = matched_price_key(prices, model)
+    row = prices["models"][key] if key else prices["models"]["default"]
+    return _effective_row(row, at)
+
+
+def est_cost(prices, model, usage, at=None) -> float:
+    p = price_for(prices, model, at)
     m = 1_000_000.0
     return round(
         usage.get("input_tokens", 0)               / m * p["input"]
@@ -95,6 +194,10 @@ SELECT
   COALESCE(SUM(mc.output_tokens), 0)                    AS output_tokens,
   COALESCE(SUM(mc.cache_read_input_tokens), 0)          AS cache_read_tokens,
   COALESCE(SUM(mc.cache_creation_input_tokens), 0)      AS cache_write_tokens,
+  -- reasoning is a SUBSET of output_tokens (Codex: input+output=total, reasoning ⊂
+  -- output; Claude folds it into output too), so this is an informational breakdown
+  -- and is deliberately NOT added into total_tokens below.
+  COALESCE(SUM(mc.reasoning_tokens), 0)                 AS reasoning_tokens,
   -- non-cached tokens (fresh input + output). The cache_read/write columns above
   -- carry the cached throughput; a true "in+out+cache" total balloons into the
   -- 100M+ range on cached sessions and is not a useful headline.
@@ -255,11 +358,16 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
                 # once per API message id, else tokens AND cost inflate ~2x. Tool_use
                 # blocks are split across those lines, so still scan each line, but
                 # link them to the single model_call (the response's first uuid).
+                # Dedup a response's repeated lines on message.id; fall back to the
+                # line uuid when id is absent so a re-emitted identical line can't
+                # double-count. (A split response with no shared id has no grouping
+                # key at all — unfixable — but real transcripts always carry id.)
                 mid = msg.get("id")
-                first_seen = mid is None or mid not in seen_msg_ids
-                if mid is not None and first_seen:
-                    seen_msg_ids[mid] = o.get("uuid")
-                link_uuid = seen_msg_ids.get(mid, o.get("uuid"))
+                dedup_key = mid or o.get("uuid")
+                first_seen = dedup_key is None or dedup_key not in seen_msg_ids
+                if dedup_key is not None and first_seen:
+                    seen_msg_ids[dedup_key] = o.get("uuid")
+                link_uuid = seen_msg_ids.get(dedup_key, o.get("uuid"))
                 if first_seen:
                     u = msg["usage"]
                     cc = u.get("cache_creation") or {}
@@ -278,7 +386,7 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
                         "service_tier": u.get("service_tier"),
                         "stop_reason": msg.get("stop_reason"),
                         "is_sidechain": 1 if o.get("isSidechain") else 0,
-                        "est_cost_usd": est_cost(prices, msg.get("model"), u),
+                        "est_cost_usd": est_cost(prices, msg.get("model"), u, ts),
                         "price_version": prices["version"],
                     })
                 # tool_use blocks requested by this assistant turn

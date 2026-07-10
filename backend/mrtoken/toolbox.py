@@ -73,13 +73,18 @@ CONFIRM_DISPOSABLE_TOOL = {
         "advisory nudge; it expires as the session moves on. No content is stored — only a timestamp "
         "and the current turn index."),
     "inputSchema": {"type": "object", "properties": {
-        "session": {"type": "string", "description": "session id/prefix (default: current/newest)"}}},
+        "session": {"type": "string", "description": (
+            "session id/prefix. Optional for one active session; required if multiple "
+            "sessions are active in this project.")}}},
 }
 
 
 def _confirm_disposable_call(args: dict) -> str:
-    from mrtoken.intervene import record_disposable_confirmation
-    sid, call = record_disposable_confirmation(args.get("session"))
+    from mrtoken.intervene import AmbiguousSessionError, record_disposable_confirmation
+    try:
+        sid, call = record_disposable_confirmation(args.get("session"))
+    except AmbiguousSessionError as e:
+        return str(e)
     if not sid:
         return "no active session transcript found — nothing recorded."
     return (f"recorded: loaded context marked disposable for session {sid[:8]} (turn {call}). "

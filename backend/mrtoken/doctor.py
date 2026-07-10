@@ -155,6 +155,36 @@ def check_install(project_root: str | None = None,
         tag_gap = None
     checks.append(_check("release tag", "warn" if tag_gap else "ok", tag_gap or f"v{__version__} tagged"))
 
+    # pricing: coverage (any model billed at the default fallback?) + freshness
+    try:
+        from mrtoken.ingest import load_prices
+        from mrtoken.pricing import uncovered_models, freshness_warning
+        prices = load_prices()
+        uncovered: list[tuple[str, int]] = []
+        if os.path.exists(db):
+            try:
+                pconn = sqlite3.connect(f"file:{os.path.abspath(db)}?mode=ro", uri=True)
+                try:
+                    if pconn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name='model_call'").fetchone():
+                        uncovered = uncovered_models(pconn, prices)
+                finally:
+                    pconn.close()
+            except sqlite3.Error:
+                uncovered = []
+        parts = []
+        if uncovered:
+            shown = ", ".join(f"{m} ({c})" for m, c in uncovered[:5])
+            parts.append(f"{len(uncovered)} model(s) billed at default: {shown}")
+        fresh = freshness_warning(prices)
+        if fresh:
+            parts.append(fresh)
+        checks.append(_check(
+            "pricing", "warn" if parts else "ok",
+            " · ".join(parts) if parts else f"prices.json v{prices.get('version')} — all models covered"))
+    except Exception:
+        pass
+
     fails = [c for c in checks if c["status"] == "fail"]
     warns = [c for c in checks if c["status"] == "warn"]
     return {

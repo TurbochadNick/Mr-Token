@@ -15,6 +15,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from mrtoken.pricing import COST_CAVEAT
+
 HUGE_TOOL_CHARS = 40_000
 
 
@@ -227,7 +229,8 @@ def print_roi_measure(conn: sqlite3.Connection, horizon: int = 10) -> None:
 
 
 def print_roi(conn: sqlite3.Connection, prefix: str | None) -> None:
-    print(f"\n  MR Token — ROI estimate  ⚠ data-grounded ESTIMATE, not a controlled-trial measurement")
+    print(f"\n  MR Token — ROI estimate  ⚠ data-grounded ESTIMATE, not a controlled-trial "
+          f"measurement; $ is {COST_CAVEAT}")
     print(f"  {'─'*62}")
     if prefix:
         row = conn.execute("SELECT id, session_id FROM trace WHERE session_id LIKE ? "

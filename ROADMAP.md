@@ -282,7 +282,7 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
 - [x] **6.7 Measure-don't-degrade**
   → done: commit `7a397d8`. `outcomes.py` central store; proc engine auto-captures ctx-delta effect per
     tool; a tool trending negative auto-disables via policy (→ off) + says how to re-enable. 71 tests green.
-- [ ] **6.8-pre The compaction gate** — spec'd in `docs/COMPACTION-GATE.md`; phase-1 brief in
+- [x] **6.8-pre The compaction gate** — spec'd in `docs/COMPACTION-GATE.md`; phase-1 brief in
   `GOALS/compaction-gate-phase1.md` (`[claude]`/`[codex]`). The 5A regime map shows `pressure ∧
   reclaimable-junk` is necessary but not sufficient — a reset WINS on disposable context, LOSES (+20%)
   on load-bearing. `intervene.py` already routes re_read/repeated/huge → `offload` (safe); the gap is
@@ -290,9 +290,15 @@ a manual skill; approval = hook-driven first; AFK default = warn-only.
   disposability info. Fix, phased: (1) make that drop safe-by-default; (2) disposability gate
   (per-block turns-since-access); (3) remaining-runway proxy (near-done suppression). **Acceptance =
   the two fixtures** (fire-drop on debug-scanlib, suppress-drop on debug-speclib; add to 5D.3). Prereq for 6.8.
-- [ ] **6.8 L3 Do (per tool)** — enable auto-act only for tools 6.7 (and the gated experiment) prove
-  help, at equal quality, AND only in the disposable ∧ runway-remaining regime (see 6.8-pre).
-  **⚑ decision per tool** before it defaults to auto.
+  → done: PR #19 merged the gate phases; `confirm_disposable` session-binding blocker fixed by Codex
+  on this branch. 94 backend tests green.
+- [~] **6.8 L3 Do (per tool)** — STRUCTURE BUILT, INERT (2026-07-06). Executor
+  `backend/mrtoken/autoact.py` wired for `handoff` only (do+escalate+explicit → generate
+  handoff text); freemium meter (3 free lifetime/install) + stubbed paid entitlement + upsell;
+  all **default-off** under the 6.8-pre gates. Enable auto-act only for tools 6.7 (and the gated
+  experiment) prove help, at equal quality, AND only in the disposable ∧ runway-remaining regime.
+  **⚑ decision per tool + real billing** are separate future flips. Contract + impl notes:
+  `GOALS/6.8-l3-do-contract.md`.
 
 ## Phase 7 — Prove the value + plug-and-play hub *(from Rosson's feedback)*
 
@@ -311,23 +317,29 @@ both agents; sharp default (the savings report works out of the box), flexible h
   → groundwork: commit `<savings/modules branch>`. `modules.py` registry over `~/.mrtoken/config.json`
     (`modules` key, shares the policy file); `mrtoken-transcript modules --add/--remove/--enable/--disable
     /--register` (emits Claude + Codex registration snippets). Savings/outcomes already key by name, so a
-    module's value shows in `savings` once recorded. **Remaining:** the measurement SHIM that records an
-    external module's savings during use (folds into 7.3, since it needs the real tool wired). No external
-    code vendored/run/trusted.
-- [ ] **7.3 Evaluate headroom + ponytail as first modules** *(gated; dep/trust review)*
-  → groundwork: `docs/MODULE-EVALUATION.md` — the review criteria (measured savings, equal quality,
-    privacy/no-egress, trust/supply-chain, integration fit), decision rule, and an initial public-info
-    assessment of headroom/ponytail with explicit VERIFY items. **Remaining (the real 7.3, when greenlit):**
-    pick one (headroom), do the VERIFY items, register via 7.2, run before/after, decide. **⚑ decision**
-    before any external module ships on by default.
+    module's value shows in `savings` once recorded. Measurement shim now exists as
+    `mrtoken-transcript module-measure` (file-pair, Headroom proxy-log parser, stateless local proxy
+    probe, and offline synthetic traffic to a fake upstream). No external code vendored/run/trusted
+    by default.
+- [~] **7.3 Evaluate headroom + ponytail as first modules** *(trust review + sandbox inspect done; measurement next)*
+  → `backend/docs/MODULE-EVALUATION.md` updated (2026-07-07). Decision: **Headroom** is the first
+    lab candidate; Ponytail is deferred as guidance/A-B work; neither is registered or enabled by
+    default. Pinned sandbox install `headroom-ai[mcp]==0.30.0` succeeded and showed a broad proxy/MCP
+    surface. Reversible measurement harness is built; stateless local proxy probe and offline synthetic
+    localhost traffic both succeeded (`/livez` 200; fake upstream received one request; Headroom log
+    parsed 13,761 -> 13,761 input tokens, i.e. zero savings in safe mode). Remaining work is an explicit
+    decision on whether to run a less-constrained compression probe, then equal-quality verification and
+    keep-off / opt-in / drop.
+    **⚑ separate approval before wrapping/routing a real agent.**
 
 ## Shipped: Phase 6 — the intervention engine (v0.5.0)
 The v2 vision realized — the agent's manual + toolbox + report card. MCP server +
 `offload`/`handoff`/`compact` tools (both agents); the `mr-context` manual; the proc
 engine (pressure ∧ reclaimable-junk → in-the-moment nudge, Claude live); per-tool
 policy + kill switch; L2 ask + AFK escalation; measure-don't-degrade auto-disable.
-Default warn-only. Remaining: **6.8 L3 auto-act** (open — gated on outcome/experiment
-evidence, per-tool ⚑ decision) and the **Codex live-pressure tracker** (backlog).
+Default warn-only. Remaining: **6.8 L3 live enablement / real billing** (structure built inert;
+any live flip remains gated on outcome/experiment evidence and a per-tool decision) and the
+**Codex live-pressure tracker** (backlog).
 
 ## Shipped after the roadmap (v0.4.5–0.4.7)
 - [x] **Codex-dir backfill** — `ingest --backfill` now also sweeps `~/.codex/sessions/**` (+ archived_sessions)

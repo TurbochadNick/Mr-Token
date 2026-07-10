@@ -166,7 +166,21 @@ def validate_db(conn: sqlite3.Connection) -> dict:
             s["suggestion"] = "raise threshold / add a corroborating signal — >30% thin or moot"
         else:
             s["suggestion"] = "thresholds look well-calibrated"
-    return {"schema": "mrtoken.validation.v1", "rules": per_rule}
+
+    # pricing sanity: coverage (models billed at default), null-cost rows, freshness
+    from mrtoken.ingest import load_prices
+    from mrtoken.pricing import uncovered_models, freshness_warning
+    prices = load_prices()
+    null_cost = conn.execute(
+        "SELECT COUNT(*) FROM model_call WHERE est_cost_usd IS NULL "
+        "AND (COALESCE(input_tokens,0) > 0 OR COALESCE(output_tokens,0) > 0)"
+    ).fetchone()[0] or 0
+    pricing = {
+        "uncovered_models": [{"model": m, "calls": c} for m, c in uncovered_models(conn, prices)],
+        "null_cost_rows": null_cost,
+        "freshness": freshness_warning(prices),
+    }
+    return {"schema": "mrtoken.validation.v1", "rules": per_rule, "pricing": pricing}
 
 
 def print_report(report: dict) -> None:
@@ -187,4 +201,16 @@ def print_report(report: dict) -> None:
         print(f"  {rule}: {s['suggestion']}")
         for ex in s["examples"]:
             print(f"      [{ex['verdict']}] {ex['reason']}")
+    pr = report.get("pricing")
+    if pr:
+        print("\n  pricing sanity:")
+        if pr["uncovered_models"]:
+            for u in pr["uncovered_models"]:
+                print(f"      ✗ no price row for '{u['model']}' ({u['calls']} calls) → billed at default")
+        else:
+            print("      ✓ every model in the DB has a price row")
+        if pr["null_cost_rows"]:
+            print(f"      ✗ {pr['null_cost_rows']} priced call(s) have NULL cost despite tokens")
+        if pr["freshness"]:
+            print(f"      {pr['freshness']}")
     print(f"{'─'*64}\n")

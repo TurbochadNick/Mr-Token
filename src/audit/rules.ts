@@ -242,7 +242,7 @@ function detectModelMismatch(events: StoredEvent[]): AuditFinding | null {
     const raw = parseRaw(event);
     const model = String(raw.model ?? raw.model_name ?? '').toLowerCase();
     const prompt = event.promptText?.toLowerCase() ?? '';
-    const expensive = model.includes('opus') || model.includes('max') || model.includes('gpt-5') || model.includes('sonnet-4.5');
+    const expensive = model.includes('opus') || model.includes('fable') || model.includes('mythos') || model.includes('max') || model.includes('gpt-5');
     const cheapMeta = /\b(status|summarize|rename|format|lint|commit message|explain this error|list files)\b/.test(prompt);
     return expensive && cheapMeta && event.promptLength > 0 && event.promptLength < 700;
   });

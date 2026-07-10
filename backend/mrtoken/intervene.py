@@ -12,7 +12,7 @@ Claude transcript via LiveMonitor. Thresholds are constants now; 6.5 makes them
 config. L1 "tell" only — 6.6 adds ask, 6.8 adds do.
 """
 from __future__ import annotations
-import json, os
+import glob, json, os, time
 from datetime import datetime, timezone
 
 # Reclaimable = junk a tool can actually fix (offload/handoff), not real work.
@@ -193,7 +193,10 @@ def decide(session_id: str, ctx_pct, turns_to_full, signals, *,
         except Exception:
             pass
     if level in ("ask", "do"):
-        iv = apply_ask_policy(session_id, iv)  # first-ask vs AFK-escalation (+ act in 6.8)
+        iv = apply_ask_policy(session_id, iv)  # first-ask vs AFK-escalation
+        if iv.get("level") == "do":
+            from mrtoken.autoact import maybe_auto_act  # L3 executor (freemium, default-off)
+            iv = maybe_auto_act(session_id, iv)
     return iv
 
 
@@ -241,8 +244,8 @@ def apply_ask_policy(session_id: str, iv: dict, *, improved_drop: int = 5) -> di
             next_step = "I can run `handoff` now so the work continues in a fresh session"
         iv["message"] = (f"⚠ STILL critical — context {ctx}% and the {tool}-able junk is unaddressed. "
                          f"{next_step} (see the mr-context manual).")
-        if iv.get("level") == "do":
-            iv["message"] += "  [auto-action pending — ROADMAP 6.8]"
+        # do-level messaging (auto-act or its advisory/upsell fallback) is owned by
+        # autoact.maybe_auto_act, called from decide() right after this returns.
     else:
         iv["phase"] = "ask"
         if tool == "handoff":
@@ -295,6 +298,11 @@ def should_fire(session_id: str, ctx_pct: int) -> bool:
 # minutes, whichever is tighter. Stale/absent → the drop stays proxy-capped.
 CONFIRM_TTL_CALLS = 10
 CONFIRM_TTL_MIN = 30
+AMBIGUOUS_SESSION_WINDOW_S = 10 * 60
+
+
+class AmbiguousSessionError(Exception):
+    """Raised when a no-arg tool call cannot be bound to one live session."""
 
 
 def _disposable_path(session_id: str) -> str:
@@ -302,11 +310,53 @@ def _disposable_path(session_id: str) -> str:
     return os.path.join(central_default(), "state", f"disposable-{session_id}.json")
 
 
+def _caller_session_env() -> str | None:
+    return os.environ.get("MRTOKEN_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+
+
+def _cwd_project_transcripts() -> list[str]:
+    from mrtoken import watch
+    cwd = os.getcwd()
+    escaped = cwd.replace("/", "-").replace(".", "-")
+    return glob.glob(os.path.join(watch.PROJECTS, escaped, "*.jsonl"))
+
+
+def _recent_project_transcripts(candidates: list[str] | None = None,
+                                now: float | None = None) -> list[str]:
+    """Recent transcripts in this cwd's Claude project bucket.
+
+    A no-arg MCP tool call has no reliable caller identity. If more than one
+    transcript in the same project was written recently, newest-mtime is a race,
+    so the caller must pass an explicit session id instead.
+    """
+    now = time.time() if now is None else now
+    recent: list[str] = []
+    for path in (candidates if candidates is not None else _cwd_project_transcripts()):
+        try:
+            if now - os.path.getmtime(path) <= AMBIGUOUS_SESSION_WINDOW_S:
+                recent.append(path)
+        except OSError:
+            continue
+    return sorted(recent, key=os.path.getmtime, reverse=True)
+
+
 def _session_calls(session_arg: str | None) -> tuple[str | None, int]:
     """Resolve the current session's transcript → (session_id, model_calls). The id is
     the transcript filename. Metadata only — nothing from the content is persisted."""
     from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
-    path = resolve_path(session_arg)
+    if not session_arg and not _caller_session_env():
+        candidates = _cwd_project_transcripts()
+        if not candidates:
+            return None, 0
+        recent = _recent_project_transcripts(candidates)
+        if len(recent) > 1:
+            raise AmbiguousSessionError(
+                "multiple active sessions here — nothing recorded. Re-call with "
+                "`session: <your session id>` (Bash: `echo $CLAUDE_CODE_SESSION_ID`)."
+            )
+        path = max(candidates, key=os.path.getmtime)
+    else:
+        path = resolve_path(session_arg)
     if not path:
         return None, 0
     mon = LiveMonitor(emit=lambda _: None)

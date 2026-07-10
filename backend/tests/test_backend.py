@@ -371,6 +371,105 @@ class BackendTest(unittest.TestCase):
                                   "message": {"id": "m", "usage": {"input_tokens": 1}}}])
             self.assertFalse(_is_codex_transcript(claude))
 
+    def test_codex_dedups_duplicate_token_count_and_flags_clamp(self):
+        from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.ingest import load_prices
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            usage = {"input_tokens": 5000, "cached_input_tokens": 4000,
+                     "output_tokens": 200, "reasoning_output_tokens": 50, "total_tokens": 5200}
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cxd", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.6-terra"}},
+                # identical token_count emitted twice for one turn → must count ONCE
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": usage}}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": usage}}},
+                # malformed: cached > input → fresh clamps to 0 and the anomaly is counted
+                {"timestamp": "2026-06-01T00:00:03Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 100, "cached_input_tokens": 400,
+                     "output_tokens": 10, "total_tokens": 110}}}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            r = ingest_codex_file(conn, codex, load_prices())
+            self.assertEqual(r["model_calls"], 2)      # dup collapsed to 1, + the clamp row
+            self.assertEqual(r["clamp_anomalies"], 1)  # cached>input surfaced, not silent
+            tid = conn.execute("SELECT id FROM trace WHERE session_id='cxd'").fetchone()[0]
+            rows = conn.execute("SELECT input_tokens, cache_read_input_tokens FROM model_call "
+                                "WHERE trace_id=? ORDER BY timestamp", (tid,)).fetchall()
+            self.assertEqual(tuple(rows[0]), (1000, 4000))  # fresh = 5000-4000
+            self.assertEqual(tuple(rows[1]), (0, 400))      # clamped: max(0, 100-400)=0
+
+    def test_reasoning_tokens_surfaced_in_session_summary(self):
+        from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.ingest import load_prices
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cxr", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.6-terra"}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 1000, "cached_input_tokens": 0, "output_tokens": 200,
+                     "reasoning_output_tokens": 50, "total_tokens": 1200}}}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            ingest_codex_file(conn, codex, load_prices())
+            rt, tot = conn.execute("SELECT reasoning_tokens, total_tokens FROM session_summary "
+                                   "WHERE session_id='cxr'").fetchone()
+            self.assertEqual(rt, 50)     # surfaced as an informational breakdown
+            self.assertEqual(tot, 1200)  # input(1000)+output(200); reasoning NOT double-added
+
+    def test_codex_model_call_carries_price_version(self):
+        from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.ingest import load_prices
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cxp", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.6-terra"}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 100, "output_tokens": 50, "total_tokens": 150}}}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            p = load_prices()
+            ingest_codex_file(conn, codex, p)
+            pv = conn.execute(
+                "SELECT DISTINCT price_version FROM model_call mc "
+                "JOIN trace t ON t.id=mc.trace_id WHERE t.session_id='cxp'").fetchone()[0]
+            self.assertEqual(pv, p["version"])  # Codex rows now carry price provenance
+
+    def test_claude_dedup_falls_back_to_uuid_when_id_missing(self):
+        from mrtoken.ingest import ingest_file, load_prices
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = os.path.join(tmp, "s.jsonl")
+            usage = {"input_tokens": 100, "output_tokens": 50}
+            # two lines, NO message.id, same uuid → dedup on uuid to a single call
+            write_jsonl(transcript, [
+                {"type": "user", "message": {"content": "hi"}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u1", "cwd": tmp,
+                 "message": {"model": "claude-opus-4-8", "usage": usage,
+                             "content": [{"type": "text", "text": "ok"}]}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u1", "cwd": tmp,
+                 "message": {"model": "claude-opus-4-8", "usage": usage,
+                             "content": [{"type": "tool_use", "id": "t1", "name": "Read",
+                                          "input": {"file_path": "/x"}}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result",
+                             "tool_use_id": "t1", "content": "data"}]}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            r = ingest_file(conn, transcript, load_prices())
+            self.assertEqual(r["model_calls"], 1)  # deduped on uuid despite missing message.id
+
     def test_stop_hook_ingests_codex_rollout(self):
         # Codex live integration: the SAME Stop hook, given a session with no Claude
         # transcript, finds the matching Codex rollout and ingests it (source='codex').
@@ -865,6 +964,7 @@ class BackendTest(unittest.TestCase):
                 self.assertEqual(iv["tool"], "handoff")
                 self.assertEqual(iv["level"], "tell")   # capped: proxy never auto-acts
                 self.assertNotIn("phase", iv)           # never entered the ask policy
+                self.assertNotIn("auto_act", iv)        # 6.8 executor never engaged
                 iv2 = intervene.decide("gx2", 85, None, ["context_rot"],
                                        disposability={"read:a": "disposable_confirmed"})
                 self.assertEqual(iv2["tool"], "handoff")
@@ -873,6 +973,106 @@ class BackendTest(unittest.TestCase):
                 dd.central_default, policy._config_path = o_cd, p_cp
                 if saved is not None:
                     os.environ["MRTOKEN_INTERVENE"] = saved
+
+    def test_autoact_l3_freemium_executor(self):
+        # ROADMAP 6.8 (Zach's 2026-07-06 decision): the L3 `do` executor is a
+        # freemium feature, built but DEFAULT-OFF. It EXECUTES only `handoff` at
+        # do+escalate+explicit-disposability; every other tool stays advisory; a
+        # metered 3-free-uses / paid-entitlement / degrade-to-manual layer sits on
+        # top of the 6.8-pre safety gates enforced upstream.
+        import mrtoken.autoact as autoact
+        import mrtoken.datadir as dd
+        import mrtoken.handoff as handoff
+        import mrtoken.policy as policy
+        from mrtoken import intervene, outcomes
+        with tempfile.TemporaryDirectory() as tmp:
+            o_cd, p_cp = dd.central_default, policy._config_path
+            o_build = handoff.build_handoff
+            dd.central_default = lambda: tmp
+            policy._config_path = lambda: os.path.join(tmp, "config.json")
+            outcomes.central_default = lambda: tmp
+            handoff.build_handoff = lambda db, sid: "# Handoff — continue in a fresh session\n\n## Goal\nx"
+            saved_iv = os.environ.pop("MRTOKEN_INTERVENE", None)
+            saved_lic = os.environ.pop("MRTOKEN_LICENSE", None)
+
+            def wired(tool="handoff", **kw):
+                iv = {"tool": tool, "level": "do", "phase": "escalate",
+                      "disposability_source": "explicit", "message": "base"}
+                iv.update(kw)
+                return iv
+            try:
+                # 1) trial: first free use EXECUTES and decrements the lifetime meter.
+                self.assertEqual(autoact.free_uses_left(), 3)
+                out = autoact.maybe_auto_act("s1", wired())
+                self.assertTrue(out["auto_act"]["acted"])
+                self.assertEqual(out["auto_act"]["reason"], "trial")
+                self.assertIn("# Handoff", out["message"])       # the generated handoff
+                self.assertEqual(autoact.free_uses_left(), 2)
+
+                # 2) only handoff is wired — other do-level tools stay advisory.
+                for t in ("offload", "compact", "confirm_disposable"):
+                    o = autoact.maybe_auto_act("s1", wired(t))
+                    self.assertNotIn("auto_act", o)
+                    self.assertIn("auto-action pending", o["message"])
+                self.assertEqual(autoact.free_uses_left(), 2)     # untouched by the above
+
+                # 3) handoff before escalation (first-ask) does NOT execute.
+                o = autoact.maybe_auto_act("s1", wired(phase="ask"))
+                self.assertNotIn("auto_act", o)
+
+                # 4) exhaust the free uses → degrade to manual + upsell, never hard-block,
+                #    meter never goes negative.
+                autoact.maybe_auto_act("s1", wired())
+                autoact.maybe_auto_act("s1", wired())
+                self.assertEqual(autoact.free_uses_left(), 0)
+                spent = autoact.maybe_auto_act("s1", wired())
+                self.assertFalse(spent["auto_act"]["acted"])
+                self.assertEqual(spent["auto_act"]["reason"], "spent")
+                self.assertIn("paid feature", spent["message"])
+                self.assertNotIn("# Handoff", spent["message"])   # nothing auto-generated
+                self.assertEqual(autoact.free_uses_left(), 0)
+
+                # 5) paid entitlement acts even with zero free uses left (env stub).
+                os.environ["MRTOKEN_LICENSE"] = "test-key"
+                paid = autoact.maybe_auto_act("s1", wired())
+                self.assertTrue(paid["auto_act"]["acted"])
+                self.assertEqual(paid["auto_act"]["reason"], "paid")
+                del os.environ["MRTOKEN_LICENSE"]
+
+                # 6) builder failure fails closed — no free use spent (config entitlement here).
+                policy._save({"entitlement": {"paid": True}})
+                handoff.build_handoff = lambda db, sid: "mrtoken handoff: no transcript found"
+                fail = autoact.maybe_auto_act("s1", wired())
+                self.assertFalse(fail["auto_act"]["acted"])
+                self.assertEqual(fail["auto_act"]["reason"], "builder_failed")
+                policy._save({})   # back to default (no entitlement)
+
+                # 7) a negative 6.7 trend auto-disables handoff BEFORE it can auto-act:
+                #    with the tool off, decide() returns None (never reaches the executor).
+                for _ in range(5):
+                    outcomes.record("handoff", -1)
+                self.assertIn("handoff", outcomes.enforce())
+                self.assertEqual(policy.autonomy("handoff"), "off")
+                self.assertIsNone(intervene.decide(
+                    "s2", 85, None, ["context_rot"],
+                    disposability={"read:a": "disposable_confirmed"}))
+
+                # 8) DEFAULT-OFF: with no config, handoff sits at `tell`, so the
+                #    explicit path never reaches `do` and nothing auto-acts.
+                policy._save({})
+                self.assertEqual(policy.autonomy("handoff"), "tell")
+                iv = intervene.decide("s3", 85, None, ["context_rot"],
+                                      disposability={"read:a": "disposable_confirmed"})
+                self.assertEqual(iv["level"], "tell")
+                self.assertNotIn("auto_act", iv)
+            finally:
+                dd.central_default, policy._config_path = o_cd, p_cp
+                outcomes.central_default = o_cd
+                handoff.build_handoff = o_build
+                if saved_iv is not None:
+                    os.environ["MRTOKEN_INTERVENE"] = saved_iv
+                if saved_lic is not None:
+                    os.environ["MRTOKEN_LICENSE"] = saved_lic
 
     def test_disposable_confirmation_channel(self):
         # The explicit disposability channel (disposable-confirmed-channel.md):
@@ -913,6 +1113,97 @@ class BackendTest(unittest.TestCase):
                               [s["name"] for s in toolbox.enabled_tool_schemas()])
             finally:
                 dd.central_default, intervene._session_calls = o_cd, o_sc
+
+    def test_confirm_disposable_refuses_ambiguous_no_arg_session(self):
+        # Regression for the MCP boundary bug: with two active panes in the same
+        # project, newest-mtime can be the OTHER session. No-arg confirmation must
+        # fail closed and record nothing until the caller passes its session id.
+        import time as _time
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, toolbox, watch
+        with tempfile.TemporaryDirectory() as tmp:
+            project = os.path.realpath(os.path.join(tmp, "repo"))
+            projects = os.path.join(tmp, "claude-projects")
+            state = os.path.join(tmp, "state")
+            os.makedirs(project, exist_ok=True)
+            escaped = project.replace("/", "-").replace(".", "-")
+            transcript_dir = os.path.join(projects, escaped)
+            os.makedirs(transcript_dir, exist_ok=True)
+
+            def assistant(sid, mid):
+                return {"type": "assistant", "sessionId": sid, "message": {
+                    "id": mid, "model": "x",
+                    "usage": {"input_tokens": 10, "output_tokens": 1}}}
+
+            a = os.path.join(transcript_dir, "sess-a.jsonl")
+            b = os.path.join(transcript_dir, "sess-b.jsonl")
+            write_jsonl(a, [assistant("sess-a", "a1"), assistant("sess-a", "a2")])
+            write_jsonl(b, [assistant("sess-b", "b1")])
+            now = _time.time()
+            os.utime(a, (now - 20, now - 20))
+            os.utime(b, (now, now))  # the other pane is newer
+
+            o_cd, o_projects, o_cwd = dd.central_default, watch.PROJECTS, os.getcwd()
+            saved_env = {k: os.environ.pop(k, None)
+                         for k in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
+            dd.central_default = lambda: state
+            watch.PROJECTS = projects
+            os.chdir(project)
+            try:
+                txt, err = toolbox.call_tool("confirm_disposable", {})
+                self.assertFalse(err)
+                self.assertIn("multiple active sessions", txt)
+                self.assertIn("session: <your session id>", txt)
+                self.assertFalse(os.path.exists(intervene._disposable_path("sess-b")))
+
+                txt2, err2 = toolbox.call_tool("confirm_disposable", {"session": "sess-a"})
+                self.assertFalse(err2)
+                self.assertIn("recorded", txt2)
+                self.assertTrue(os.path.exists(intervene._disposable_path("sess-a")))
+                self.assertFalse(os.path.exists(intervene._disposable_path("sess-b")))
+            finally:
+                os.chdir(o_cwd)
+                dd.central_default, watch.PROJECTS = o_cd, o_projects
+                for k, v in saved_env.items():
+                    if v is not None:
+                        os.environ[k] = v
+
+    def test_confirm_disposable_single_session_no_arg_still_works(self):
+        import time as _time
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, toolbox, watch
+        with tempfile.TemporaryDirectory() as tmp:
+            project = os.path.realpath(os.path.join(tmp, "repo"))
+            projects = os.path.join(tmp, "claude-projects")
+            state = os.path.join(tmp, "state")
+            os.makedirs(project, exist_ok=True)
+            escaped = project.replace("/", "-").replace(".", "-")
+            transcript_dir = os.path.join(projects, escaped)
+            os.makedirs(transcript_dir, exist_ok=True)
+            path = os.path.join(transcript_dir, "solo.jsonl")
+            write_jsonl(path, [{"type": "assistant", "sessionId": "solo", "message": {
+                "id": "m1", "model": "x",
+                "usage": {"input_tokens": 10, "output_tokens": 1}}}])
+            now = _time.time()
+            os.utime(path, (now, now))
+
+            o_cd, o_projects, o_cwd = dd.central_default, watch.PROJECTS, os.getcwd()
+            saved_env = {k: os.environ.pop(k, None)
+                         for k in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
+            dd.central_default = lambda: state
+            watch.PROJECTS = projects
+            os.chdir(project)
+            try:
+                txt, err = toolbox.call_tool("confirm_disposable", {})
+                self.assertFalse(err)
+                self.assertIn("recorded", txt)
+                self.assertTrue(os.path.exists(intervene._disposable_path("solo")))
+            finally:
+                os.chdir(o_cwd)
+                dd.central_default, watch.PROJECTS = o_cd, o_projects
+                for k, v in saved_env.items():
+                    if v is not None:
+                        os.environ[k] = v
 
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
@@ -1069,6 +1360,84 @@ class BackendTest(unittest.TestCase):
                 self.assertEqual(savings.addressable(conn), 50000)
             finally:
                 savings.central_default = orig
+
+    def test_module_measure_records_savings_and_outcome(self):
+        # ROADMAP 7.3: external modules get a lab-only measurement shim that
+        # records realized savings/outcomes under the module name, without
+        # registering or running a real agent.
+        import mrtoken.savings as savings
+        import mrtoken.outcomes as outcomes
+        from mrtoken import module_measure
+        with tempfile.TemporaryDirectory() as tmp:
+            s_orig, o_orig = savings.central_default, outcomes.central_default
+            savings.central_default = lambda: tmp
+            outcomes.central_default = lambda: tmp
+            try:
+                before = os.path.join(tmp, "before.txt")
+                after = os.path.join(tmp, "after.txt")
+                with open(before, "w", encoding="utf-8") as handle:
+                    handle.write("noisy tool output\n" * 200)
+                with open(after, "w", encoding="utf-8") as handle:
+                    handle.write("compact summary\n" * 10)
+
+                report = module_measure.measure_files(
+                    "headroom", before, after, quality="pass",
+                    record=True, session_id="sess-module",
+                )
+
+                self.assertEqual(report["kind"], "file_pair")
+                self.assertGreater(report["tokens_saved"], 0)
+                realized = savings.realized()["by_tool"]["headroom"]
+                self.assertEqual(realized["tokens"], report["tokens_saved"])
+                self.assertEqual(realized["uses"], 1)
+                health = outcomes.health("headroom")
+                self.assertEqual((health["n"], health["helped"], health["hurt"]), (1, 1, 0))
+
+                log_path = os.path.join(tmp, "headroom.jsonl")
+                with open(log_path, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"tokens_before": 1000, "tokens_after": 650}) + "\n")
+                    handle.write(json.dumps({"tokens_before": 100, "tokens_after": 140}) + "\n")
+                    handle.write(json.dumps({
+                        "input_tokens_original": 500,
+                        "input_tokens_optimized": 350,
+                    }) + "\n")
+                    handle.write("not-json\n")
+                parsed = module_measure.measure_headroom_log("headroom", log_path)
+                self.assertEqual(parsed["rows_seen"], 4)
+                self.assertEqual(parsed["rows_measured"], 3)
+                self.assertEqual(parsed["bad_lines"], 1)
+                self.assertEqual(parsed["tokens_delta"], 460)
+                self.assertEqual(parsed["tokens_saved"], 460)
+            finally:
+                savings.central_default = s_orig
+                outcomes.central_default = o_orig
+
+    def test_module_measure_synthetic_upstream_fixture(self):
+        # The 7.3 Headroom traffic probe uses only localhost synthetic traffic:
+        # client -> Headroom proxy -> this fake Anthropic upstream.
+        from mrtoken import module_measure
+        server, thread, port = module_measure._start_fake_anthropic_upstream()
+        try:
+            payload = module_measure._synthetic_anthropic_payload(chars=4096)
+            raw = json.dumps(payload)
+            self.assertIn("tool_result", raw)
+            self.assertGreater(module_measure.estimate_tokens(raw), 900)
+
+            result = module_measure._post_json(
+                f"http://127.0.0.1:{port}/v1/messages",
+                payload,
+                timeout_s=2,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["status"], 200)
+            self.assertEqual(len(server.requests), 1)
+            self.assertEqual(server.requests[0]["path"], "/v1/messages")
+            self.assertIn("toolu_mrtoken_synthetic", server.requests[0]["body"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_codex_live_pressure_and_decide(self):
         # ROADMAP B: live ctx % from a Codex rollout + the shared decide() core fires
@@ -1698,6 +2067,128 @@ class BackendTest(unittest.TestCase):
             self.assertAlmostEqual(cost, round(100/1e6*5 + 50/1e6*25 + 1000/1e6*0.5, 6), places=6)
             tc = conn.execute("SELECT COUNT(*) FROM tool_call WHERE trace_id=?", (tid,)).fetchone()[0]
             self.assertEqual(tc, 1)  # tool_use on the 2nd line still captured despite dedup
+
+    def test_price_table_covers_new_model_families(self):
+        # Regression: prices.json must price the current families directly, not
+        # silently fall through to the Sonnet-shaped `default` row.
+        from mrtoken.ingest import load_prices, price_for, est_cost
+        p = load_prices()
+        # Fable/Mythos must NOT resolve to default (3/15) — they are 10/50.
+        self.assertEqual((price_for(p, "claude-fable-5")["input"],
+                          price_for(p, "claude-fable-5")["output"]), (10.0, 50.0))
+        self.assertEqual(price_for(p, "claude-mythos-5")["input"], 10.0)
+        self.assertEqual(price_for(p, "claude-sonnet-5")["output"], 15.0)
+        self.assertEqual(price_for(p, "claude-opus-4-8")["input"], 5.0)
+        # OpenAI GPT-5.6 tiers — substring order matters: tier keys must match
+        # before the generic 'gpt-5.6', or every tier would price as Terra.
+        self.assertEqual(price_for(p, "gpt-5.6-sol")["output"], 30.0)
+        self.assertEqual(price_for(p, "gpt-5.6-terra")["output"], 15.0)
+        self.assertEqual(price_for(p, "gpt-5.6-luna")["output"], 6.0)
+        self.assertEqual(price_for(p, "gpt-5.6")["input"], 2.5)   # bare -> Terra
+        self.assertEqual(price_for(p, "gpt-5.5")["input"], 5.0)
+        # End-to-end cost for a Terra call (fresh in + out, no cache).
+        cost = est_cost(p, "gpt-5.6-terra", {
+            "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0})
+        self.assertAlmostEqual(cost, 2.5 + 15.0, places=6)
+        # Unknown models still fall back to `default` (documented behavior).
+        self.assertEqual(price_for(p, "some-unknown-model"), p["models"]["default"])
+
+    def test_date_aware_pricing_intro_window(self):
+        from mrtoken.ingest import load_prices, price_for, est_cost
+        p = load_prices()
+        # Sonnet 5: intro $2/$10 through 2026-08-31 (inclusive), sticker $3/$15 after.
+        intro = price_for(p, "claude-sonnet-5", at="2026-07-10T00:00:00Z")
+        self.assertEqual((intro["input"], intro["output"]), (2.0, 10.0))
+        self.assertEqual(price_for(p, "claude-sonnet-5", at="2026-08-31T23:59:59Z")["input"], 2.0)  # boundary inclusive
+        after = price_for(p, "claude-sonnet-5", at="2026-09-01")
+        self.assertEqual((after["input"], after["output"]), (3.0, 15.0))
+        # at=None → base/sticker: back-compat preserved for every existing caller
+        self.assertEqual(price_for(p, "claude-sonnet-5")["input"], 3.0)
+        # est_cost honours the window
+        u = {"input_tokens": 1_000_000, "output_tokens": 0,
+             "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+        self.assertAlmostEqual(est_cost(p, "claude-sonnet-5", u, at="2026-07-10T00:00:00Z"), 2.0, places=6)
+        self.assertAlmostEqual(est_cost(p, "claude-sonnet-5", u, at="2026-09-01"), 3.0, places=6)
+        # a model without effective windows is unaffected by `at`
+        self.assertEqual(price_for(p, "claude-opus-4-8", at="2026-07-10")["input"], 5.0)
+
+    def test_matched_price_key_and_staleness(self):
+        from datetime import date, timedelta
+        from mrtoken.ingest import load_prices, matched_price_key
+        from mrtoken.pricing import price_staleness, freshness_warning, STALE_DAYS
+        p = load_prices()
+        # covered families return their key; unknown/empty return None (the coverage signal)
+        self.assertEqual(matched_price_key(p, "claude-fable-5"), "claude-fable-5")
+        self.assertEqual(matched_price_key(p, "gpt-5.6-terra"), "gpt-5.6-terra")
+        self.assertIsNone(matched_price_key(p, "totally-made-up-model"))
+        self.assertIsNone(matched_price_key(p, ""))
+        # freshness is date-driven and injectable for determinism
+        fresh = {"version": "2026-07-01", "models": {}}
+        self.assertEqual(price_staleness(fresh, date(2026, 7, 10)), (9, False))
+        self.assertIsNone(freshness_warning(fresh, date(2026, 7, 10)))
+        stale_day = date(2026, 7, 1) + timedelta(days=STALE_DAYS + 5)
+        age, is_stale = price_staleness(fresh, stale_day)
+        self.assertTrue(is_stale)
+        self.assertIsNotNone(freshness_warning(fresh, stale_day))
+        # unparseable version → no signal (not a crash)
+        self.assertIsNone(price_staleness({"version": "nope", "models": {}}))
+
+    def test_uncovered_models_flags_default_priced(self):
+        from mrtoken.ingest import ingest_file, load_prices, connect
+        from mrtoken.pricing import uncovered_models
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = os.path.join(tmp, "s.jsonl")
+            write_jsonl(transcript, [
+                {"type": "user", "message": {"content": "hi"}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u1", "cwd": tmp,
+                 "message": {"id": "m1", "model": "claude-opus-4-8",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "ok"}]}},
+                {"type": "assistant", "sessionId": "s", "uuid": "u2", "cwd": tmp,
+                 "message": {"id": "m2", "model": "totally-made-up-9",
+                             "usage": {"input_tokens": 10, "output_tokens": 5},
+                             "content": [{"type": "text", "text": "ok"}]}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            ingest_file(conn, transcript, load_prices())
+            models = [m for m, _ in uncovered_models(conn, load_prices())]
+            self.assertIn("totally-made-up-9", models)   # priced at default → flagged
+            self.assertNotIn("claude-opus-4-8", models)  # has a real row → not flagged
+
+    def test_price_override_via_env_merges_over_base(self):
+        from mrtoken.ingest import load_prices, price_for
+        self.assertEqual(price_for(load_prices(), "claude-opus-4-8")["input"], 5.0)
+        prev = os.environ.get("MRTOKEN_PRICES")
+        try:
+            os.environ["MRTOKEN_PRICES"] = json.dumps({
+                "version": "override-test",
+                "models": {"claude-opus-4": {"input": 99.0, "output": 199.0,
+                                             "cache_read": 9.9, "cache_write": 12.0}}})
+            p = load_prices()
+            self.assertEqual(p["version"], "override-test")                   # version overridden
+            self.assertEqual(price_for(p, "claude-opus-4-8")["input"], 99.0)  # named row overridden
+            self.assertEqual(price_for(p, "claude-fable-5")["input"], 10.0)   # unnamed base rows kept
+        finally:
+            os.environ.pop("MRTOKEN_PRICES", None)
+            if prev is not None:
+                os.environ["MRTOKEN_PRICES"] = prev
+
+    def test_malformed_price_override_falls_back_to_base(self):
+        import contextlib, io
+        from mrtoken.ingest import load_prices, price_for
+        prev = os.environ.get("MRTOKEN_PRICES")
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):  # the warning is intended (loud); keep test output clean
+                os.environ["MRTOKEN_PRICES"] = "{ not valid json"
+                self.assertEqual(price_for(load_prices(), "claude-opus-4-8")["input"], 5.0)
+                # a row missing 3 of 4 fields is skipped, base kept (no KeyError downstream)
+                os.environ["MRTOKEN_PRICES"] = json.dumps({"models": {"claude-opus-4": {"input": 1.0}}})
+                self.assertEqual(price_for(load_prices(), "claude-opus-4-8")["input"], 5.0)
+        finally:
+            os.environ.pop("MRTOKEN_PRICES", None)
+            if prev is not None:
+                os.environ["MRTOKEN_PRICES"] = prev
 
     def test_low_activity_floor_drops_empty_and_hides_substubs(self):
         # The global Stop hook fires on every trivial desktop session. A

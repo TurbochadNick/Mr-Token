@@ -44,18 +44,66 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
+- **Claude resumed — pricing/accuracy hardening COMPLETE (2026-07-10):** The earlier
+  "Codex takeover" note was on a wrong premise — Claude did NOT run out of tokens; it resumed
+  and finished the full plan (`~/.claude/plans/dynamic-imagining-wind.md`, Zach-approved).
+  Also shipped first: model-lineup + pricing refresh for the new models (Fable/Mythos/Sonnet 5
+  + GPT-5.6 tiers), pushed earlier as `ad1035d..7790554`. Then five hardening workstreams on
+  `experiment/compaction-regime-map`: W1 price coverage + staleness guards + `scripts/check-pricing.sh`
+  (`76c1105`), W2 token-count accuracy fixes (`6c5de60`), W3 provenance + one canonical cost
+  caveat (`fb7d89e`), W4 user/env price override in `load_prices` (`e5330f9`), W5 date-aware
+  pricing incl. Sonnet 5 intro window (`ceb3f6f`). **107 backend + 35 TS tests green; pricing
+  gate passes.** Pushed to origin. External-module (Headroom) work remains PAUSED pending Zach's
+  approval of a less-constrained compression probe — untouched by this work; real-agent
+  wrapping/routing stays separately gated. Either agent can pick up from here.
 - **State (2026-07-02):** v0.5.8. This session's work is **MERGED to `main`** via PR #18
   (merge commit `24cef87`): 5A regime-map experiment (DONE), compaction-gate spec + **phase 1**
   (Fable) + **phase-2 brief**, ROI `--measure` cross-session linkage (Fable), `GOALS/` loop briefs,
   5B.1 (`UI-INTEGRATION.md`) + 5B.2 (`HANDOFF-TO-NICK.md` refreshed — ⏳ Zach forwards to Nick), and
   Fable enablement (`ONBOARDING.md` + K2 coordination). Global (not in-repo): `/which-model`
   snapshot updated for Fable's 2026-07-01 reinstatement. Experiment spend **$17.46/$20**.
-- **`disposable_confirmed` channel BUILT (Claude, 2026-07-03, PR #20).** The explicit path to 6.8 L3:
-  `confirm_disposable` MCP tool → session-scoped, metadata-only confirmation (call-index + ts, TTL
-  10 calls / 30 min); `intervention_for_session` merges a FRESH one so `decide()` can escalate; stale/
-  absent → proxy tell-only (fail-closed). Skill doc updated; 92 tests green. **Routing note:** kept
-  in-house rather than dispatched — Fable is a scarce cross-project contractor, and this was
-  de-risked + handleable, so not worth a contractor hour (see memory `fable-is-a-scarce-contractor`).
+- **`disposable_confirmed` channel BUILT + MERGED (Claude, PR #20 → `main` `acb3196`).** The explicit
+  path to 6.8 L3: `confirm_disposable` MCP tool → session-scoped, metadata-only confirmation (call-index
+  + ts, TTL 10 calls / 30 min); `intervention_for_session` merges a FRESH one so `decide()` can
+  escalate; stale/absent → proxy tell-only (fail-closed). Skill doc updated; 92 tests green. **Routing
+  note:** kept in-house — Fable is a scarce cross-project contractor and this was de-risked + handleable,
+  not worth a contractor hour (memory `fable-is-a-scarce-contractor`).
+  - **✅ FABLE REVIEW DONE (2026-07-03, this session).** Batch pass over PR #20 (primary) + the PR #19
+    gate path (spot-check). In-session logic is **correct and well-tested**: decide()'s proxy-cap /
+    explicit-escalation contract verified (incl. `test_proxy_drop_never_escalates_past_tell`), TTL
+    state machine sound + fail-closed, privacy invariant kept, snapshot↔consumer keys match, 92 tests
+    re-run green. **One real finding — a PRE-6.8 BLOCKER at the MCP boundary:** `confirm_disposable`
+    with no arg resolves "current session" by newest-mtime because the MCP server process has NO
+    session env (verified on the 10 live `mrtoken-transcript mcp` processes: neither
+    `CLAUDE_CODE_SESSION_ID` nor `MRTOKEN_SESSION` present). In a multi-session project (the normal
+    K2 two-pane state) session A's confirmation can land under session B's id → B escalates without
+    consent; at 6.8 `do` that's an auto-drop authorized by the wrong agent. Harmless at today's
+    `tell` default → PR #20 stays merge-safe; fix before any `do`. Full finding + recommended
+    fail-closed fix (refuse-on-ambiguity) + 3 minor hardening items:
+    **`GOALS/confirm-disposable-session-binding.md`**. **FIX DONE (Codex, this branch):** no-arg
+    confirmation now refuses when multiple recent transcripts are active in the cwd project bucket,
+    explicit `session` still binds normally, single-session no-arg still works, and `mr-context`
+    tells the agent how to retry. 94 backend tests green.
+- **6.8 L3 STRUCTURE BUILT, INERT (Fable build, Claude reviewed, local commit `e9927f3`):**
+  `backend/mrtoken/autoact.py` now owns the do-level executor, wired for `handoff` only at
+  `do + escalate + explicit disposable_confirmed`. The action is only deterministic handoff-text
+  generation; no new session, no `/compact`, no deletion, no network. Freemium meter + stubbed paid
+  entitlement are in place, but defaults stay warn-only and flipping live / real billing are future
+  decisions. 95 backend tests green.
+- **7.3 external module trust + sandbox inspect DONE (Codex, 2026-07-07):**
+  `backend/docs/MODULE-EVALUATION.md` selects Headroom as the first lab candidate and defers Ponytail.
+  A pinned `/tmp` install of `headroom-ai[mcp]==0.30.0` succeeded; even `[mcp]` brings a broad
+  proxy/runtime surface and `headroom mcp` expects a local proxy plus agent routing. Nothing is
+  registered/enabled in real agents. **Harness built (Codex, 2026-07-08):**
+  `mrtoken-transcript module-measure` can compare before/after artifacts, parse Headroom proxy JSONL
+  token deltas into module-named `savings`/`outcomes`, run a stateless local Headroom proxy
+  health/file-write probe, and run offline synthetic traffic through a fake localhost Anthropic upstream.
+  Probe evidence: `[mcp]` extra cannot start proxy mode (`fastapi` missing); separate pinned `[proxy]`
+  venv starts on localhost and `/livez` returns 200; synthetic traffic reaches the fake upstream and
+  parses one Headroom log row (13,761 -> 13,761 tokens, zero savings in safe mode). Offline mode skipped
+  bundled `difft`/`scc` downloads, but Headroom still writes sandbox-local logs/savings/subscription and
+  tokenizer-cache files. Next gate: decide whether to run a less-constrained compression probe, then
+  require equal-quality verdict before any wrap/routing or opt-in/drop decision.
 - **Compaction gate COMPLETE + MERGED (Fable built, Claude reviewed 2026-07-03): PR #19 → `main`
   merge commit `9131691`.** Gate 1 disposability (`8b61165`) + Gate 2 runway (`1208c6b`); 91 backend
   tests green; default-None inputs keep old callers byte-identical. Claude review: code correct,

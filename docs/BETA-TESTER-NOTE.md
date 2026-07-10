@@ -16,7 +16,7 @@ Then use Claude Code or Codex normally for 3 to 5 days.
 
 What you should see:
 - Claude Code terminal: an `mr` status line with context %, estimated cost, profile, and short nudges.
-- Codex: a compact Stop-hook line like `mr · codex gpt-5.5 · ctx 28% · ~681k tok · cache 96% · code · long session: /mr-handoff at phase boundary`.
+- Codex: a compact Stop-hook line like `mr · codex gpt-5.6-terra · ctx 28% · ~681k tok · cache 96% · code · long session: /mr-handoff at phase boundary`.
 - `/mr-status`, `/mr-why`, and `/mr-handoff` available in Claude Code sessions.
 
 Privacy:
