@@ -44,6 +44,15 @@ live-database** — whoever is driving. `[zach-gated]` tasks always pause for Za
   the experiment is the fast-follow now that it's funded.
 
 ## Handoff note (keep current — the failover baton)
+- **Codex takeover (2026-07-10):** Claude exhausted its token budget after committing the
+  pricing-coverage/staleness guard (`76c1105`) and token-accounting accuracy fixes
+  (`6c5de60`). Codex is now the active failover owner on
+  `experiment/compaction-regime-map` (two commits ahead of origin). The worktree was clean
+  at takeover and the branch diff passed `git diff origin/experiment/compaction-regime-map..HEAD --check`.
+  Next safe action: run the backend regression suite against those commits, then keep the
+  external-module work paused until Zach explicitly approves a less-constrained Headroom
+  compression probe; real-agent wrapping/routing remains separately gated. Claude can resume
+  from this note without a live relay.
 - **State (2026-07-02):** v0.5.8. This session's work is **MERGED to `main`** via PR #18
   (merge commit `24cef87`): 5A regime-map experiment (DONE), compaction-gate spec + **phase 1**
   (Fable) + **phase-2 brief**, ROI `--measure` cross-session linkage (Fable), `GOALS/` loop briefs,
