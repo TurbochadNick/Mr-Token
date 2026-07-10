@@ -138,8 +138,24 @@ def measure_files(module: str, before_path: str, after_path: str,
 
 def parse_headroom_log(path: str) -> dict:
     """Parse Headroom proxy JSONL token deltas without storing message content."""
-    rows_seen = rows_measured = bad_lines = 0
-    before_total = after_total = 0
+    parsed_rows, rows_seen, bad_lines = parse_headroom_log_rows(path)
+    before_total = sum(row["before_tokens"] for row in parsed_rows)
+    after_total = sum(row["after_tokens"] for row in parsed_rows)
+    return {
+        "rows_seen": rows_seen,
+        "rows_measured": len(parsed_rows),
+        "bad_lines": bad_lines,
+        "before_tokens": before_total,
+        "after_tokens": after_total,
+        "tokens_delta": before_total - after_total,
+        "tokens_saved": max(0, before_total - after_total),
+    }
+
+
+def parse_headroom_log_rows(path: str) -> tuple[list[dict], int, int]:
+    """Return token-only rows plus parse counts; never retains message content."""
+    rows: list[dict] = []
+    rows_seen = bad_lines = 0
     with open(path, encoding="utf-8", errors="replace") as handle:
         for line in handle:
             line = line.strip()
@@ -160,18 +176,8 @@ def parse_headroom_log(path: str) -> dict:
                 after = max(before - max(saved, 0), 0)
             if before is None or after is None:
                 continue
-            before_total += before
-            after_total += after
-            rows_measured += 1
-    return {
-        "rows_seen": rows_seen,
-        "rows_measured": rows_measured,
-        "bad_lines": bad_lines,
-        "before_tokens": before_total,
-        "after_tokens": after_total,
-        "tokens_delta": before_total - after_total,
-        "tokens_saved": max(0, before_total - after_total),
-    }
+            rows.append({"before_tokens": before, "after_tokens": after})
+    return rows, rows_seen, bad_lines
 
 
 def measure_headroom_log(module: str, log_path: str, quality: str = "unknown",
@@ -612,11 +618,26 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
             "before_tokens": 0, "after_tokens": 0,
             "tokens_delta": 0, "tokens_saved": 0,
         }
+        log_rows = parse_headroom_log_rows(log_file)[0] if os.path.exists(log_file) else []
+        recorded_rows = 0
+        for index, request_row in enumerate(requests):
+            token_row = log_rows[index] if index < len(log_rows) else {}
+            request_row.update(token_row)
+            quality_pass = bool(request_row["quality"].get("round_trip") and
+                                request_row["quality"].get("needles_ok"))
+            request_row["quality_pass"] = quality_pass
+            if record and quality_pass and token_row:
+                result = record_measurement(
+                    "headroom", token_row["before_tokens"] - token_row["after_tokens"],
+                    "pass", note=f"module-measure Headroom payload: {os.path.basename(request_row['path'])}",
+                )
+                request_row["recorded"] = result
+                recorded_rows += 1
         before = parsed["before_tokens"]
         after = parsed["after_tokens"]
         report = _measurement_report(
             "headroom", before, after, "headroom_synthetic_traffic",
-            quality=quality, record=record, session_id=session_id,
+            quality=quality, record=False, session_id=session_id,
             note="module-measure Headroom synthetic localhost traffic",
             extra={
                 "ok": bool(endpoint.get("ok") and all(r["request"].get("ok") for r in requests)),
@@ -627,6 +648,7 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                 "fake_upstream_requests": len(getattr(upstream, "requests", [])),
                 "kompress_requested": enable_kompress,
                 "asset_cache_used": bool(asset_cache),
+                "recorded_rows": recorded_rows,
                 "log_path": log_file,
                 "rows_seen": parsed["rows_seen"],
                 "rows_measured": parsed["rows_measured"],
@@ -639,6 +661,7 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                 "stderr": _clip(stderr or ""),
             },
         )
+        report["recorded"] = bool(recorded_rows)
         return report
 
 
