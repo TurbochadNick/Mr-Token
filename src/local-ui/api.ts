@@ -276,6 +276,7 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
     '',
     ...(data.accurate.available
       ? [
+          '- Source: MEASURED — real API token counts from the transcript backend',
           `- Actual total tokens: ${data.accurate.totalTokens.toLocaleString()} (vs estimated ${data.summary.totalEstimatedTokens.toLocaleString()})`,
           `- Input / output: ${data.accurate.inputTokens.toLocaleString()} / ${data.accurate.outputTokens.toLocaleString()}`,
           `- Cache read / write: ${data.accurate.cacheReadTokens.toLocaleString()} / ${data.accurate.cacheWriteTokens.toLocaleString()}`,
@@ -284,7 +285,10 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
           `- Sessions: ${data.accurate.sessions.toLocaleString()}; profiles: ${data.accurate.profiles.join(', ') || 'n/a'}`,
           `- High-priority recommendations: ${data.accurate.highRecommendations.toLocaleString()}`
         ]
-      : ['Accurate usage is not available yet. Run the mrtoken-transcript backend (or its Stop hook) to populate real token counts.']),
+      : [
+          '- Source: ESTIMATED only — char-counted from hook events, not yet reconciled with real API usage',
+          'Accurate usage is not available yet. Run the mrtoken-transcript backend (or its Stop hook) to populate real token counts.'
+        ]),
     '',
     '## Deterministic Audit Findings',
     '',

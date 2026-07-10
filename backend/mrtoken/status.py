@@ -12,6 +12,7 @@ from mrtoken.ingest import connect, load_prices, ingest_file, default_db_path
 from mrtoken.rules import analyse
 from mrtoken.watch import resolve_path
 from mrtoken.statusline import context_window, CONTEXT_WARN_PCT
+from mrtoken.pricing import COST_CAVEAT
 
 
 def _fmt(n) -> str:
@@ -63,6 +64,7 @@ def print_status(db_path: str | None, session_arg: str | None) -> int:
           + (f" · {s['tool_errors']} tool errors" if s['tool_errors'] else ""))
     flag = "  ⚠ large" if s["context_large"] else ""
     print(f"  context now ~{_fmt(s['context_now'])} tok{flag}")
+    print(f"  · est $ is an {COST_CAVEAT}")
     if s["top"]:
         print(f"\n  next: [{s['top']['rule']}] {s['top']['message']}")
         print(f"  feedback: mrtoken-transcript feedback {r['session_id'][:8]} "

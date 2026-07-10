@@ -426,6 +426,28 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(rt, 50)     # surfaced as an informational breakdown
             self.assertEqual(tot, 1200)  # input(1000)+output(200); reasoning NOT double-added
 
+    def test_codex_model_call_carries_price_version(self):
+        from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.ingest import load_prices
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cxp", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.6-terra"}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {"last_token_usage": {
+                     "input_tokens": 100, "output_tokens": 50, "total_tokens": 150}}}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            p = load_prices()
+            ingest_codex_file(conn, codex, p)
+            pv = conn.execute(
+                "SELECT DISTINCT price_version FROM model_call mc "
+                "JOIN trace t ON t.id=mc.trace_id WHERE t.session_id='cxp'").fetchone()[0]
+            self.assertEqual(pv, p["version"])  # Codex rows now carry price provenance
+
     def test_claude_dedup_falls_back_to_uuid_when_id_missing(self):
         from mrtoken.ingest import ingest_file, load_prices
         with tempfile.TemporaryDirectory() as tmp:

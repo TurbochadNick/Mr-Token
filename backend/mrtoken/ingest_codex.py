@@ -224,10 +224,11 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
     mc_ts, mc_ids = [], []  # chronological (stream order) → safe to bisect
     for mc in model_calls:
         cur.execute("""INSERT INTO model_call(trace_id,model,timestamp,input_tokens,output_tokens,
-            cache_read_input_tokens,reasoning_tokens,est_cost_usd)
-            VALUES(?,?,?,?,?,?,?,?)""",
+            cache_read_input_tokens,reasoning_tokens,est_cost_usd,price_version)
+            VALUES(?,?,?,?,?,?,?,?,?)""",
             (tid, mc["model"], mc["timestamp"], mc["input_tokens"], mc["output_tokens"],
-             mc["cache_read_input_tokens"], mc["reasoning_tokens"], mc["est_cost_usd"]))
+             mc["cache_read_input_tokens"], mc["reasoning_tokens"], mc["est_cost_usd"],
+             prices["version"]))
         mc_ts.append(mc["timestamp"] or "")
         mc_ids.append(cur.lastrowid)
 

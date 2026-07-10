@@ -23,6 +23,11 @@ from mrtoken.ingest import matched_price_key
 # Re-verify cadence: warn once the table's version date is older than this.
 STALE_DAYS = 45
 
+# One canonical cost caveat so no surface drifts or omits it. est_cost_usd is an
+# API-equivalent estimate (measured tokens × table rates); it is NOT what a
+# Claude Code Max/Pro or ChatGPT subscription actually bills.
+COST_CAVEAT = "API-equivalent estimate, not a subscription bill"
+
 
 def uncovered_models(conn: sqlite3.Connection, prices: dict) -> list[tuple[str, int]]:
     """Distinct non-empty model ids in model_call that NO price row covers (so they
