@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -366,6 +367,33 @@ def _post_json(url: str, payload: dict, timeout_s: float) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def _get_json(url: str, timeout_s: float) -> dict:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_s) as resp:
+            return {"ok": 200 <= resp.status < 300, "status": resp.status,
+                    "body": json.loads(resp.read().decode("utf-8", "replace"))}
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _quality_check(compressed_request: str, original: str, proxy_port: int,
+                   timeout_s: float) -> dict:
+    """Verify Headroom's loopback CCR retrieval without retaining payload text."""
+    match = re.search(r"<<ccr:([a-f0-9]{12,24})\\b", compressed_request)
+    if not match:
+        return {"round_trip": False, "needles": 0, "needles_ok": False,
+                "reason": "no CCR marker"}
+    retrieved = _get_json(f"http://127.0.0.1:{proxy_port}/v1/retrieve/{match.group(1)}", timeout_s)
+    recovered = retrieved.get("body", {}).get("original_content") if retrieved.get("ok") else None
+    lines = [line for line in original.splitlines() if line][:3]
+    return {
+        "round_trip": recovered == original,
+        "needles": len(lines),
+        "needles_ok": isinstance(recovered, str) and all(line in recovered for line in lines),
+        "retrieval_ok": bool(retrieved.get("ok")),
+    }
+
+
 def probe_headroom_proxy(headroom_bin: str = "headroom", timeout_s: float = 8.0,
                          keep_sandbox: bool = False,
                          sandbox_root: str | None = None) -> dict:
@@ -556,8 +584,14 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                         payload,
                         timeout_s,
                     )
+                quality_check = {"round_trip": None, "needles": 0, "needles_ok": None}
+                if enable_kompress and request.get("ok") and upstream.requests:
+                    quality_check = _quality_check(
+                        upstream.requests[-1]["body"], tool_result, proxy_port, timeout_s
+                    )
                 requests.append({"path": label, "request": request,
-                                 "input_bytes": len(tool_result.encode("utf-8", "replace"))})
+                                 "input_bytes": len(tool_result.encode("utf-8", "replace")),
+                                 "quality": quality_check})
             time.sleep(0.25)  # give the proxy log writer a moment to flush
         finally:
             if proc and proc.poll() is None:

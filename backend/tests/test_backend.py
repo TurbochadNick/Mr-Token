@@ -1437,6 +1437,7 @@ class BackendTest(unittest.TestCase):
 
             local_payload = module_measure._anthropic_payload("local tool output: NEEDLE-42")
             self.assertIn("NEEDLE-42", json.dumps(local_payload))
+            self.assertFalse(module_measure._quality_check("no marker", "source", port, 2)["round_trip"])
         finally:
             server.shutdown()
             server.server_close()
