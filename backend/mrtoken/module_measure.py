@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -137,8 +138,24 @@ def measure_files(module: str, before_path: str, after_path: str,
 
 def parse_headroom_log(path: str) -> dict:
     """Parse Headroom proxy JSONL token deltas without storing message content."""
-    rows_seen = rows_measured = bad_lines = 0
-    before_total = after_total = 0
+    parsed_rows, rows_seen, bad_lines = parse_headroom_log_rows(path)
+    before_total = sum(row["before_tokens"] for row in parsed_rows)
+    after_total = sum(row["after_tokens"] for row in parsed_rows)
+    return {
+        "rows_seen": rows_seen,
+        "rows_measured": len(parsed_rows),
+        "bad_lines": bad_lines,
+        "before_tokens": before_total,
+        "after_tokens": after_total,
+        "tokens_delta": before_total - after_total,
+        "tokens_saved": max(0, before_total - after_total),
+    }
+
+
+def parse_headroom_log_rows(path: str) -> tuple[list[dict], int, int]:
+    """Return token-only rows plus parse counts; never retains message content."""
+    rows: list[dict] = []
+    rows_seen = bad_lines = 0
     with open(path, encoding="utf-8", errors="replace") as handle:
         for line in handle:
             line = line.strip()
@@ -159,18 +176,8 @@ def parse_headroom_log(path: str) -> dict:
                 after = max(before - max(saved, 0), 0)
             if before is None or after is None:
                 continue
-            before_total += before
-            after_total += after
-            rows_measured += 1
-    return {
-        "rows_seen": rows_seen,
-        "rows_measured": rows_measured,
-        "bad_lines": bad_lines,
-        "before_tokens": before_total,
-        "after_tokens": after_total,
-        "tokens_delta": before_total - after_total,
-        "tokens_saved": max(0, before_total - after_total),
-    }
+            rows.append({"before_tokens": before, "after_tokens": after})
+    return rows, rows_seen, bad_lines
 
 
 def measure_headroom_log(module: str, log_path: str, quality: str = "unknown",
@@ -307,6 +314,11 @@ def _synthetic_tool_result(chars: int = 48_000) -> str:
 
 
 def _synthetic_anthropic_payload(chars: int = 48_000) -> dict:
+    return _anthropic_payload(_synthetic_tool_result(chars))
+
+
+def _anthropic_payload(tool_result: str) -> dict:
+    """Build the one safe request shape used by the local proxy probe."""
     return {
         "model": "claude-3-5-sonnet-20241022",
         "max_tokens": 64,
@@ -330,7 +342,7 @@ def _synthetic_anthropic_payload(chars: int = 48_000) -> dict:
             {"role": "user", "content": [{
                 "type": "tool_result",
                 "tool_use_id": "toolu_mrtoken_synthetic",
-                "content": _synthetic_tool_result(chars),
+                "content": tool_result,
             }]},
             {"role": "user", "content": "Summarize whether the log contains ERROR."},
         ],
@@ -361,6 +373,33 @@ def _post_json(url: str, payload: dict, timeout_s: float) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def _get_json(url: str, timeout_s: float) -> dict:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_s) as resp:
+            return {"ok": 200 <= resp.status < 300, "status": resp.status,
+                    "body": json.loads(resp.read().decode("utf-8", "replace"))}
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _quality_check(compressed_request: str, original: str, proxy_port: int,
+                   timeout_s: float) -> dict:
+    """Verify Headroom's loopback CCR retrieval without retaining payload text."""
+    match = re.search(r"<<ccr:([a-f0-9]{12,24})\\b", compressed_request)
+    if not match:
+        return {"round_trip": False, "needles": 0, "needles_ok": False,
+                "reason": "no CCR marker"}
+    retrieved = _get_json(f"http://127.0.0.1:{proxy_port}/v1/retrieve/{match.group(1)}", timeout_s)
+    recovered = retrieved.get("body", {}).get("original_content") if retrieved.get("ok") else None
+    lines = [line for line in original.splitlines() if line][:3]
+    return {
+        "round_trip": recovered == original,
+        "needles": len(lines),
+        "needles_ok": isinstance(recovered, str) and all(line in recovered for line in lines),
+        "retrieval_ok": bool(retrieved.get("ok")),
+    }
+
+
 def probe_headroom_proxy(headroom_bin: str = "headroom", timeout_s: float = 8.0,
                          keep_sandbox: bool = False,
                          sandbox_root: str | None = None) -> dict:
@@ -374,11 +413,11 @@ def probe_headroom_proxy(headroom_bin: str = "headroom", timeout_s: float = 8.0,
         ctx = nullcontext(sandbox_root)
         cleanup = False
     elif keep_sandbox:
-        root = tempfile.mkdtemp(prefix="mrtoken-module-headroom-")
+        root = tempfile.mkdtemp(prefix="mrtoken-module-headroom-", dir="/tmp")
         ctx = nullcontext(root)
         cleanup = False
     else:
-        ctx = tempfile.TemporaryDirectory(prefix="mrtoken-module-headroom-")
+        ctx = tempfile.TemporaryDirectory(prefix="mrtoken-module-headroom-", dir="/tmp")
         cleanup = True
 
     with ctx as sandbox:
@@ -446,6 +485,9 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                                      timeout_s: float = 12.0,
                                      keep_sandbox: bool = False,
                                      synthetic_chars: int = 48_000,
+                                     payload_paths: list[str] | None = None,
+                                     enable_kompress: bool = False,
+                                     asset_cache: str | None = None,
                                      record: bool = False,
                                      quality: str = "unknown",
                                      session_id: str = "") -> dict:
@@ -457,26 +499,44 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
     sandbox and reported.
     """
     if keep_sandbox:
-        root = tempfile.mkdtemp(prefix="mrtoken-module-headroom-traffic-")
+        root = tempfile.mkdtemp(prefix="mrtoken-module-headroom-traffic-", dir="/tmp")
         ctx = nullcontext(root)
         cleanup = False
     else:
-        ctx = tempfile.TemporaryDirectory(prefix="mrtoken-module-headroom-traffic-")
+        ctx = tempfile.TemporaryDirectory(prefix="mrtoken-module-headroom-traffic-", dir="/tmp")
         cleanup = True
 
     with ctx as sandbox:
         env = _safe_proxy_env(sandbox, stateless=False)
+        if asset_cache:
+            source = os.path.join(asset_cache, "hf")
+            if not os.path.isdir(source):
+                return {
+                    "kind": "headroom_synthetic_traffic",
+                    "ok": False,
+                    "error": f"Headroom asset cache not found: {source}",
+                    "sandbox": sandbox,
+                    "sandbox_removed": cleanup,
+                }
+            shutil.copytree(source, os.path.join(sandbox, "hf"))
         env.update({
-            "HEADROOM_DISABLE_KOMPRESS": "1",
-            "HEADROOM_NO_CCR_INJECT_TOOL": "1",
             "HEADROOM_OFFLINE": "1",
             "HEADROOM_BINARIES_OFFLINE": "1",
-            "HEADROOM_CCR_BACKEND": "memory",
-            "HEADROOM_TIKTOKEN_LOAD_TIMEOUT_SECONDS": "0",
+            "HEADROOM_CCR_BACKEND": "disk" if enable_kompress else "memory",
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
+            "HF_HOME": os.path.join(sandbox, "hf"),
+            "HUGGINGFACE_HUB_CACHE": os.path.join(sandbox, "hf", "hub"),
+            "XDG_CACHE_HOME": os.path.join(sandbox, "cache"),
+            "HEADROOM_BINARIES_CACHE": os.path.join(sandbox, "binaries"),
             "TIKTOKEN_CACHE_DIR": os.path.join(sandbox, "tiktoken-cache"),
         })
+        if not enable_kompress:
+            env.update({
+                "HEADROOM_DISABLE_KOMPRESS": "1",
+                "HEADROOM_NO_CCR_INJECT_TOOL": "1",
+                "HEADROOM_TIKTOKEN_LOAD_TIMEOUT_SECONDS": "0",
+            })
         resolved = headroom_bin if os.path.isabs(headroom_bin) else shutil.which(
             headroom_bin, path=env.get("PATH", "")
         )
@@ -501,9 +561,6 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                 "--port", str(proxy_port),
                 "--no-telemetry",
                 "--no-subscription-tracking",
-                "--no-ccr-inject-tool",
-                "--lossless",
-                "--disable-kompress",
                 "--intercept-tool-results",
                 "--no-cache",
                 "--no-rate-limit",
@@ -513,19 +570,34 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                 "--anthropic-api-url", f"http://127.0.0.1:{upstream_port}",
                 "--log-file", log_file,
             ]
+            if not enable_kompress:
+                cmd.extend(["--no-ccr-inject-tool", "--lossless", "--disable-kompress"])
             proc = subprocess.Popen(
                 cmd, env=env, cwd=sandbox, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True,
             )
             endpoint = _wait_local_endpoint(proxy_port, timeout_s, proc=proc)
-            payload = _synthetic_anthropic_payload(synthetic_chars)
-            request = {"ok": False, "error": "proxy not ready"}
-            if endpoint.get("ok"):
-                request = _post_json(
-                    f"http://127.0.0.1:{proxy_port}/v1/messages",
-                    payload,
-                    timeout_s,
-                )
+            payload_texts = [("synthetic", _synthetic_tool_result(synthetic_chars))]
+            if payload_paths:
+                payload_texts = [(path, _read(path)) for path in payload_paths]
+            requests = []
+            for label, tool_result in payload_texts:
+                payload = _anthropic_payload(tool_result)
+                request = {"ok": False, "error": "proxy not ready"}
+                if endpoint.get("ok"):
+                    request = _post_json(
+                        f"http://127.0.0.1:{proxy_port}/v1/messages",
+                        payload,
+                        timeout_s,
+                    )
+                quality_check = {"round_trip": None, "needles": 0, "needles_ok": None}
+                if enable_kompress and request.get("ok") and upstream.requests:
+                    quality_check = _quality_check(
+                        upstream.requests[-1]["body"], tool_result, proxy_port, timeout_s
+                    )
+                requests.append({"path": label, "request": request,
+                                 "input_bytes": len(tool_result.encode("utf-8", "replace")),
+                                 "quality": quality_check})
             time.sleep(0.25)  # give the proxy log writer a moment to flush
         finally:
             if proc and proc.poll() is None:
@@ -546,24 +618,37 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
             "before_tokens": 0, "after_tokens": 0,
             "tokens_delta": 0, "tokens_saved": 0,
         }
+        log_rows = parse_headroom_log_rows(log_file)[0] if os.path.exists(log_file) else []
+        recorded_rows = 0
+        for index, request_row in enumerate(requests):
+            token_row = log_rows[index] if index < len(log_rows) else {}
+            request_row.update(token_row)
+            quality_pass = bool(request_row["quality"].get("round_trip") and
+                                request_row["quality"].get("needles_ok"))
+            request_row["quality_pass"] = quality_pass
+            if record and quality_pass and token_row:
+                result = record_measurement(
+                    "headroom", token_row["before_tokens"] - token_row["after_tokens"],
+                    "pass", note=f"module-measure Headroom payload: {os.path.basename(request_row['path'])}",
+                )
+                request_row["recorded"] = result
+                recorded_rows += 1
         before = parsed["before_tokens"]
         after = parsed["after_tokens"]
         report = _measurement_report(
             "headroom", before, after, "headroom_synthetic_traffic",
-            quality=quality, record=record, session_id=session_id,
+            quality=quality, record=False, session_id=session_id,
             note="module-measure Headroom synthetic localhost traffic",
             extra={
-                "ok": bool(endpoint.get("ok") and request.get("ok")),
+                "ok": bool(endpoint.get("ok") and all(r["request"].get("ok") for r in requests)),
                 "controlled_env": {k: env[k] for k in sorted(env)
                                    if k.startswith("HEADROOM_")},
                 "local_endpoint": endpoint,
-                "request": request,
+                "requests": requests,
                 "fake_upstream_requests": len(getattr(upstream, "requests", [])),
-                "input_payload_tokens_est": estimate_tokens(json.dumps(payload)),
-                "upstream_payload_tokens_est": (
-                    estimate_tokens(upstream.requests[0]["body"])
-                    if getattr(upstream, "requests", []) else 0
-                ),
+                "kompress_requested": enable_kompress,
+                "asset_cache_used": bool(asset_cache),
+                "recorded_rows": recorded_rows,
                 "log_path": log_file,
                 "rows_seen": parsed["rows_seen"],
                 "rows_measured": parsed["rows_measured"],
@@ -576,6 +661,7 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                 "stderr": _clip(stderr or ""),
             },
         )
+        report["recorded"] = bool(recorded_rows)
         return report
 
 
@@ -606,13 +692,12 @@ def format_report(report: dict) -> str:
             "module-measure: Headroom synthetic traffic probe",
             f"  ok: {report.get('ok')}",
             f"  endpoint: {report.get('local_endpoint')}",
-            f"  request: {report.get('request')}",
+            f"  requests: {len(report.get('requests') or [])}",
             f"  fake upstream requests: {report.get('fake_upstream_requests')}",
             f"  log rows: {report.get('rows_measured')}/{report.get('rows_seen')} measured",
             f"  log delta: ~{report.get('tokens_delta', 0):,} tok "
             f"(saved ~{report.get('tokens_saved', 0):,})",
-            f"  payload est: input ~{report.get('input_payload_tokens_est', 0):,} tok; "
-            f"upstream ~{report.get('upstream_payload_tokens_est', 0):,} tok",
+            f"  Kompress requested: {report.get('kompress_requested', False)}",
             f"  sandbox: {report.get('sandbox')} "
             f"({'removed' if report.get('sandbox_removed') else 'kept'})",
             "  files written:",

@@ -1434,6 +1434,10 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(len(server.requests), 1)
             self.assertEqual(server.requests[0]["path"], "/v1/messages")
             self.assertIn("toolu_mrtoken_synthetic", server.requests[0]["body"])
+
+            local_payload = module_measure._anthropic_payload("local tool output: NEEDLE-42")
+            self.assertIn("NEEDLE-42", json.dumps(local_payload))
+            self.assertFalse(module_measure._quality_check("no marker", "source", port, 2)["round_trip"])
         finally:
             server.shutdown()
             server.server_close()

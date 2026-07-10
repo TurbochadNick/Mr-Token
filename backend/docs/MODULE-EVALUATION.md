@@ -31,6 +31,48 @@ Otherwise: leave it registered-but-off (opt-in) or drop it.
 
 ## Decision log
 
+### 2026-07-10 — Headroom compression probe: drop
+
+**Decision:** **drop.** Kompress reduced tokens on both local tiers, but it did
+not meet this probe's reversible-quality requirement: every compressed row
+lacked a CCR retrieval marker, so Headroom's loopback retrieval path could not
+byte-round-trip the original. This does not authorize registration, enablement,
+real-agent wrapping/routing, or any provider traffic. **Default-on remains
+unreachable** from this probe regardless of savings; it would additionally need
+the 6.7 real-agent equal-quality oracle and separate Zach approval for wrapping.
+
+| Tier | n | median savings | mean savings | quality pass rate |
+|---|---:|---:|---:|---:|
+| Fixtures (`debug-hugelib` / `debug-scanlib` / `debug-speclib`) | 20 | 24.80% | 22.76% | 0% (0/20) |
+| Local Claude `tool_result` corpus (20 largest) | 20 | 32.63% | 25.95% | 0% (0/20) |
+
+Protocol evidence:
+- `headroom-ai[proxy]==0.30.0` was reused from
+  `/tmp/mrtoken-headroom-proxy-eval`; no additional package was installed.
+  Installed source identified Kompress's ONNX artifact and ModernBERT tokenizer.
+- The only networked pre-fetch downloaded into `/tmp/mrtoken-headroom-assets`:
+  `https://huggingface.co/chopratejas/kompress-v2-base/resolve/main/onnx/kompress-int8-wo.onnx`
+  (274,049,435 bytes; SHA-256
+  `c47ddd764dec5cf91fd1f10cf69e5538dd2a49d913828da7f6a993931cc7904f`), plus
+  ModernBERT tokenizer assets from
+  `https://huggingface.co/answerdotai/ModernBERT-base/resolve/main/`
+  (`tokenizer.json` 2,132,967 bytes;
+  `9fd55248d51d33976b324fc11592e28071da7d41e0e9401dfb7082e30574b7b1`).
+- All measurement runs set `HEADROOM_OFFLINE=1`,
+  `HEADROOM_BINARIES_OFFLINE=1`, `HF_HUB_OFFLINE=1`, and
+  `TRANSFORMERS_OFFLINE=1`; the proxy bound only `127.0.0.1` and sent its sole
+  request path to the fake localhost Anthropic upstream. `difft` and `scc`
+  reported offline skips; no unexpected egress was observed.
+- Kompress was active (not disabled): rows changed on both tiers. The quality
+  gate attempted CCR retrieval for every row; all 40 rows had no `<<ccr:...>>`
+  marker, therefore round-trip and three deterministic-needle recovery failed.
+  `module-measure --record` wrote **none** because no row passed quality.
+- Sandbox writes (all under `/tmp`) included the copied HF cache,
+  `headroom-proxy.jsonl`, `home/.headroom/logs/proxy.log`,
+  `proxy_savings.json`, `savings_events.jsonl`, `subscription_state.json`, and
+  `tiktoken-cache/...`; the corpus payload files and every sandbox were deleted
+  after this entry. `./scripts/test-backend.sh` passed: 107 tests.
+
 ### 2026-07-07 — sandbox install inspection complete, no default enablement
 
 **Decision:** pick **Headroom** as the first lab candidate, but keep it **off by
