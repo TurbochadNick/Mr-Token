@@ -307,6 +307,11 @@ def _synthetic_tool_result(chars: int = 48_000) -> str:
 
 
 def _synthetic_anthropic_payload(chars: int = 48_000) -> dict:
+    return _anthropic_payload(_synthetic_tool_result(chars))
+
+
+def _anthropic_payload(tool_result: str) -> dict:
+    """Build the one safe request shape used by the local proxy probe."""
     return {
         "model": "claude-3-5-sonnet-20241022",
         "max_tokens": 64,
@@ -330,7 +335,7 @@ def _synthetic_anthropic_payload(chars: int = 48_000) -> dict:
             {"role": "user", "content": [{
                 "type": "tool_result",
                 "tool_use_id": "toolu_mrtoken_synthetic",
-                "content": _synthetic_tool_result(chars),
+                "content": tool_result,
             }]},
             {"role": "user", "content": "Summarize whether the log contains ERROR."},
         ],
@@ -446,6 +451,8 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                                      timeout_s: float = 12.0,
                                      keep_sandbox: bool = False,
                                      synthetic_chars: int = 48_000,
+                                     payload_paths: list[str] | None = None,
+                                     enable_kompress: bool = False,
                                      record: bool = False,
                                      quality: str = "unknown",
                                      session_id: str = "") -> dict:
@@ -467,16 +474,23 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
     with ctx as sandbox:
         env = _safe_proxy_env(sandbox, stateless=False)
         env.update({
-            "HEADROOM_DISABLE_KOMPRESS": "1",
-            "HEADROOM_NO_CCR_INJECT_TOOL": "1",
             "HEADROOM_OFFLINE": "1",
             "HEADROOM_BINARIES_OFFLINE": "1",
-            "HEADROOM_CCR_BACKEND": "memory",
-            "HEADROOM_TIKTOKEN_LOAD_TIMEOUT_SECONDS": "0",
+            "HEADROOM_CCR_BACKEND": "disk" if enable_kompress else "memory",
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
+            "HF_HOME": os.path.join(sandbox, "hf"),
+            "HUGGINGFACE_HUB_CACHE": os.path.join(sandbox, "hf", "hub"),
+            "XDG_CACHE_HOME": os.path.join(sandbox, "cache"),
+            "HEADROOM_BINARIES_CACHE": os.path.join(sandbox, "binaries"),
             "TIKTOKEN_CACHE_DIR": os.path.join(sandbox, "tiktoken-cache"),
         })
+        if not enable_kompress:
+            env.update({
+                "HEADROOM_DISABLE_KOMPRESS": "1",
+                "HEADROOM_NO_CCR_INJECT_TOOL": "1",
+                "HEADROOM_TIKTOKEN_LOAD_TIMEOUT_SECONDS": "0",
+            })
         resolved = headroom_bin if os.path.isabs(headroom_bin) else shutil.which(
             headroom_bin, path=env.get("PATH", "")
         )
@@ -501,9 +515,6 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                 "--port", str(proxy_port),
                 "--no-telemetry",
                 "--no-subscription-tracking",
-                "--no-ccr-inject-tool",
-                "--lossless",
-                "--disable-kompress",
                 "--intercept-tool-results",
                 "--no-cache",
                 "--no-rate-limit",
@@ -513,19 +524,30 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
                 "--anthropic-api-url", f"http://127.0.0.1:{upstream_port}",
                 "--log-file", log_file,
             ]
+            if enable_kompress:
+                cmd.append("--force-kompress-all")
+            else:
+                cmd.extend(["--no-ccr-inject-tool", "--lossless", "--disable-kompress"])
             proc = subprocess.Popen(
                 cmd, env=env, cwd=sandbox, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True,
             )
             endpoint = _wait_local_endpoint(proxy_port, timeout_s, proc=proc)
-            payload = _synthetic_anthropic_payload(synthetic_chars)
-            request = {"ok": False, "error": "proxy not ready"}
-            if endpoint.get("ok"):
-                request = _post_json(
-                    f"http://127.0.0.1:{proxy_port}/v1/messages",
-                    payload,
-                    timeout_s,
-                )
+            payload_texts = [("synthetic", _synthetic_tool_result(synthetic_chars))]
+            if payload_paths:
+                payload_texts = [(path, _read(path)) for path in payload_paths]
+            requests = []
+            for label, tool_result in payload_texts:
+                payload = _anthropic_payload(tool_result)
+                request = {"ok": False, "error": "proxy not ready"}
+                if endpoint.get("ok"):
+                    request = _post_json(
+                        f"http://127.0.0.1:{proxy_port}/v1/messages",
+                        payload,
+                        timeout_s,
+                    )
+                requests.append({"path": label, "request": request,
+                                 "input_bytes": len(tool_result.encode("utf-8", "replace"))})
             time.sleep(0.25)  # give the proxy log writer a moment to flush
         finally:
             if proc and proc.poll() is None:
@@ -553,17 +575,13 @@ def probe_headroom_synthetic_traffic(headroom_bin: str = "headroom",
             quality=quality, record=record, session_id=session_id,
             note="module-measure Headroom synthetic localhost traffic",
             extra={
-                "ok": bool(endpoint.get("ok") and request.get("ok")),
+                "ok": bool(endpoint.get("ok") and all(r["request"].get("ok") for r in requests)),
                 "controlled_env": {k: env[k] for k in sorted(env)
                                    if k.startswith("HEADROOM_")},
                 "local_endpoint": endpoint,
-                "request": request,
+                "requests": requests,
                 "fake_upstream_requests": len(getattr(upstream, "requests", [])),
-                "input_payload_tokens_est": estimate_tokens(json.dumps(payload)),
-                "upstream_payload_tokens_est": (
-                    estimate_tokens(upstream.requests[0]["body"])
-                    if getattr(upstream, "requests", []) else 0
-                ),
+                "kompress_requested": enable_kompress,
                 "log_path": log_file,
                 "rows_seen": parsed["rows_seen"],
                 "rows_measured": parsed["rows_measured"],
@@ -606,13 +624,12 @@ def format_report(report: dict) -> str:
             "module-measure: Headroom synthetic traffic probe",
             f"  ok: {report.get('ok')}",
             f"  endpoint: {report.get('local_endpoint')}",
-            f"  request: {report.get('request')}",
+            f"  requests: {len(report.get('requests') or [])}",
             f"  fake upstream requests: {report.get('fake_upstream_requests')}",
             f"  log rows: {report.get('rows_measured')}/{report.get('rows_seen')} measured",
             f"  log delta: ~{report.get('tokens_delta', 0):,} tok "
             f"(saved ~{report.get('tokens_saved', 0):,})",
-            f"  payload est: input ~{report.get('input_payload_tokens_est', 0):,} tok; "
-            f"upstream ~{report.get('upstream_payload_tokens_est', 0):,} tok",
+            f"  Kompress requested: {report.get('kompress_requested', False)}",
             f"  sandbox: {report.get('sandbox')} "
             f"({'removed' if report.get('sandbox_removed') else 'kept'})",
             "  files written:",
