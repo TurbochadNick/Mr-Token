@@ -77,10 +77,12 @@ def offload_content(content: str | None = None, path: str | None = None,
 OFFLOAD_TOOL = {
     "name": "offload",
     "description": (
-        "Stash a large tool output or file OUT of context: writes the full content to disk and "
-        "returns only a compact summary + a stash path you can grep/read later. Use this INSTEAD "
-        "of reading a big file or pasting a big command output into context, so you don't run out "
-        "of context. Give `content` (raw text) or `path` (a file)."
+        "Stash a large tool output or file OUT of context: writes the full RAW content to a local "
+        "plaintext stash (~/.mrtoken/data/offload/, or $XDG_DATA_HOME/token-tithe/offload/; never "
+        "sent anywhere) and returns only a compact summary + the stash path you can grep/read "
+        "later. Use this INSTEAD of reading a big file or pasting a big command output into "
+        "context, so you don't run out of context. The stash is unencrypted local disk, so think "
+        "before offloading secret-bearing output. Give `content` (raw text) or `path` (a file)."
     ),
     "inputSchema": {
         "type": "object",

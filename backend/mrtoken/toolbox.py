@@ -35,7 +35,9 @@ HANDOFF_TOOL = {
     "description": (
         "Generate a compact handoff for the current session so you can start a FRESH session and "
         "drop the accumulated context. Returns markdown (goal, key decisions, last state, changed "
-        "files). Use when context is deep/bloated and continuing is expensive."),
+        "files). Use when context is deep/bloated AND the loaded context is no longer needed for "
+        "the remaining work; resetting context you will re-read costs more than continuing "
+        "(measured +20% on load-bearing context)."),
     "inputSchema": {"type": "object", "properties": {
         "session": {"type": "string", "description": "session id/prefix (default: current/newest)"}}},
 }
@@ -59,8 +61,10 @@ COMPACT_TOOL = {
 def _compact_call(args: dict) -> str:
     return ("Context is heavy — compact to keep working in this session.\n"
             "• Claude Code: run /compact.  • Codex: use your context-compaction command.\n"
-            "If the bulk is a single huge output, `offload` it instead; if you're deep into a long "
-            "task, `handoff` to a fresh session is usually cheaper than compacting.")
+            "If the bulk is a single huge output, `offload` it instead. Any reset (compact or "
+            "handoff) only pays if the dropped context won't be needed again; if you'll re-read "
+            "it, continuing is cheaper. Compact vs handoff is a workflow choice (stay here vs "
+            "fresh session), not a cost one; measured costs are about the same.")
 
 
 CONFIRM_DISPOSABLE_TOOL = {

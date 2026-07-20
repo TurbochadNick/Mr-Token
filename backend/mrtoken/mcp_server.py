@@ -11,7 +11,8 @@ Register (see docs/MCP.md):
   Claude Code:  claude mcp add mrtoken -- mrtoken-transcript mcp
   Codex:        [mcp_servers.mrtoken]  command="mrtoken-transcript"  args=["mcp"]
 
-Tools: `offload` (more land here as Phase 6 proceeds: handoff, compact, …).
+Tools: `offload`, `handoff`, `compact` (advisory), `confirm_disposable`. The registry in
+toolbox.py is the source of truth; per-tool toggling via MRTOKEN_TOOLS_OFF lives there too.
 """
 from __future__ import annotations
 import json, sys

@@ -11,4 +11,4 @@ Run the backend command (deterministic, local, no AI call) and relay its output 
 mrtoken-transcript status   # or: python3 -m mrtoken.cli status
 ```
 
-It reports profile, calls, tokens, cache, est cost, context size, and the single top next action. Do not recompute it by reading the transcript yourself. If the "next" line points to a fresh start, suggest /mr-handoff; if to cost or shape, suggest /mr-why.
+It reports profile, calls, tokens, cache, est cost, context size, and the single top next action. Do not recompute it by reading the transcript yourself. If the "next" line points to a fresh start, suggest /mr-handoff; if it points at where the cost went (output vs cached carry vs new context), suggest /mr-why.
