@@ -1205,6 +1205,32 @@ class BackendTest(unittest.TestCase):
                     if v is not None:
                         os.environ[k] = v
 
+    def test_new_session_does_not_inherit_prior_transcript(self):
+        # inbox:mr-token-session-state-fix-20260802 — at session start the supplied
+        # transcript_path may not exist yet; the old code fell back to newest-file
+        # resolution, picked up the PREVIOUS session's transcript, and its ctx%
+        # poisoned this session's debounce watermark (proc-<id>.json). Fix: a
+        # supplied-but-missing transcript_path resolves to "nothing to decide",
+        # never another session's file.
+        import mrtoken.datadir as dd
+        import mrtoken.watch as watch
+        from mrtoken import intervene
+        with tempfile.TemporaryDirectory() as tmp:
+            dd_o, rp_o = dd.central_default, watch.resolve_path
+            dd.central_default = lambda: os.path.join(tmp, "central")
+            calls = []
+            watch.resolve_path = lambda arg: calls.append(arg)  # spy; returns None (hermetic)
+            try:
+                missing = os.path.join(tmp, "newsession.jsonl")  # transcript not written yet
+                iv = intervene.intervention_for_session(transcript_path=missing,
+                                                        session_id="newsession")
+                self.assertIsNone(iv)               # nothing to decide from a missing transcript
+                self.assertEqual(calls, [])          # never fell back to newest-file resolution
+                self.assertFalse(os.path.exists(     # so no poisoned debounce state was written
+                    intervene._state_path("newsession")))
+            finally:
+                dd.central_default, watch.resolve_path = dd_o, rp_o
+
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
         # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target

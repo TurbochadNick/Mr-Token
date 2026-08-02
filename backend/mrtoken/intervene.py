@@ -134,8 +134,24 @@ def intervention_for_session(transcript_path: str | None = None,
       evaluate → autonomy gate → debounce → ask-phase (first-ask vs AFK-escalation)."""
     from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
     from mrtoken.statusline import context_window
-    path = transcript_path if (transcript_path and os.path.isfile(transcript_path)) \
-        else resolve_path(session_arg)
+    # Session-start guard (inbox:mr-token-session-state-fix-20260802): the hook hands
+    # us the EXACT transcript for THIS session. At session start that file may not
+    # exist yet — if we fall back to newest-file resolution we pick up the PREVIOUS
+    # session's transcript, whose ctx% then poisons this session's debounce watermark
+    # (proc-<id>.json). So a supplied-but-missing transcript_path means "nothing to
+    # decide yet", NOT "guess another session's transcript".
+    if transcript_path:
+        if not os.path.isfile(transcript_path):
+            return None
+        path = transcript_path
+    else:
+        path = resolve_path(session_arg)
+        # Fallback newest-file resolution can surface a different session's transcript;
+        # if a specific session_arg was requested, reject one whose embedded session id
+        # doesn't match it (never inherit another session's state via the fallback).
+        if path and session_arg and not os.path.isfile(session_arg) \
+                and not os.path.basename(path).startswith(session_arg):
+            return None
     if not path:
         return None
     mon = LiveMonitor(emit=lambda _: None)
