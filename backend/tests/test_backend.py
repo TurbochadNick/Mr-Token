@@ -688,11 +688,17 @@ class BackendTest(unittest.TestCase):
         # ROADMAP 6.1: the MCP server exposes + dispatches the toolbox (both agents
         # speak MCP, so this equips Claude and Codex from one server).
         import mrtoken.offload as offmod
+        import mrtoken.datadir as dd
+        import mrtoken.savings as savings
         from mrtoken import mcp_server
         with tempfile.TemporaryDirectory() as tmp:
             orig = offmod.central_default
+            dd_orig = dd.central_default
             offmod.central_default = lambda: tmp   # keep stash out of the real central store
+            dd.central_default = lambda: tmp       # AND savings.record() (via toolbox._offload_call)
             try:
+                # the savings path must resolve inside tmp BEFORE any tool call writes it
+                self.assertTrue(savings._db_path().startswith(tmp))
                 init = mcp_server.handle_request(
                     {"jsonrpc": "2.0", "id": 1, "method": "initialize",
                      "params": {"protocolVersion": "2025-06-18"}})
@@ -719,6 +725,7 @@ class BackendTest(unittest.TestCase):
                 self.assertTrue(bad["result"]["isError"])
             finally:
                 offmod.central_default = orig
+                dd.central_default = dd_orig
 
     def test_experiment_runner_groundwork(self):
         # ROADMAP 5A.1–5A.3 groundwork: the hugelib fixture's oracle plumbing works
@@ -1300,6 +1307,93 @@ class BackendTest(unittest.TestCase):
                 if o_env is not None:
                     os.environ["MRTOKEN_COHORT"] = o_env
 
+    def test_stage2_repair1_attributable_realized_row(self):
+        # Repair 1: a newly written realized row joins to exactly one trace and one
+        # provider; legacy (empty session_id) rows are excluded, never backfilled.
+        import mrtoken.datadir as dd
+        import mrtoken.savings as savings
+        from mrtoken.ingest import connect, now_iso
+        with tempfile.TemporaryDirectory() as tmp:
+            o_cd = dd.central_default
+            dd.central_default = lambda: os.path.join(tmp, "central")   # temp savings.db
+            try:
+                savings.record("offload", 1234, session_id="s1", source="claude",
+                               rule="huge_tool_output", project_key="/proj")
+                savings.record("offload", 999)   # legacy: no attribution
+                attributed = savings.attributed_rows()                 # read-only
+                self.assertEqual(len(attributed), 1)                    # legacy excluded
+                _tool, _tok, sid, src, rule, _pk, _ts = attributed[0]
+                self.assertEqual((sid, src, rule), ("s1", "claude", "huge_tool_output"))
+                # joins to exactly one trace / one provider in a temp main DB
+                mconn = connect(os.path.join(tmp, "main.db"))
+                mconn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES(?,?,?)",
+                              ("claude_code", sid, now_iso()))
+                mconn.commit()
+                provs = mconn.execute("SELECT DISTINCT source FROM trace WHERE session_id=?",
+                                      (sid,)).fetchall()
+                mconn.close()
+                self.assertEqual(len(provs), 1)
+            finally:
+                dd.central_default = o_cd
+
+    def test_stage2_repair2_union_no_double_count(self):
+        # Repair 2: three rules firing on one block => that block counted ONCE.
+        from mrtoken.ingest import connect, now_iso
+        from mrtoken.measure import union_addressable_tokens
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "m.db"))
+            conn.execute("INSERT INTO trace(id,source,session_id,ingested_at) VALUES(1,'claude_code','s1',?)",
+                         (now_iso(),))
+            conn.execute("INSERT INTO context_block(trace_id,block_type,hash,token_count) VALUES(1,'file','H',1000)")
+            conn.commit()
+            claims = [(1, "H", "file"), (1, "H", "file"), (1, "H", "file")]
+            self.assertEqual(union_addressable_tokens(conn, claims), 1000)   # once, not 3000
+            conn.execute("INSERT INTO context_block(trace_id,block_type,hash,token_count) VALUES(1,'tool','K',500)")
+            conn.commit()
+            self.assertEqual(union_addressable_tokens(conn, claims + [(1, "K", "tool")]), 1500)
+            conn.close()
+
+    def test_stage2_repair3_outcome_from_actuals(self):
+        # Repair 3: outcome from measured model_call columns only, never est_savings.
+        from mrtoken.ingest import connect, now_iso
+        from mrtoken.measure import measured_task_tokens
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "m.db"))
+            conn.execute("INSERT INTO trace(id,source,session_id,ingested_at) VALUES(1,'claude_code','s1',?)",
+                         (now_iso(),))
+            conn.execute("INSERT INTO model_call(trace_id,input_tokens,output_tokens,"
+                         "cache_read_input_tokens,reasoning_tokens,est_cost_usd) VALUES(1,100,50,200,10,0.5)")
+            conn.execute("INSERT INTO model_call(trace_id,input_tokens,output_tokens,"
+                         "cache_creation_input_tokens,est_cost_usd) VALUES(1,20,5,30,0.1)")
+            conn.commit()
+            m = measured_task_tokens(conn, [1])
+            self.assertEqual((m["input"], m["output"], m["cache"], m["reasoning"]), (120, 55, 230, 10))
+            self.assertEqual(m["total_tokens"], 175)
+            self.assertAlmostEqual(m["est_cost_usd"], 0.6)
+            self.assertEqual(measured_task_tokens(conn, [])["total_tokens"], 0)  # empty => zeros
+            conn.close()
+
+    def test_stage2_savings_isolation(self):
+        # R1/R2 regression: central_default is resolved THROUGH the module (so patching
+        # isolates from the live store), and reads are read-only — reading a MISSING
+        # store returns empty WITHOUT creating one.
+        import mrtoken.datadir as dd
+        import mrtoken.savings as savings
+        with tempfile.TemporaryDirectory() as tmp:
+            o = dd.central_default
+            dd.central_default = lambda: os.path.join(tmp, "central")
+            try:
+                self.assertTrue(savings._db_path().startswith(tmp))   # redirected, not live
+                savings.record("offload", 5, session_id="x", source="claude", rule="r")
+                self.assertTrue(os.path.exists(os.path.join(tmp, "central", "savings.db")))
+                # a read of a MISSING store returns empty and creates nothing
+                dd.central_default = lambda: os.path.join(tmp, "absent")
+                self.assertEqual(savings.realized(), {"total": 0, "by_tool": {}})
+                self.assertEqual(savings.attributed_rows(), [])
+                self.assertFalse(os.path.exists(os.path.join(tmp, "absent")))
+            finally:
+                dd.central_default = o
+
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
         # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target
@@ -1432,9 +1526,10 @@ class BackendTest(unittest.TestCase):
     def test_savings_realized_and_addressable(self):
         # ROADMAP 7.1: realized savings (logged tool actions) + addressable (rules found).
         import mrtoken.savings as savings
+        import mrtoken.datadir as dd
         with tempfile.TemporaryDirectory() as tmp:
-            orig = savings.central_default
-            savings.central_default = lambda: tmp
+            orig = dd.central_default          # savings resolves central_default through the module
+            dd.central_default = lambda: tmp
             try:
                 self.assertEqual(savings.realized()["total"], 0)         # nothing yet
                 savings.record("offload", 12000)
@@ -1454,7 +1549,7 @@ class BackendTest(unittest.TestCase):
                 conn.commit()
                 self.assertEqual(savings.addressable(conn), 50000)
             finally:
-                savings.central_default = orig
+                dd.central_default = orig
 
     def test_module_measure_records_savings_and_outcome(self):
         # ROADMAP 7.3: external modules get a lab-only measurement shim that
@@ -1462,10 +1557,11 @@ class BackendTest(unittest.TestCase):
         # registering or running a real agent.
         import mrtoken.savings as savings
         import mrtoken.outcomes as outcomes
+        import mrtoken.datadir as dd
         from mrtoken import module_measure
         with tempfile.TemporaryDirectory() as tmp:
-            s_orig, o_orig = savings.central_default, outcomes.central_default
-            savings.central_default = lambda: tmp
+            s_orig, o_orig = dd.central_default, outcomes.central_default
+            dd.central_default = lambda: tmp   # savings resolves through the module
             outcomes.central_default = lambda: tmp
             try:
                 before = os.path.join(tmp, "before.txt")
@@ -1504,7 +1600,7 @@ class BackendTest(unittest.TestCase):
                 self.assertEqual(parsed["tokens_delta"], 460)
                 self.assertEqual(parsed["tokens_saved"], 460)
             finally:
-                savings.central_default = s_orig
+                dd.central_default = s_orig
                 outcomes.central_default = o_orig
 
     def test_module_measure_synthetic_upstream_fixture(self):
