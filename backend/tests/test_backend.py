@@ -1231,6 +1231,75 @@ class BackendTest(unittest.TestCase):
             finally:
                 dd.central_default, watch.resolve_path = dd_o, rp_o
 
+    def test_cohort_gate(self):
+        # Stage-1 staged pullback: automatic surfaces self-gate on an allowlist.
+        import mrtoken.cohort as cohort
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "config.json")
+            o_cfg = cohort._CONFIG
+            o_env = os.environ.pop("MRTOKEN_COHORT", None)
+            cohort._CONFIG = cfg
+            try:
+                # no allowlist (config absent, env unset) => everything in-cohort (default)
+                self.assertTrue(cohort.in_cohort("/any/where"))
+                self.assertTrue(cohort.in_cohort(None))
+                # config allowlist => only listed roots + their subdirs
+                projA = os.path.realpath(os.path.join(tmp, "projA"))
+                os.makedirs(projA)
+                with open(cfg, "w") as fh:
+                    json.dump({"cohort": [projA]}, fh)
+                self.assertTrue(cohort.in_cohort(projA))
+                self.assertTrue(cohort.in_cohort(os.path.join(projA, "sub", "dir")))
+                self.assertFalse(cohort.in_cohort(os.path.join(tmp, "projB")))
+                self.assertFalse(cohort.in_cohort(None))   # fail-closed once allowlisted
+                # env override wins over the config file
+                os.environ["MRTOKEN_COHORT"] = os.path.join(tmp, "projB")
+                self.assertTrue(cohort.in_cohort(os.path.join(tmp, "projB")))
+                self.assertFalse(cohort.in_cohort(projA))
+            finally:
+                cohort._CONFIG = o_cfg
+                os.environ.pop("MRTOKEN_COHORT", None)
+                if o_env is not None:
+                    os.environ["MRTOKEN_COHORT"] = o_env
+
+    def test_stop_hook_free_exit_out_of_cohort(self):
+        # The Stop hook must early-exit(0) for an out-of-cohort session BEFORE opening
+        # any DB (connect() writes on open) — proving the gate is genuinely free.
+        import io, contextlib, importlib.util, sys
+        import mrtoken, mrtoken.cohort as cohort, mrtoken.ingest as ingest
+        backend = os.path.dirname(os.path.dirname(mrtoken.__file__))
+        spec = importlib.util.spec_from_file_location(
+            "on_stop_t", os.path.join(backend, "hooks", "on_stop.py"))
+        on_stop = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(on_stop)
+        with tempfile.TemporaryDirectory() as tmp:
+            projA = os.path.realpath(os.path.join(tmp, "projA"))
+            os.makedirs(projA)
+            cfg = os.path.join(tmp, "config.json")
+            with open(cfg, "w") as fh:
+                json.dump({"cohort": [projA]}, fh)
+            o_cfg, o_stdin, o_argv, o_connect = (
+                cohort._CONFIG, sys.stdin, sys.argv, ingest.connect)
+            o_env = os.environ.pop("MRTOKEN_COHORT", None)
+            hit = {"connect": False}
+            cohort._CONFIG = cfg
+            ingest.connect = lambda *a, **k: (hit.__setitem__("connect", True) or o_connect(*a, **k))
+            try:
+                sys.argv = ["on_stop"]
+                sys.stdin = io.StringIO(json.dumps(
+                    {"session_id": "s1", "cwd": os.path.join(tmp, "OTHER")}))  # out of cohort
+                out = io.StringIO()
+                with self.assertRaises(SystemExit) as cm, contextlib.redirect_stdout(out):
+                    on_stop.main()
+                self.assertEqual(cm.exception.code, 0)     # clean early exit
+                self.assertFalse(hit["connect"])           # no DB opened (free, no write)
+                self.assertEqual(out.getvalue().strip(), "")  # no token-costing output
+            finally:
+                cohort._CONFIG, sys.stdin, sys.argv, ingest.connect = (
+                    o_cfg, o_stdin, o_argv, o_connect)
+                if o_env is not None:
+                    os.environ["MRTOKEN_COHORT"] = o_env
+
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
         # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target

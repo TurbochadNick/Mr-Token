@@ -134,6 +134,13 @@ def _load_payload() -> dict:
 def main():
     payload = _load_payload()
 
+    # Stage-1 cohort gate: automatic COLLECTION runs only in allowlisted projects.
+    # Checked before find_transcripts/connect() below, so an out-of-cohort session
+    # opens no DB and ingests nothing. Empty allowlist => unchanged (collect all).
+    from mrtoken.cohort import in_cohort
+    if not in_cohort(payload.get("cwd")):
+        sys.exit(0)
+
     session_id = payload.get("session_id", "")
     paths = find_transcripts(session_id) if session_id else []
     codex_path = find_codex_rollout(payload) if not paths else None

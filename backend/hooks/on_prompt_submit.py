@@ -26,6 +26,13 @@ def main():
     if cwd and os.path.isdir(cwd):
         os.chdir(cwd)
 
+    # Stage-1 cohort gate: automatic behaviour runs only in allowlisted projects.
+    # Checked BEFORE the heavy imports below, so an out-of-cohort session costs
+    # nothing (no tokens injected, no DB opened). Empty allowlist => unchanged.
+    from mrtoken.cohort import in_cohort
+    if not in_cohort(cwd):
+        sys.exit(0)
+
     tpath = payload.get("transcript_path")
     # proc engine (ROADMAP 6.4–6.6): pressure + reclaimable junk → an actionable
     # intervention (tell, or ask w/ AFK escalation), debounced + policy-gated.

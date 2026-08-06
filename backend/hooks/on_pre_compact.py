@@ -25,6 +25,11 @@ def main():
     if cwd and os.path.isdir(cwd):
         os.chdir(cwd)
 
+    # Stage-1 cohort gate (before the heavy import below → free out-of-cohort).
+    from mrtoken.cohort import in_cohort
+    if not in_cohort(cwd):
+        sys.exit(0)
+
     try:
         from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
         from mrtoken.statusline import context_window

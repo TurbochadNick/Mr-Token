@@ -217,6 +217,7 @@ def statusline_hud(session_arg: str | None = None) -> int:
     effort = None
     plan_5h = None
     plan_7d = None
+    cwd = None
     try:
         raw = sys.stdin.read() if not sys.stdin.isatty() else ""
         if raw.strip():
@@ -234,6 +235,12 @@ def statusline_hud(session_arg: str | None = None) -> int:
                 os.chdir(cwd)
     except Exception:
         pass
+
+    # Stage-1 cohort gate: no always-on statusline outside the allowlisted cohort
+    # (also skips the connect()-on-open write build_statusline_text would do).
+    from mrtoken.cohort import in_cohort
+    if not in_cohort(cwd):
+        return 0
 
     print(build_statusline_text(session_arg, transcript_path, model, effort, plan_5h, plan_7d)
           or "mr · no session")
