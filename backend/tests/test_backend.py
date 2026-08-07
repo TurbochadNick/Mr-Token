@@ -1394,6 +1394,137 @@ class BackendTest(unittest.TestCase):
             finally:
                 dd.central_default = o
 
+    # ── spend-governance MVP: advisory task-spend policy (spendpolicy.evaluate_spend) ──
+    # Provider-neutral, hermetic: pure functions over INJECTED prices/estimates. No DB,
+    # no network, no live pricing. Verifies the auditable allow/escalate/deny verdict.
+    def test_spendpolicy_allow_recommends_cheapest_capable(self):
+        from mrtoken.spendpolicy import evaluate_spend, ALLOW
+        task = {"id": "t", "est_input_tokens": 100_000, "est_output_tokens": 20_000}
+        cands = [
+            {"model": "big", "capability": 3, "price": {"input": 10.0, "output": 50.0}},
+            {"model": "mid", "capability": 2, "price": {"input": 3.0, "output": 15.0}},
+        ]
+        r = evaluate_spend(task, cands, {"min_capability": 2, "escalate_usd": 5.0, "max_task_usd": 10.0})
+        self.assertEqual(r["decision"], ALLOW)
+        self.assertEqual(r["recommended_model"], "mid")   # cheaper of the two capable
+        # 100k*3/1e6 + 20k*15/1e6 = 0.3 + 0.3 = 0.6
+        self.assertAlmostEqual(r["projected_cost_usd"], 0.6, places=6)
+        self.assertTrue(r["advisory"])
+        self.assertTrue(r["reasons"] and any("allow" in x for x in r["reasons"]))
+        self.assertEqual([x["model"] for x in r["ranked"]], ["mid", "big"])  # cheapest first
+
+    def test_spendpolicy_escalate_between_thresholds(self):
+        from mrtoken.spendpolicy import evaluate_spend, ESCALATE
+        task = {"est_input_tokens": 1_000_000, "est_output_tokens": 0}   # 1M in
+        cands = [{"model": "m", "capability": 2, "price": {"input": 3.0, "output": 15.0}}]
+        # cost = 3.0; escalate at 1.0, budget 10.0 -> between -> escalate
+        r = evaluate_spend(task, cands, {"escalate_usd": 1.0, "max_task_usd": 10.0})
+        self.assertEqual(r["decision"], ESCALATE)
+        self.assertEqual(r["recommended_model"], "m")
+        self.assertAlmostEqual(r["projected_cost_usd"], 3.0, places=6)
+
+    def test_spendpolicy_deny_over_budget(self):
+        from mrtoken.spendpolicy import evaluate_spend, DENY
+        task = {"est_input_tokens": 1_000_000, "est_output_tokens": 0}
+        cands = [{"model": "m", "capability": 2, "price": {"input": 3.0, "output": 15.0}}]
+        r = evaluate_spend(task, cands, {"max_task_usd": 1.0})   # 3.0 > 1.0
+        self.assertEqual(r["decision"], DENY)
+        self.assertEqual(r["recommended_model"], "m")            # still names the cheapest capable
+        self.assertTrue(any("exceeds the per-task budget" in x for x in r["reasons"]))
+
+    def test_spendpolicy_deny_no_capability_is_distinct_from_over_budget(self):
+        from mrtoken.spendpolicy import evaluate_spend, DENY
+        task = {"est_input_tokens": 10, "est_output_tokens": 10}   # trivially cheap
+        cands = [{"model": "weak", "capability": 1, "price": {"input": 1.0, "output": 5.0}}]
+        r = evaluate_spend(task, cands, {"min_capability": 3, "max_task_usd": 100.0})
+        self.assertEqual(r["decision"], DENY)
+        self.assertIsNone(r["recommended_model"])                 # nothing eligible to recommend
+        self.assertTrue(any("required capability" in x for x in r["reasons"]))
+        self.assertFalse(any("budget" in x for x in r["reasons"]))  # not a budget denial
+
+    def test_spendpolicy_provider_neutral_and_downgrade_note(self):
+        # Arbitrary non-repo model ids + injected prices: the verdict follows the injected
+        # numbers, not prices.json. A cheaper-but-ineligible option is surfaced for audit.
+        from mrtoken.spendpolicy import evaluate_spend, ALLOW
+        task = {"est_input_tokens": 100_000, "est_output_tokens": 100_000}
+        cands = [
+            {"model": "vendor-x-nano", "capability": 1, "price": {"input": 0.5, "output": 1.0}},
+            {"model": "vendor-y-pro",  "capability": 3, "price": {"input": 4.0, "output": 12.0}},
+        ]
+        r = evaluate_spend(task, cands, {"min_capability": 2})   # no budget thresholds
+        self.assertEqual(r["decision"], ALLOW)                   # no cap set -> allow
+        self.assertEqual(r["recommended_model"], "vendor-y-pro")  # only eligible one
+        self.assertTrue(any("was excluded: capability tier" in x for x in r["reasons"]))
+        self.assertIn("estimate", r["caveat"].lower())           # honest cost caveat present
+
+    def test_spendpolicy_bridge_uses_injected_price_table_not_live(self):
+        # candidates_from_prices reuses ingest.price_for over an INJECTED table; verifies
+        # the projection matches the per-million math (parallels ingest.est_cost).
+        from mrtoken.ingest import load_prices
+        from mrtoken.spendpolicy import candidates_from_prices, project_task_cost
+        prices = load_prices()
+        cands = candidates_from_prices(prices, [("claude-haiku-4-5", 1), ("claude-opus-5", 3)])
+        self.assertEqual({c["model"] for c in cands},
+                         {"claude-haiku-4-5", "claude-opus-5"})
+        task = {"est_input_tokens": 1_000_000, "est_output_tokens": 0}
+        haiku = next(c for c in cands if "haiku" in c["model"])
+        # haiku input rate is 1.0/M in the injected table -> 1.0 for 1M input tokens
+        self.assertAlmostEqual(project_task_cost(haiku["price"], task), 1.0, places=6)
+
+    # ── numeric-safety regressions (independent review defect: negative/non-finite
+    # numerics bypassed the budget gate — negative est -> negative cost sorts cheapest and
+    # passes every cap; nan -> every '>' is False and also passes). Reject, not clamp. ──
+    def test_spendpolicy_rejects_negative_token_estimate(self):
+        from mrtoken.spendpolicy import evaluate_spend, DENY
+        # the exact reviewer repro: previously returned ALLOW at projected_cost_usd=-10.0
+        r = evaluate_spend({"est_input_tokens": -1_000_000, "est_output_tokens": 0},
+                           [{"model": "m", "capability": 0, "price": {"input": 10.0}}],
+                           {"max_task_usd": 0.01})
+        self.assertEqual(r["decision"], DENY)          # was ALLOW — bypass closed
+        self.assertNotEqual(r["decision"], "allow")
+        self.assertIsNone(r["projected_cost_usd"])     # never computes a negative cost
+        self.assertTrue(any("invalid input rejected" in x for x in r["reasons"]))
+        self.assertTrue(any("est_input_tokens" in x for x in r["reasons"]))
+
+    def test_spendpolicy_rejects_non_finite_estimate(self):
+        from mrtoken.spendpolicy import evaluate_spend, DENY
+        r = evaluate_spend({"est_input_tokens": float("nan"), "est_output_tokens": 0},
+                           [{"model": "m", "capability": 1, "price": {"input": 10.0}}],
+                           {"max_task_usd": 0.01})
+        self.assertEqual(r["decision"], DENY)          # nan would have slipped under the cap
+        self.assertIsNone(r["projected_cost_usd"])
+
+    def test_spendpolicy_rejects_negative_capability_and_price(self):
+        from mrtoken.spendpolicy import evaluate_spend, DENY
+        r = evaluate_spend({"est_input_tokens": 100, "est_output_tokens": 100},
+                           [{"model": "m", "capability": -1, "price": {"input": -10.0}}],
+                           {"max_task_usd": 1.0})
+        self.assertEqual(r["decision"], DENY)
+        self.assertIsNone(r["recommended_model"])
+        joined = " ".join(r["reasons"])
+        self.assertIn("m.capability=-1", joined)
+        self.assertIn("m.price.input=-10.0", joined)
+
+    def test_spendpolicy_rejects_non_finite_budget_cap(self):
+        # same-root-cause edge: a nan budget cap would make `cost > max_usd` always False
+        # and bypass the deny path — reject the policy threshold too.
+        from mrtoken.spendpolicy import evaluate_spend, DENY
+        r = evaluate_spend({"est_input_tokens": 1_000_000, "est_output_tokens": 0},
+                           [{"model": "m", "capability": 1, "price": {"input": 10.0}}],
+                           {"max_task_usd": float("nan")})
+        self.assertEqual(r["decision"], DENY)
+        self.assertTrue(any("policy.max_task_usd" in x for x in r["reasons"]))
+
+    def test_project_task_cost_raises_on_negative_or_non_finite(self):
+        from mrtoken.spendpolicy import project_task_cost
+        with self.assertRaises(ValueError):
+            project_task_cost({"input": 10.0}, {"est_input_tokens": -1})
+        with self.assertRaises(ValueError):
+            project_task_cost({"input": float("inf")}, {"est_input_tokens": 1})
+        # valid inputs still compute normally (no false positive)
+        self.assertAlmostEqual(
+            project_task_cost({"input": 3.0}, {"est_input_tokens": 1_000_000}), 3.0, places=6)
+
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
         # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target
