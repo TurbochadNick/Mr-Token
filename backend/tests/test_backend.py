@@ -1525,6 +1525,66 @@ class BackendTest(unittest.TestCase):
         self.assertAlmostEqual(
             project_task_cost({"input": 3.0}, {"est_input_tokens": 1_000_000}), 3.0, places=6)
 
+    # ── spend-governance dry-run harness (customer-use-case vertical proof) ──
+    # Demonstrates the CTO/CFO control end-to-end over injected task/candidate/price data:
+    # cap spend, compare eligible models, recommend the lower-cost suitable one, auditable
+    # allow/escalate/deny. Pure — no provider/DB/config; deterministic output.
+    def test_spend_demo_covers_allow_escalate_deny(self):
+        from mrtoken.spend_demo import run_all
+        rows = run_all()
+        self.assertEqual([r["name"] for r in rows],
+                         ["cheap-task-allow", "premium-required-escalate", "over-budget-deny"])
+        self.assertEqual([r["decision"] for r in rows], ["allow", "escalate", "deny"])
+        for r in rows:                                  # every row is a full auditable record
+            self.assertTrue(r["advisory"])
+            self.assertTrue(r["reasons"])
+            self.assertIn("estimate", r["caveat"].lower())
+
+    def test_spend_demo_recommends_lower_cost_suitable(self):
+        from mrtoken.spend_demo import run_all
+        allow, escalate, deny = run_all()
+        # allow: floor=1 -> cheapest eligible is the nano tier, not the pricier capable ones
+        self.assertEqual(allow["recommended_model"], "vendor-nano")
+        self.assertAlmostEqual(allow["projected_cost_usd"], 0.013, places=6)
+        # escalate: floor=3 forces the only eligible (premium) model; cheaper ones excluded
+        self.assertEqual(escalate["recommended_model"], "vendor-max")
+        self.assertTrue(any("was excluded: capability tier" in x for x in escalate["reasons"]))
+        # deny: names the cheapest SUITABLE model even though it blows the budget cap
+        self.assertEqual(deny["recommended_model"], "vendor-mini")
+        self.assertTrue(any("exceeds the per-task budget" in x for x in deny["reasons"]))
+
+    def test_spend_demo_render_deterministic_and_auditable(self):
+        from mrtoken.spend_demo import run_all, render_decision, demo
+        row = run_all()[0]
+        text_a, text_b = render_decision(row), render_decision(row)
+        self.assertEqual(text_a, text_b)                # byte-stable: no timestamp/randomness
+        self.assertEqual(demo(), demo())                # whole demo reproducible
+        self.assertIn("ALLOW", text_a)
+        self.assertIn("vendor-nano", text_a)
+        self.assertIn("advisory — not enforced against a live agent", text_a)
+        for why in row["reasons"]:                      # every reason appears in the record
+            self.assertIn(why, text_a)
+
+    def test_spend_demo_provider_neutral_custom_scenario(self):
+        # A caller-supplied scenario with novel fake vendors + injected prices: the verdict
+        # follows the injected numbers, proving no dependence on prices.json / a real roster.
+        from mrtoken.spend_demo import run_scenario
+        scenario = {
+            "name": "custom", "task": {"id": "t", "est_input_tokens": 1_000_000,
+                                       "est_output_tokens": 0, "min_capability": 2},
+            "candidates": [
+                {"model": "acme-lite", "capability": 1, "price": {"input": 0.1, "output": 0.1}},
+                {"model": "acme-heavy", "capability": 2, "price": {"input": 4.0, "output": 4.0}},
+            ],
+            "policy": {"min_capability": 2, "max_task_usd": 10.0},
+        }
+        r = run_scenario(scenario)
+        self.assertEqual(r["name"], "custom")
+        self.assertEqual(r["task_id"], "t")
+        self.assertEqual(r["decision"], "allow")
+        self.assertEqual(r["recommended_model"], "acme-heavy")   # only eligible; cheaper one excluded
+        self.assertAlmostEqual(r["projected_cost_usd"], 4.0, places=6)
+
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
         # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target
