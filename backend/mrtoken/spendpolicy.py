@@ -84,7 +84,7 @@ def _collect_invalid(task: dict, candidates: list, policy: dict) -> list:
         for k in _PRICE_FIELDS:
             if _bad_number(price.get(k)):
                 bad.append(f"{label}.price.{k}={price.get(k)!r}")
-    for f in ("min_capability", "max_task_usd", "escalate_usd"):
+    for f in ("min_capability", "max_task_usd", "escalate_usd", "max_task_tokens"):
         if _bad_number(policy.get(f)):
             bad.append(f"policy.{f}={policy.get(f)!r}")
     return bad
@@ -124,7 +124,10 @@ def evaluate_spend(task: dict, candidates: Iterable[dict], policy: dict) -> dict
                  "min_capability"?}  — a forward estimate (provider-neutral).
     candidates: iterable of {"model", "capability" (int tier; higher = more capable),
                  "price": {input, output, cache_read?, cache_write?}}  — INJECTED prices.
-    policy    : {"max_task_usd"?, "escalate_usd"?, "min_capability"?}  — the budget rule.
+    policy    : {"max_task_usd"?, "escalate_usd"?, "min_capability"?,
+                 "max_task_tokens"?}  — the budget rule. max_task_tokens is an OPTIONAL
+                 provider-neutral ceiling on the SUM of the task's estimated token fields
+                 (_TASK_TOKEN_FIELDS); absent => no token gate, behaviour unchanged.
 
     Returns an auditable dict: decision (allow|escalate|deny), recommended_model,
     projected_cost_usd, reasons[], ranked[] (every candidate, cheapest-first, with
@@ -151,6 +154,31 @@ def evaluate_spend(task: dict, candidates: Iterable[dict], policy: dict) -> dict
                        "escalate_usd": policy.get("escalate_usd")},
             "advisory": True, "caveat": COST_CAVEAT,
         }
+
+    # Optional provider-neutral per-task TOKEN cap (max_task_tokens). Absent => this branch
+    # is never entered and behaviour is byte-identical to before. Present => compare the SUM
+    # of the same estimated token fields cost projection uses (_TASK_TOKEN_FIELDS) against
+    # the cap; STRICTLY over-cap is its own auditable DENY, distinct from capability- and
+    # $-budget denial. Invalid/non-finite/negative caps AND token estimates already failed
+    # closed above through _collect_invalid/_bad_number, so this sum is a clean non-negative
+    # integer and the comparison cannot be bypassed.
+    max_tokens = policy.get("max_task_tokens")
+    if max_tokens is not None:
+        est_tokens = sum(_int(task.get(f)) for f in _TASK_TOKEN_FIELDS)
+        if est_tokens > _float(max_tokens):
+            return {
+                "decision": DENY, "recommended_model": None, "projected_cost_usd": None,
+                "reasons": [f"estimated {est_tokens} task tokens exceed the per-task token "
+                            f"cap {max_tokens} -> deny (token ceiling, distinct from "
+                            "capability and $-budget denial)."],
+                "ranked": [],
+                "policy": {"min_capability": policy.get("min_capability",
+                                                        task.get("min_capability")),
+                           "max_task_usd": policy.get("max_task_usd"),
+                           "escalate_usd": policy.get("escalate_usd"),
+                           "max_task_tokens": max_tokens},
+                "advisory": True, "caveat": COST_CAVEAT,
+            }
 
     min_cap = _int(policy.get("min_capability", task.get("min_capability", 0)))
     max_usd = _float(policy["max_task_usd"]) if policy.get("max_task_usd") is not None else None

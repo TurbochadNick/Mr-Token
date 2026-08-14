@@ -1585,6 +1585,90 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(r["recommended_model"], "acme-heavy")   # only eligible; cheaper one excluded
         self.assertAlmostEqual(r["projected_cost_usd"], 4.0, places=6)
 
+    # ── follow-on: optional provider-neutral policy.max_task_tokens (per-task token cap) ──
+    # Absent => behaviour exactly as before. Present => caps the SUM of the four estimated
+    # token fields; strictly over-cap is its own DENY, distinct from capability/$ denial.
+    # Invalid caps/tokens fail closed through the same _collect_invalid/_bad_number path.
+    def test_max_task_tokens_absent_preserves_behavior(self):
+        from mrtoken.spendpolicy import evaluate_spend, ALLOW
+        task = {"est_input_tokens": 1000, "est_output_tokens": 0, "min_capability": 1}
+        cands = [{"model": "m", "capability": 1, "price": {"input": 0.001, "output": 0.0}}]
+        r = evaluate_spend(task, cands, {"min_capability": 1})       # no max_task_tokens
+        self.assertEqual(r["decision"], ALLOW)                       # verdict unchanged
+        self.assertNotIn("max_task_tokens", r["policy"])             # normal-path shape untouched
+        self.assertFalse(any("token cap" in x for x in r["reasons"]))
+
+    def test_max_task_tokens_boundaries_under_exact_over(self):
+        from mrtoken.spendpolicy import evaluate_spend, ALLOW, DENY
+        task = {"est_input_tokens": 1000, "est_output_tokens": 0, "min_capability": 1}  # sum=1000
+        cands = [{"model": "m", "capability": 1, "price": {"input": 0.001, "output": 0.0}}]
+        r_exact = evaluate_spend(task, cands, {"min_capability": 1, "max_task_tokens": 1000})
+        self.assertEqual(r_exact["decision"], ALLOW)                 # 1000 <= 1000 -> continues
+        self.assertFalse(any("token cap" in x for x in r_exact["reasons"]))
+        r_under = evaluate_spend(task, cands, {"min_capability": 1, "max_task_tokens": 1001})
+        self.assertEqual(r_under["decision"], ALLOW)                 # one-under -> continues
+        r_over = evaluate_spend(task, cands, {"min_capability": 1, "max_task_tokens": 999})
+        self.assertEqual(r_over["decision"], DENY)                   # one-over -> token DENY
+        self.assertIsNone(r_over["recommended_model"])
+        self.assertIsNone(r_over["projected_cost_usd"])
+        self.assertTrue(any("per-task token cap 999" in x for x in r_over["reasons"]))
+        self.assertEqual(r_over["policy"]["max_task_tokens"], 999)
+
+    def test_max_task_tokens_sums_all_estimated_fields(self):
+        from mrtoken.spendpolicy import evaluate_spend, DENY
+        # every estimated token field contributes to the summed demand (250*4 = 1000 > 999)
+        task = {"est_input_tokens": 250, "est_output_tokens": 250,
+                "est_cache_read_tokens": 250, "est_cache_write_tokens": 250, "min_capability": 1}
+        cands = [{"model": "m", "capability": 1, "price": {"input": 0.001}}]
+        r = evaluate_spend(task, cands, {"min_capability": 1, "max_task_tokens": 999})
+        self.assertEqual(r["decision"], DENY)
+        self.assertTrue(any("estimated 1000 task tokens" in x for x in r["reasons"]))
+
+    def test_max_task_tokens_invalid_fails_closed(self):
+        from mrtoken.spendpolicy import evaluate_spend, DENY
+        cands = [{"model": "m", "capability": 1, "price": {"input": 0.001}}]
+        base = {"est_input_tokens": 10, "min_capability": 1}
+        r_neg = evaluate_spend(base, cands, {"min_capability": 1, "max_task_tokens": -1})
+        self.assertEqual(r_neg["decision"], DENY)                    # negative cap
+        self.assertTrue(any("invalid input rejected" in x for x in r_neg["reasons"]))
+        self.assertTrue(any("policy.max_task_tokens=-1" in x for x in r_neg["reasons"]))
+        self.assertFalse(any("per-task token cap" in x for x in r_neg["reasons"]))  # not the token path
+        r_nan = evaluate_spend(base, cands, {"min_capability": 1, "max_task_tokens": float("nan")})
+        self.assertEqual(r_nan["decision"], DENY)                    # non-finite cap
+        self.assertTrue(any("invalid input rejected" in x for x in r_nan["reasons"]))
+        # negative token estimate with a cap present -> fails closed BEFORE the token gate
+        r_negtok = evaluate_spend({"est_input_tokens": -5, "min_capability": 1}, cands,
+                                  {"min_capability": 1, "max_task_tokens": 100})
+        self.assertEqual(r_negtok["decision"], DENY)
+        self.assertTrue(any("task.est_input_tokens=-5" in x for x in r_negtok["reasons"]))
+
+    def test_max_task_tokens_denial_visibly_distinct(self):
+        from mrtoken.spendpolicy import evaluate_spend, DENY
+        # (a) token-cap denial
+        tok = evaluate_spend({"est_input_tokens": 1000, "min_capability": 1},
+                             [{"model": "m", "capability": 3, "price": {"input": 0.001}}],
+                             {"min_capability": 1, "max_task_tokens": 10})
+        tok_r = " ".join(tok["reasons"])
+        # (b) capability denial
+        capd = evaluate_spend({"est_input_tokens": 10, "min_capability": 1},
+                              [{"model": "weak", "capability": 1, "price": {"input": 0.001}}],
+                              {"min_capability": 3})
+        cap_r = " ".join(capd["reasons"])
+        # (c) dollar-budget denial
+        dol = evaluate_spend({"est_input_tokens": 1_000_000, "min_capability": 1},
+                             [{"model": "m", "capability": 1, "price": {"input": 3.0}}],
+                             {"min_capability": 1, "max_task_usd": 1.0})
+        dol_r = " ".join(dol["reasons"])
+        self.assertEqual((tok["decision"], capd["decision"], dol["decision"]), (DENY, DENY, DENY))
+        # each denial's signature phrase is in its OWN reason and ABSENT from the token one
+        self.assertIn("per-task token cap", tok_r)
+        self.assertNotIn("per-task token cap", cap_r)
+        self.assertNotIn("per-task token cap", dol_r)
+        self.assertIn("required capability", cap_r)
+        self.assertNotIn("required capability", tok_r)
+        self.assertIn("per-task budget $", dol_r)
+        self.assertNotIn("per-task budget $", tok_r)
+
     def test_live_monitor_classifies_block_disposability(self):
         # Gate 1's producer: a target read once and untouched for
         # K_DISPOSABLE_TURNS responses is disposable (scanlib-like); a target
