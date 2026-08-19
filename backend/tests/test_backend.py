@@ -1483,6 +1483,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(r["decision"], DENY)          # was ALLOW — bypass closed
         self.assertNotEqual(r["decision"], "allow")
         self.assertIsNone(r["projected_cost_usd"])     # never computes a negative cost
+        self.assertNotIn("max_task_tokens", r["policy"])
         self.assertTrue(any("invalid input rejected" in x for x in r["reasons"]))
         self.assertTrue(any("est_input_tokens" in x for x in r["reasons"]))
 
@@ -1605,6 +1606,7 @@ class BackendTest(unittest.TestCase):
         r_exact = evaluate_spend(task, cands, {"min_capability": 1, "max_task_tokens": 1000})
         self.assertEqual(r_exact["decision"], ALLOW)                 # 1000 <= 1000 -> continues
         self.assertFalse(any("token cap" in x for x in r_exact["reasons"]))
+        self.assertEqual(r_exact["policy"]["max_task_tokens"], 1000)  # cap-in-force echoed on ALLOW (resolved)
         r_under = evaluate_spend(task, cands, {"min_capability": 1, "max_task_tokens": 1001})
         self.assertEqual(r_under["decision"], ALLOW)                 # one-under -> continues
         r_over = evaluate_spend(task, cands, {"min_capability": 1, "max_task_tokens": 999})
@@ -1613,6 +1615,20 @@ class BackendTest(unittest.TestCase):
         self.assertIsNone(r_over["projected_cost_usd"])
         self.assertTrue(any("per-task token cap 999" in x for x in r_over["reasons"]))
         self.assertEqual(r_over["policy"]["max_task_tokens"], 999)
+
+    def test_max_task_tokens_fractional_cap_echo_matches_applied(self):
+        # A legal FRACTIONAL cap is enforced via _float(cap) at the gate; the normal-path
+        # echo must record the SAME value, not a truncated int. sum=1000 <= 1000.5 -> ALLOW
+        # (decision unchanged); echoed threshold == the cap the gate actually compared against.
+        from mrtoken.spendpolicy import evaluate_spend, _float, ALLOW
+        cap = 1000.5
+        task = {"est_input_tokens": 1000, "est_output_tokens": 0, "min_capability": 1}
+        cands = [{"model": "m", "capability": 1, "price": {"input": 0.001, "output": 0.0}}]
+        r = evaluate_spend(task, cands, {"min_capability": 1, "max_task_tokens": cap})
+        self.assertEqual(r["decision"], ALLOW)                       # decision is what it was before
+        self.assertEqual(r["policy"]["max_task_tokens"], _float(cap))  # echoed == applied threshold
+        self.assertEqual(r["policy"]["max_task_tokens"], 1000.5)     # exact, not truncated...
+        self.assertNotEqual(r["policy"]["max_task_tokens"], 1000)    # ...which the old _int produced
 
     def test_max_task_tokens_sums_all_estimated_fields(self):
         from mrtoken.spendpolicy import evaluate_spend, DENY
@@ -1633,6 +1649,7 @@ class BackendTest(unittest.TestCase):
         self.assertTrue(any("invalid input rejected" in x for x in r_neg["reasons"]))
         self.assertTrue(any("policy.max_task_tokens=-1" in x for x in r_neg["reasons"]))
         self.assertFalse(any("per-task token cap" in x for x in r_neg["reasons"]))  # not the token path
+        self.assertEqual(r_neg["policy"]["max_task_tokens"], -1)     # invalid-deny path echoes it too (raw)
         r_nan = evaluate_spend(base, cands, {"min_capability": 1, "max_task_tokens": float("nan")})
         self.assertEqual(r_nan["decision"], DENY)                    # non-finite cap
         self.assertTrue(any("invalid input rejected" in x for x in r_nan["reasons"]))

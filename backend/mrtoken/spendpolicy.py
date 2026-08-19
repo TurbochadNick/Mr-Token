@@ -142,6 +142,7 @@ def evaluate_spend(task: dict, candidates: Iterable[dict], policy: dict) -> dict
     # garbage — a negative estimate -> negative cost under the cap; a nan -> every '>'
     # comparison False -> also under the cap. Covers task estimates, candidate capability
     # + price rates, and the policy floor/thresholds (every numeric feeding the gate).
+    max_tokens = policy.get("max_task_tokens")
     invalid = _collect_invalid(task, cand_list, policy)
     if invalid:
         return {
@@ -151,7 +152,8 @@ def evaluate_spend(task: dict, candidates: Iterable[dict], policy: dict) -> dict
             "ranked": [],
             "policy": {"min_capability": policy.get("min_capability", task.get("min_capability")),
                        "max_task_usd": policy.get("max_task_usd"),
-                       "escalate_usd": policy.get("escalate_usd")},
+                       "escalate_usd": policy.get("escalate_usd"),
+                       **({"max_task_tokens": max_tokens} if max_tokens is not None else {})},
             "advisory": True, "caveat": COST_CAVEAT,
         }
 
@@ -162,7 +164,6 @@ def evaluate_spend(task: dict, candidates: Iterable[dict], policy: dict) -> dict
     # $-budget denial. Invalid/non-finite/negative caps AND token estimates already failed
     # closed above through _collect_invalid/_bad_number, so this sum is a clean non-negative
     # integer and the comparison cannot be bypassed.
-    max_tokens = policy.get("max_task_tokens")
     if max_tokens is not None:
         est_tokens = sum(_int(task.get(f)) for f in _TASK_TOKEN_FIELDS)
         if est_tokens > _float(max_tokens):
@@ -197,7 +198,10 @@ def evaluate_spend(task: dict, candidates: Iterable[dict], policy: dict) -> dict
     result = {
         "decision": DENY, "recommended_model": None, "projected_cost_usd": None,
         "reasons": reasons, "ranked": ranked,
-        "policy": {"min_capability": min_cap, "max_task_usd": max_usd, "escalate_usd": esc_usd},
+        "policy": {"min_capability": min_cap, "max_task_usd": max_usd,
+                   "escalate_usd": esc_usd,
+                   **({"max_task_tokens": _float(max_tokens)}
+                      if max_tokens is not None else {})},
         "advisory": True, "caveat": COST_CAVEAT,
     }
 
