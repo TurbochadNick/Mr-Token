@@ -22,6 +22,7 @@ def write_jsonl(path, rows):
             handle.write(json.dumps(row) + "\n")
 
 
+
 class BackendTest(unittest.TestCase):
     def setUp(self):
         # window-inference tests must be deterministic regardless of any machine
@@ -1138,7 +1139,9 @@ class BackendTest(unittest.TestCase):
             os.makedirs(transcript_dir, exist_ok=True)
 
             def assistant(sid, mid):
-                return {"type": "assistant", "sessionId": sid, "message": {
+                # record a cwd: bucket discovery matches on it, and every real
+                # transcript has one (108 of 108 checked on a live host)
+                return {"type": "assistant", "sessionId": sid, "cwd": project, "message": {
                     "id": mid, "model": "x",
                     "usage": {"input_tokens": 10, "output_tokens": 1}}}
 
@@ -1188,7 +1191,7 @@ class BackendTest(unittest.TestCase):
             transcript_dir = os.path.join(projects, escaped)
             os.makedirs(transcript_dir, exist_ok=True)
             path = os.path.join(transcript_dir, "solo.jsonl")
-            write_jsonl(path, [{"type": "assistant", "sessionId": "solo", "message": {
+            write_jsonl(path, [{"type": "assistant", "sessionId": "solo", "cwd": project, "message": {
                 "id": "m1", "model": "x",
                 "usage": {"input_tokens": 10, "output_tokens": 1}}}])
             now = _time.time()
@@ -1211,6 +1214,442 @@ class BackendTest(unittest.TestCase):
                 for k, v in saved_env.items():
                     if v is not None:
                         os.environ[k] = v
+
+    # ── R1.3: DISABLE passive context_rot; explicit confirmation is the handoff trigger ──
+    def test_r13_explicit_confirmation_is_the_handoff_trigger(self):
+        from mrtoken.intervene import evaluate
+        confirmed = {"explicit:session": "disposable_confirmed"}
+        # positive arm: fresh confirmation + pressure + signals=[] -> fires a handoff
+        iv = evaluate(85, None, [], disposability=confirmed)
+        self.assertIsNotNone(iv)
+        self.assertEqual(iv["tool"], "handoff")
+        self.assertEqual(iv["signals"], [])                       # no passive signal
+        # negative arms
+        self.assertIsNone(evaluate(85, None, [], disposability=None))          # no confirmation
+        self.assertIsNone(evaluate(85, None, [], disposability={"b": "disposable"}))  # proxy alone
+        self.assertIsNone(evaluate(50, None, [], disposability=confirmed))     # confirmation, no pressure
+        # unrelated passive diagnostics unaffected (offload path still fires)
+        self.assertEqual(evaluate(85, None, ["huge_tool_output"])["tool"], "offload")
+
+    def test_r13_confirmation_files_sweep_and_fail_closed(self):
+        import time as _time
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, watch
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            sd = os.path.join(central, "state")   # _disposable_path -> <central>/state/
+            os.makedirs(sd, exist_ok=True)
+            o_cd = dd.central_default
+            dd.central_default = lambda: central
+            try:
+                # (1) sweep: a stale file is deleted, a fresh one kept
+                stale = os.path.join(sd, "disposable-stale.json")
+                fresh = os.path.join(sd, "disposable-fresh.json")
+                for f in (stale, fresh):
+                    with open(f, "w") as h:
+                        h.write("{}")
+                old = _time.time() - (intervene.CONFIRM_TTL_MIN + 5) * 60
+                os.utime(stale, (old, old))
+                self.assertEqual(intervene._sweep_expired_confirmations(sd), 1)
+                self.assertFalse(os.path.exists(stale))               # expired -> swept
+                self.assertTrue(os.path.exists(fresh))                # valid -> kept
+                # (2) fail closed: fill to the global max with fresh files
+                for i in range(intervene.CONFIRM_FILES_MAX):
+                    with open(os.path.join(sd, f"disposable-fill{i}.json"), "w") as h:
+                        h.write("{}")
+                before = len([f for f in os.listdir(sd) if f.startswith("disposable-")])
+                # resolve a live session the proven way (cwd + PROJECTS), so record()
+                # reaches the fail-closed guard rather than failing to resolve.
+                project = os.path.realpath(os.path.join(tmp, "repo"))
+                os.makedirs(project, exist_ok=True)
+                projects = os.path.join(tmp, "claude-projects")
+                escaped = project.replace("/", "-").replace(".", "-")
+                tdir = os.path.join(projects, escaped)
+                os.makedirs(tdir, exist_ok=True)
+                write_jsonl(os.path.join(tdir, "solo.jsonl"), [{"type": "assistant",
+                    "sessionId": "solo", "cwd": project, "message": {"id": "m1", "model": "x",
+                    "usage": {"input_tokens": 10, "output_tokens": 1}}}])
+                o_projects, o_cwd = watch.PROJECTS, os.getcwd()
+                saved_env = {k: os.environ.pop(k, None)
+                             for k in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
+                watch.PROJECTS = projects
+                os.chdir(project)
+                try:
+                    sid, _calls = intervene.record_disposable_confirmation()
+                finally:
+                    os.chdir(o_cwd)
+                    watch.PROJECTS = o_projects
+                    for k, v in saved_env.items():
+                        if v is not None:
+                            os.environ[k] = v
+                self.assertIsNone(sid)                                # fail closed, not persisted
+                self.assertFalse(os.path.exists(os.path.join(sd, "disposable-solo.json")))
+                after = len([f for f in os.listdir(sd) if f.startswith("disposable-")])
+                self.assertLessEqual(after, before)                  # no growth past the bound
+            finally:
+                dd.central_default = o_cd
+
+    def test_r13_passive_context_rot_no_longer_emitted_live(self):
+        from mrtoken.watch import LiveMonitor
+        mon = LiveMonitor(emit=lambda _: None)
+        # a large, declining cache sequence — under R1/R1.1/R1.2 this fired context_rot
+        for i, cr in enumerate([135_000] * 30 + [45_000] * 30):
+            mon.feed({"type": "assistant", "message": {"model": "claude-sonnet-4",
+                      "usage": {"input_tokens": 5000, "cache_read_input_tokens": cr,
+                                "cache_creation_input_tokens": 10000, "output_tokens": 20},
+                      "content": [{"type": "text", "text": str(i)}]}})
+        snap = mon.snapshot()
+        self.assertNotIn("context_rot", snap["signals_fired"])    # passive signal disabled
+        self.assertNotIn("_cache_hist", vars(mon))                # live machinery removed
+        # unrelated diagnostics still fire: large context + a huge tool output
+        mon.feed({"type": "assistant", "message": {"model": "claude-sonnet-4",
+                  "usage": {"input_tokens": 5, "cache_read_input_tokens": 180_000, "output_tokens": 50},
+                  "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}})
+        mon.feed({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "x" * 60_000}]}})
+        sig = mon.snapshot()["signals_fired"]
+        self.assertIn("context", sig)
+        self.assertIn("huge_tool_output", sig)
+
+    def test_r13_retention_counts_every_still_existing_file(self):
+        # adversarial-1 correction 2: a file we cannot stat (metadata failure) or cannot
+        # delete (deletion failure) STILL EXISTS and STILL COUNTS — no undercount.
+        import time as _time
+        from unittest import mock
+        from mrtoken import intervene
+        with tempfile.TemporaryDirectory() as tmp:
+            sd = os.path.join(tmp, "state")
+            os.makedirs(sd, exist_ok=True)
+            meta = os.path.join(sd, "disposable-meta.json")     # fresh but stat will fail
+            expd = os.path.join(sd, "disposable-expired.json")  # expired but delete will fail
+            keep = os.path.join(sd, "disposable-keep.json")     # fresh, normal
+            for f in (meta, expd, keep):
+                with open(f, "w") as h:
+                    h.write("{}")
+            old = _time.time() - (intervene.CONFIRM_TTL_MIN + 5) * 60
+            os.utime(expd, (old, old))
+            real_mtime, real_remove = os.path.getmtime, os.remove
+            def bad_mtime(path):
+                if path.endswith("disposable-meta.json"):
+                    raise OSError("injected metadata failure")
+                return real_mtime(path)
+            def bad_remove(path):
+                if path.endswith("disposable-expired.json"):
+                    raise OSError("injected deletion failure")
+                return real_remove(path)
+            with mock.patch("os.path.getmtime", side_effect=bad_mtime), \
+                 mock.patch("os.remove", side_effect=bad_remove):
+                remaining = intervene._sweep_expired_confirmations(sd)
+            # intended assertions (a mutant that undercounts fails HERE, not on a crash):
+            self.assertTrue(os.path.exists(meta), "metadata-failure file must not be deleted")
+            self.assertTrue(os.path.exists(expd), "deletion-failure file must still exist")
+            self.assertEqual(remaining, 3, "every still-existing file must count (no undercount)")
+
+    def test_r13_cap_lock_fails_closed_when_contended(self):
+        # adversarial-1 correction 2 (concurrent writers) via the PRIMITIVE, not a faked
+        # race: while the exclusive lock is held, record() cannot enforce the bound and
+        # must fail closed. flock on two separate opens conflicts even in one process.
+        import fcntl
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, watch
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            sd = os.path.join(central, "state")
+            os.makedirs(sd, exist_ok=True)
+            project = os.path.realpath(os.path.join(tmp, "repo"))
+            os.makedirs(project, exist_ok=True)
+            projects = os.path.join(tmp, "claude-projects")
+            tdir = os.path.join(projects, project.replace("/", "-").replace(".", "-"))
+            os.makedirs(tdir, exist_ok=True)
+            write_jsonl(os.path.join(tdir, "solo.jsonl"), [{"type": "assistant",
+                "sessionId": "solo", "cwd": project, "message": {"id": "m1", "model": "x",
+                "usage": {"input_tokens": 10, "output_tokens": 1}}}])
+            held = os.open(os.path.join(sd, ".disposable.lock"), os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(held, fcntl.LOCK_EX)                    # hold the exclusive lock
+            o_cd, o_projects, o_cwd = dd.central_default, watch.PROJECTS, os.getcwd()
+            saved = {k: os.environ.pop(k, None) for k in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
+            dd.central_default = lambda: central
+            watch.PROJECTS = projects
+            os.chdir(project)
+            try:
+                sid, _c = intervene.record_disposable_confirmation()
+            finally:
+                os.chdir(o_cwd); dd.central_default, watch.PROJECTS = o_cd, o_projects
+                fcntl.flock(held, fcntl.LOCK_UN); os.close(held)
+                for k, v in saved.items():
+                    if v is not None:
+                        os.environ[k] = v
+            self.assertIsNone(sid, "must fail closed while the cap lock is contended")
+            self.assertFalse(os.path.exists(os.path.join(sd, "disposable-solo.json")))
+
+    def test_r13_symlink_at_destination_is_refused_victim_unchanged(self):
+        # adversarial-1 correction 3 + Trap 4: a pre-planted symlink at the destination
+        # must be REFUSED — the outside victim's bytes must be UNCHANGED (not merely that
+        # an exception was raised), and the symlink itself left untouched.
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, watch
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            sd = os.path.join(central, "state")
+            os.makedirs(sd, exist_ok=True)
+            victim = os.path.join(tmp, "victim-outside-state.txt")
+            with open(victim, "w") as h:
+                h.write("SECRET-VICTIM-BYTES")
+            os.symlink(victim, os.path.join(sd, "disposable-solo.json"))   # planted symlink at p
+            project = os.path.realpath(os.path.join(tmp, "repo"))
+            os.makedirs(project, exist_ok=True)
+            projects = os.path.join(tmp, "claude-projects")
+            tdir = os.path.join(projects, project.replace("/", "-").replace(".", "-"))
+            os.makedirs(tdir, exist_ok=True)
+            write_jsonl(os.path.join(tdir, "solo.jsonl"), [{"type": "assistant",
+                "sessionId": "solo", "cwd": project, "message": {"id": "m1", "model": "x",
+                "usage": {"input_tokens": 10, "output_tokens": 1}}}])
+            o_cd, o_projects, o_cwd = dd.central_default, watch.PROJECTS, os.getcwd()
+            saved = {k: os.environ.pop(k, None) for k in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
+            dd.central_default = lambda: central
+            watch.PROJECTS = projects
+            os.chdir(project)
+            try:
+                sid, _c = intervene.record_disposable_confirmation()
+            finally:
+                os.chdir(o_cwd); dd.central_default, watch.PROJECTS = o_cd, o_projects
+                for k, v in saved.items():
+                    if v is not None:
+                        os.environ[k] = v
+            self.assertIsNone(sid, "must refuse a symlink at the destination")
+            with open(victim) as h:
+                self.assertEqual(h.read(), "SECRET-VICTIM-BYTES")   # victim byte-unchanged
+            self.assertTrue(os.path.islink(os.path.join(sd, "disposable-solo.json")))  # untouched
+
+    def test_r13_refresh_same_session_persists(self):
+        # F4 (Security) / Trap 1: record refuses on islink(p), NOT exists(p), so a
+        # same-session second confirmation overwrites via temp + os.replace. A future
+        # islink->exists tightening would silently kill same-session refresh; this catches it.
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, watch
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            os.makedirs(os.path.join(central, "state"), exist_ok=True)
+            project = os.path.realpath(os.path.join(tmp, "repo"))
+            os.makedirs(project, exist_ok=True)
+            projects = os.path.join(tmp, "cp")
+            tdir = os.path.join(projects, project.replace("/", "-").replace(".", "-"))
+            os.makedirs(tdir, exist_ok=True)
+            write_jsonl(os.path.join(tdir, "solo.jsonl"), [{"type": "assistant", "sessionId": "solo", "cwd": project,
+                "message": {"id": "m1", "model": "x", "usage": {"input_tokens": 10, "output_tokens": 1}}}])
+            o_cd, o_pj, o_cwd = dd.central_default, watch.PROJECTS, os.getcwd()
+            saved = {k: os.environ.pop(k, None) for k in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
+            dd.central_default = lambda: central
+            watch.PROJECTS = projects
+            os.chdir(project)
+            try:
+                first, _a = intervene.record_disposable_confirmation()
+                second, _b = intervene.record_disposable_confirmation()   # same-session refresh
+            finally:
+                os.chdir(o_cwd); dd.central_default, watch.PROJECTS = o_cd, o_pj
+                for k, v in saved.items():
+                    if v is not None:
+                        os.environ[k] = v
+            self.assertEqual(first, "solo")
+            self.assertEqual(second, "solo", "same-session refresh must persist (islink, not exists)")
+            pth = os.path.join(central, "state", "disposable-solo.json")
+            self.assertTrue(os.path.isfile(pth) and not os.path.islink(pth))
+
+    def test_r13_rejects_traversing_or_malformed_session_id(self):
+        # F2: a caller-supplied session id must be one safe basename; reject on BOTH the
+        # write chokepoint (_disposable_path) and the read path (_fresh...), so no file
+        # outside the store is ever written or read. No attacker required.
+        import mrtoken.datadir as dd
+        from mrtoken import intervene
+        for bad in ("foo/../../victim", "../victim", "/etc/passwd", "", ".", "..", "a/b", "x\x00y"):
+            self.assertFalse(intervene._valid_session_id(bad), repr(bad))
+            with self.assertRaises(ValueError):
+                intervene._disposable_path(bad)
+        for good in ("solo", "404fa99f-c553-463e-9e82-b6b5faed72cf"):
+            self.assertTrue(intervene._valid_session_id(good))
+            self.assertTrue(intervene._disposable_path(good).endswith(f"disposable-{good}.json"))
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            os.makedirs(central, exist_ok=True)
+            with open(os.path.join(central, "victim.json"), "w") as h:   # planted at traversal target
+                json.dump({"confirmed_at_call": 0, "confirmed_at_ts": "2999-01-01T00:00:00+00:00"}, h)
+            o_cd = dd.central_default
+            dd.central_default = lambda: central
+            try:
+                self.assertFalse(intervene._fresh_disposable_confirmation("../victim", 0),
+                                 "read path must reject a traversing id, not read outside the store")
+            finally:
+                dd.central_default = o_cd
+
+    def test_r13_fails_closed_when_store_cannot_be_enumerated(self):
+        # F1 (ordinary failure, NOT the hostile unenumerable-dir case which needs an excluded
+        # writer): a transient OSError enumerating the store -> cannot establish the bound ->
+        # _sweep returns None and record fails closed.
+        from unittest import mock
+        import mrtoken.datadir as dd
+        from mrtoken import intervene, watch
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            sd = os.path.join(central, "state")
+            os.makedirs(sd, exist_ok=True)
+            with mock.patch("os.listdir", side_effect=OSError("injected enumeration failure")):
+                self.assertIsNone(intervene._sweep_expired_confirmations(sd))
+            project = os.path.realpath(os.path.join(tmp, "repo"))
+            os.makedirs(project, exist_ok=True)
+            projects = os.path.join(tmp, "cp")
+            tdir = os.path.join(projects, project.replace("/", "-").replace(".", "-"))
+            os.makedirs(tdir, exist_ok=True)
+            write_jsonl(os.path.join(tdir, "solo.jsonl"), [{"type": "assistant", "sessionId": "solo", "cwd": project,
+                "message": {"id": "m1", "model": "x", "usage": {"input_tokens": 10, "output_tokens": 1}}}])
+            o_cd, o_pj, o_cwd = dd.central_default, watch.PROJECTS, os.getcwd()
+            saved = {k: os.environ.pop(k, None) for k in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
+            dd.central_default = lambda: central
+            watch.PROJECTS = projects
+            os.chdir(project)
+            try:
+                # inject at _count (not os.listdir) so session resolution is unaffected — a
+                # genuine fail-closed, not a resolution short-circuit
+                with mock.patch.object(intervene, "_count_existing_confirmations", return_value=None):
+                    sid, _c = intervene.record_disposable_confirmation()
+            finally:
+                os.chdir(o_cwd); dd.central_default, watch.PROJECTS = o_cd, o_pj
+                for k, v in saved.items():
+                    if v is not None:
+                        os.environ[k] = v
+            self.assertIsNone(sid, "must fail closed when the store cannot be enumerated")
+
+    def test_r13_orphaned_temp_debris_is_bounded(self):
+        # F3: an orphaned disp-tmp-* older than the TTL (debris from a failed replace+cleanup)
+        # is swept, so repeated failures cannot accumulate; a fresh temp is kept.
+        import time as _time
+        from mrtoken import intervene
+        with tempfile.TemporaryDirectory() as tmp:
+            sd = os.path.join(tmp, "state")
+            os.makedirs(sd, exist_ok=True)
+            stale = os.path.join(sd, "disp-tmp-stale")
+            fresh = os.path.join(sd, "disp-tmp-fresh")
+            for f in (stale, fresh):
+                with open(f, "w") as h:
+                    h.write("x")
+            old = _time.time() - (intervene.CONFIRM_TTL_MIN + 5) * 60
+            os.utime(stale, (old, old))
+            intervene._sweep_expired_confirmations(sd)
+            self.assertFalse(os.path.exists(stale), "orphaned temp debris must be bounded")
+            self.assertTrue(os.path.exists(fresh), "a fresh temp must not be swept")
+
+    def test_r14_repeated_write_failures_cap_live_temp_debris(self):
+        from unittest import mock
+        import mrtoken.datadir as dd
+        from mrtoken import intervene
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            sd = os.path.join(central, "state")
+            os.makedirs(sd, exist_ok=True)
+            o_cd = dd.central_default
+            dd.central_default = lambda: central
+            try:
+                with mock.patch.object(intervene, "_session_calls", return_value=("solo", 1)), \
+                     mock.patch("os.replace", side_effect=OSError("injected replace failure")), \
+                     mock.patch("os.remove", side_effect=OSError("injected cleanup failure")):
+                    results = [intervene.record_disposable_confirmation() for _ in range(69)]
+                temps = [n for n in os.listdir(sd) if n.startswith("disp-tmp-")]
+                self.assertTrue(all(sid is None for sid, _calls in results))
+                self.assertEqual(len(temps), 1,
+                                 "the first failed write must occupy the sole temp slot")
+                self.assertLessEqual(len(temps), intervene.CONFIRM_FILES_MAX)
+            finally:
+                dd.central_default = o_cd
+
+    def test_r14_at_cap_refreshes_existing_and_refuses_new_session(self):
+        from unittest import mock
+        import mrtoken.datadir as dd
+        from mrtoken import intervene
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            sd = os.path.join(central, "state")
+            os.makedirs(sd, exist_ok=True)
+            existing = os.path.join(sd, "disposable-existing.json")
+            with open(existing, "w") as h:
+                h.write("{}")
+            durable_max = intervene.CONFIRM_FILES_MAX - 1
+            for i in range(durable_max - 1):
+                with open(os.path.join(sd, f"disposable-fill{i}.json"), "w") as h:
+                    h.write("{}")
+            o_cd = dd.central_default
+            dd.central_default = lambda: central
+            resolve = lambda session: (session, 10 if session == "existing" else 11)
+            try:
+                with mock.patch.object(intervene, "_session_calls", side_effect=resolve):
+                    refreshed, _ = intervene.record_disposable_confirmation("existing")
+                    refused, _ = intervene.record_disposable_confirmation("new")
+                self.assertEqual(refreshed, "existing",
+                                 "an already-counted session must refresh at the cap")
+                self.assertIsNone(refused, "a new session must be refused at the cap")
+                self.assertFalse(os.path.exists(os.path.join(sd, "disposable-new.json")))
+            finally:
+                dd.central_default = o_cd
+
+    def test_r14_mixed_population_shares_one_global_cap(self):
+        from unittest import mock
+        import mrtoken.datadir as dd
+        from mrtoken import intervene
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            sd = os.path.join(central, "state")
+            os.makedirs(sd, exist_ok=True)
+            durable_max = intervene.CONFIRM_FILES_MAX - 1
+            for i in range(durable_max):
+                session = "existing" if i == 0 else f"fill{i}"
+                with open(os.path.join(sd, f"disposable-{session}.json"), "w") as h:
+                    h.write("{}")
+            o_cd = dd.central_default
+            dd.central_default = lambda: central
+            try:
+                with mock.patch.object(intervene, "_session_calls",
+                                       return_value=("existing", 10)), \
+                     mock.patch("os.replace", side_effect=OSError("injected replace failure")), \
+                     mock.patch("os.remove", side_effect=OSError("injected cleanup failure")):
+                    results = [intervene.record_disposable_confirmation("existing")
+                               for _ in range(69)]
+                names = os.listdir(sd)
+                confirmations = sum(n.startswith("disposable-") and n.endswith(".json")
+                                    for n in names)
+                temps = sum(n.startswith("disp-tmp-") for n in names)
+                self.assertTrue(all(sid is None for sid, _calls in results))
+                self.assertEqual((confirmations, temps),
+                                 (durable_max, 1))
+                self.assertLessEqual(
+                    confirmations + temps, intervene.CONFIRM_FILES_MAX,
+                    "confirmations plus live/orphan temps must share one global 64-file cap")
+            finally:
+                dd.central_default = o_cd
+
+    def test_r14_legacy_64_confirmation_state_refuses_without_growth(self):
+        from unittest import mock
+        import mrtoken.datadir as dd
+        from mrtoken import intervene
+        with tempfile.TemporaryDirectory() as tmp:
+            central = os.path.join(tmp, "central")
+            sd = os.path.join(central, "state")
+            os.makedirs(sd, exist_ok=True)
+            for i in range(intervene.CONFIRM_FILES_MAX):
+                session = "existing" if i == 0 else f"fill{i}"
+                with open(os.path.join(sd, f"disposable-{session}.json"), "w") as h:
+                    h.write("{}")
+            o_cd = dd.central_default
+            dd.central_default = lambda: central
+            try:
+                with mock.patch.object(intervene, "_session_calls",
+                                       return_value=("existing", 10)):
+                    refused, _ = intervene.record_disposable_confirmation("existing")
+                names = os.listdir(sd)
+                self.assertIsNone(refused)
+                self.assertEqual(sum(n.startswith("disposable-") for n in names),
+                                 intervene.CONFIRM_FILES_MAX)
+                self.assertFalse(any(n.startswith("disp-tmp-") for n in names),
+                                 "legacy over-cap state must not grow a temp")
+            finally:
+                dd.central_default = o_cd
 
     def test_new_session_does_not_inherit_prior_transcript(self):
         # inbox:mr-token-session-state-fix-20260802 — at session start the supplied
@@ -1975,9 +2414,19 @@ class BackendTest(unittest.TestCase):
         orig_h = toolbox.build_handoff
         toolbox.build_handoff = lambda db, s: "# Handoff (stub)"
         try:
-            txt, err = toolbox.call_tool("handoff", {"session": "x"})
+            # No `session` key -> the tool now resolves the CALLER-PROJECT default itself,
+            # BEFORE dispatch (passing None would drop into the trusted global resolver and
+            # could bind another project). This fixture has no transcript for this project,
+            # so the correct behaviour is an explicit refusal, not a dispatch.
+            txt, err = toolbox.call_tool("handoff", {})
             self.assertFalse(err)
-            self.assertIn("Handoff", txt)
+            self.assertIn("no transcript found for THIS project", txt)
+            self.assertNotIn("Handoff", txt)
+            # ...and the rejection itself is asserted here rather than lost:
+            bad, berr = toolbox.call_tool("handoff", {"session": "no-such-session-id"})
+            self.assertFalse(berr)
+            self.assertIn("no transcript in THIS project", bad)
+            self.assertNotIn("Handoff", bad)
         finally:
             toolbox.build_handoff = orig_h
 
@@ -3410,7 +3859,12 @@ class BackendTest(unittest.TestCase):
             # recency-ordered + existence-filtered: f2 (last touched) first, no stale
             self.assertEqual(_scan_transcript(transcript)["changed_files"], [f2, f1])
             md = build_handoff(db, transcript)
-            self.assertIn("Build the CRM engine", md)          # title wins the Goal
+            # CONTRACT CORRECTED: this is an `ai-title`, a session-START artifact that never
+            # refreshes (measured: 132 events, 1 distinct value, first == last on a real
+            # session). It must NOT outrank the most recent substantive request. A HUMAN
+            # `custom-title` still wins — asserted in test_handoff_goal_currency.
+            self.assertNotIn("Build the CRM engine", md)       # auto-title no longer wins
+            self.assertIn("wire up the pipeline endpoint", md) # the CURRENT request does
             self.assertIn("wire up the pipeline endpoint", md)  # shown as "where I left off"
             self.assertNotIn("continue harkable", md)          # stale opener never surfaces
             self.assertNotIn("/gone/old.py", md)               # stale path filtered

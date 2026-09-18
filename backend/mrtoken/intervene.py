@@ -89,15 +89,23 @@ def evaluate(ctx_pct, turns_to_full, signals_fired, *, disposability: dict | Non
     pressure = (ctx_pct is not None and ctx_pct >= pressure_pct) or \
                (turns_to_full is not None and 0 < turns_to_full <= pressure_turns)
     junk = {s for s in (signals_fired or []) if s in RECLAIMABLE}
-    if not (pressure and junk):
+    src = _disposable_source(disposability)
+    confirmed = src == "explicit"          # a fresh confirm_disposable (R1.3 trigger)
+    if not (pressure and (junk or confirmed)):
         return None
     if _near_done(progress):
         # Gate 2: with little runway left, summary + re-establish costs more
         # than the remaining turns' carry — even on disposable context. Say
         # nothing and let the agent finish.
         return None
-    src = _disposable_source(disposability)
-    tool, why = _tool_for(junk, disposable=src is not None)
+    if junk:
+        tool, why = _tool_for(junk, disposable=src is not None)
+    else:
+        # Explicit-confirmation trigger (R1.3): a fresh `confirm_disposable` is direct
+        # evidence the loaded context is no longer needed — reclaimability with no
+        # passive signal. Since the passive `context_rot` signal was disabled (R1.3
+        # design, Security-reviewed), this is the sole trigger for the handoff regime.
+        tool, why = "handoff", "you confirmed the loaded context is no longer needed"
     turns_note = f", ~{turns_to_full} turns to full" if turns_to_full else ""
     if tool == "offload" and junk == {"context_rot"}:
         # Advisory handoff mention only — clearly optional, agent's judgement.
@@ -314,6 +322,11 @@ def should_fire(session_id: str, ctx_pct: int) -> bool:
 # minutes, whichever is tighter. Stale/absent → the drop stays proxy-capped.
 CONFIRM_TTL_CALLS = 10
 CONFIRM_TTL_MIN = 30
+# Global cap on managed confirmation paths: durable disposable-*.json files plus the
+# one same-directory disp-tmp-* slot used for atomic replacement. Reserve that slot, so
+# at most 63 confirmations persist and the combined population never exceeds 64.
+CONFIRM_FILES_MAX = 64
+CONFIRM_DURABLE_MAX = CONFIRM_FILES_MAX - 1
 AMBIGUOUS_SESSION_WINDOW_S = 10 * 60
 
 
@@ -321,8 +334,15 @@ class AmbiguousSessionError(Exception):
     """Raised when a no-arg tool call cannot be bound to one live session."""
 
 
+# One shared definition, imported rather than duplicated (watch does not import intervene,
+# so this direction is non-circular). Same Security F2 semantics as before.
+from mrtoken.watch import valid_session_id as _valid_session_id
+
+
 def _disposable_path(session_id: str) -> str:
     from mrtoken.datadir import central_default
+    if not _valid_session_id(session_id):
+        raise ValueError("unsafe session id for disposable-confirmation path")
     return os.path.join(central_default(), "state", f"disposable-{session_id}.json")
 
 
@@ -331,10 +351,17 @@ def _caller_session_env() -> str | None:
 
 
 def _cwd_project_transcripts() -> list[str]:
+    """Transcripts belonging to the current project.
+
+    Uses watch.project_bucket(), which DISCOVERS the bucket from the transcripts' own
+    recorded cwd. The old inline `cwd.replace("/", "-").replace(".", "-")` did not map '_'
+    to '-' as the harness does, so for any underscore path — `mr_token` included — it
+    globbed a directory that does not exist and silently returned []."""
     from mrtoken import watch
-    cwd = os.getcwd()
-    escaped = cwd.replace("/", "-").replace(".", "-")
-    return glob.glob(os.path.join(watch.PROJECTS, escaped, "*.jsonl"))
+    bucket = watch.project_bucket()
+    if bucket is None:
+        return []
+    return glob.glob(os.path.join(watch.PROJECTS, glob.escape(bucket), "*.jsonl"))
 
 
 def _recent_project_transcripts(candidates: list[str] | None = None,
@@ -360,7 +387,17 @@ def _session_calls(session_arg: str | None) -> tuple[str | None, int]:
     """Resolve the current session's transcript → (session_id, model_calls). The id is
     the transcript filename. Metadata only — nothing from the content is persisted."""
     from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
-    if not session_arg and not _caller_session_env():
+    from mrtoken.watch import resolve_session_local
+    # PRESENCE, not truthiness, INTERNALLY too. `None` means OMITTED; any other value —
+    # including "" / 0 / False — was EXPLICITLY supplied and must be resolved exactly as
+    # given, so an invalid explicit binding fails closed instead of silently becoming the
+    # caller-project default. The boundary in toolbox.py still produces the user-facing
+    # error message; this guards every other caller of _session_calls.
+    if session_arg is not None:
+        path = resolve_session_local(session_arg)
+    elif _caller_session_env():
+        path = resolve_session_local(_caller_session_env())
+    else:
         candidates = _cwd_project_transcripts()
         if not candidates:
             return None, 0
@@ -370,9 +407,13 @@ def _session_calls(session_arg: str | None) -> tuple[str | None, int]:
                 "multiple active sessions here — nothing recorded. Re-call with "
                 "`session: <your session id>` (Bash: `echo $CLAUDE_CODE_SESSION_ID`)."
             )
-        path = max(candidates, key=os.path.getmtime)
-    else:
-        path = resolve_path(session_arg)
+        if not recent:
+            # STALE-ONLY: candidates exist but none is inside the activity window. The old
+            # `max(candidates, key=getmtime)` reached over the FULL candidate list and
+            # returned a stale session as current — `len(recent) > 1` is False when `recent`
+            # is EMPTY, so the ambiguity guard never fired. Fail closed.
+            return None, 0
+        path = recent[0]   # the single recent transcript — never newest-of-all
     if not path:
         return None, 0
     mon = LiveMonitor(emit=lambda _: None)
@@ -390,25 +431,132 @@ def record_disposable_confirmation(session_arg: str | None = None) -> tuple[str 
     """Persist an explicit 'the loaded context is no longer needed' confirmation for the
     current session. Returns (session_id, call_index) or (None, 0). Stores ONLY the call
     index + a timestamp — never content. Called by the `confirm_disposable` toolbox tool."""
+    import tempfile
+    try:
+        import fcntl
+    except ImportError:                       # no advisory lock primitive -> cannot enforce
+        return None, 0                        # the bound across writers -> fail closed
     sid, calls = _session_calls(session_arg)
     if not sid:
         return None, 0
-    p = _disposable_path(sid)
     try:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w") as fh:
-            json.dump({"confirmed_at_call": calls,
-                       "confirmed_at_ts": datetime.now(timezone.utc).isoformat()}, fh)
+        p = _disposable_path(sid)             # F2 (write): reject a traversing/malformed id
+    except ValueError:
+        return None, 0                        # unsafe session id -> fail closed
+    state_dir = os.path.dirname(p)
+    try:
+        os.makedirs(state_dir, exist_ok=True)
     except OSError:
         return None, 0
-    return sid, calls
+    # Serialize count+create across writers with an exclusive advisory lock so the cap
+    # holds concurrently (adversarial-1 correction 2); if the lock cannot be taken, the
+    # bound cannot be enforced -> FAIL CLOSED.
+    try:
+        lf = os.open(os.path.join(state_dir, ".disposable.lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        return None, 0
+    try:
+        try:
+            fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return None, 0                    # contended -> cannot enforce the bound -> fail closed
+        # Symlink safety (correction 3): refuse a symlink at the destination outright —
+        # never follow it, never overwrite through it.
+        if os.path.islink(p):
+            return None, 0
+        remaining = _sweep_expired_confirmations(state_dir)
+        if remaining is None:                 # F1: the store cannot be enumerated (transient
+            return None, 0                    # failure) -> cannot establish the bound -> fail closed
+        is_new = not os.path.exists(p)        # a regular file for this session already counts
+        try:
+            live_temps = sum(1 for n in os.listdir(state_dir)
+                             if n.startswith("disp-tmp-")
+                             and os.path.lexists(os.path.join(state_dir, n)))
+        except OSError:
+            return None, 0                    # cannot establish the temp bound -> fail closed
+        managed = remaining + live_temps
+        if live_temps or managed > CONFIRM_DURABLE_MAX:
+            return None, 0                    # reserve the sole temp slot; refuse legacy over-cap state
+        if is_new and remaining >= CONFIRM_DURABLE_MAX:
+            return None, 0                    # 63 durable confirmations is the approved cap
+        # Atomic, symlink-safe write: a fresh unique temp in the SAME dir, fsync, then
+        # os.replace onto the NAME. os.replace replaces p atomically; if p were a symlink
+        # it would be replaced (not written through) — but we already refused that above.
+        try:
+            fd, tmp = tempfile.mkstemp(dir=state_dir, prefix="disp-tmp-")
+        except OSError:
+            return None, 0
+        try:
+            with os.fdopen(fd, "w") as fh:
+                json.dump({"confirmed_at_call": calls,
+                           "confirmed_at_ts": datetime.now(timezone.utc).isoformat()}, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, p)
+        except OSError:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            return None, 0
+        return sid, calls
+    finally:
+        try:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+        finally:
+            os.close(lf)
+
+
+def _count_existing_confirmations(state_dir: str) -> int | None:
+    """Count EVERY still-existing disposable-*.json (a symlink counts via lexists). Returns
+    None if the directory cannot be enumerated (a transient OSError from listdir) so the
+    caller FAILS CLOSED instead of assuming zero (Security F1 — the ordinary failure case,
+    not the hostile unenumerable-dir case, which needs an excluded local writer). The temp
+    prefix `disp-tmp-*` has no `.json` suffix, so it is never counted."""
+    try:
+        names = os.listdir(state_dir)
+    except OSError:
+        return None
+    return sum(1 for n in names
+               if n.startswith("disposable-") and n.endswith(".json")
+               and os.path.lexists(os.path.join(state_dir, n)))
+
+
+def _sweep_expired_confirmations(state_dir: str) -> int | None:
+    """Delete disposable-*.json past CONFIRM_TTL_MIN (by mtime — a stale confirmation is
+    already invalid, so deleting it changes no decision), then return the count that
+    ACTUALLY REMAINS (or None if the store cannot be enumerated — F1). A file we cannot
+    stat (metadata failure) or cannot delete (deletion failure) still exists and therefore
+    still counts — no undercount. Also removes orphaned temp files (`disp-tmp-*`) past the
+    TTL so repeated replace/cleanup failures cannot accumulate unbounded debris (F3)."""
+    for f in glob.glob(os.path.join(state_dir, "disposable-*.json")):
+        try:
+            expired = (time.time() - os.path.getmtime(f)) / 60 > CONFIRM_TTL_MIN
+        except OSError:
+            expired = False                   # cannot tell -> keep -> it still counts
+        if expired:
+            try:
+                os.remove(f)
+            except OSError:
+                pass                          # deletion failed -> file remains -> still counts
+    for t in glob.glob(os.path.join(state_dir, "disp-tmp-*")):
+        try:                                  # F3: an orphaned temp older than the TTL is
+            if (time.time() - os.path.getmtime(t)) / 60 > CONFIRM_TTL_MIN:  # debris from a
+                os.remove(t)                  # failed replace+cleanup -> bound it
+        except OSError:
+            pass
+    return _count_existing_confirmations(state_dir)
 
 
 def _fresh_disposable_confirmation(session_id: str, current_calls: int) -> bool:
     """True iff a still-valid confirmation exists (within BOTH the call and time TTLs).
     Stale or absent → False, so the drop stays capped at the proxy's tell-only level."""
     try:
-        with open(_disposable_path(session_id)) as fh:
+        path = _disposable_path(session_id)   # F2 (read): reject a traversing/malformed id
+    except ValueError:
+        return False                          # never read a file outside the store
+    try:
+        with open(path) as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError):
         return False

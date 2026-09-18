@@ -55,6 +55,149 @@ def _load_prices():
     return load_prices(), est_cost
 
 
+def valid_session_id(c) -> bool:
+    """A session id is exactly ONE safe path component: a non-empty string, not '.'/'..',
+    no separator or NUL, not absolute. Canonical copy; `intervene` imports it from here
+    (intervene imports watch, so this direction is the non-circular one).
+
+    NOTE this deliberately does NOT reject glob metacharacters. Rejecting them would break
+    literal ids that legitimately contain one; instead every caller runs the identifier
+    through `glob.escape`, which is the smaller semantic change. See `_one_transcript`.
+    """
+    return (isinstance(c, str) and c not in ("", ".", "..")
+            and "/" not in c and "\\" not in c and "\x00" not in c
+            and not os.path.isabs(c))
+
+
+# How many leading lines of a transcript to scan for its recorded `cwd`.
+_BUCKET_SCAN_LINES = 40
+
+
+def _legacy_bucket_name(cwd: str) -> str:
+    """The historical COMPUTED name, kept ONLY as a cheap first candidate to try — it is
+    always verified against a transcript's recorded cwd before being returned, and never
+    used as a fallback. It is wrong twice over: it does not map '_' to '-' as the harness
+    does, and it is not injective ('/a/b.c' and '/a/b-c' collide on '-a-b-c')."""
+    return cwd.replace("/", "-").replace(".", "-")
+
+
+def _transcript_cwd(path: str) -> str | None:
+    """The working directory a transcript records for ITSELF, or None."""
+    try:
+        with open(path, errors="replace") as fh:
+            for _ in range(_BUCKET_SCAN_LINES):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                cwd = obj.get("cwd") if isinstance(obj, dict) else None
+                if isinstance(cwd, str) and cwd:
+                    return cwd
+    except OSError:
+        return None
+    return None
+
+
+def project_bucket(cwd: str | None = None) -> str | None:
+    """DISCOVER the transcript bucket that belongs to `cwd`, or None.
+
+    Deliberately not a string substitution. The harness escapes project paths into
+    directory names by a rule we do not own — it replaces '_' as well as '/' and '.', which
+    the old formula missed, so it silently searched a bucket that does not exist and
+    project-local resolution was dead for every underscore path, including this repo.
+
+    A transcript records its own `cwd` verbatim, so matching on that is exact and carries no
+    assumption about escaping. The computed name is tried first only as a fast candidate and
+    is VERIFIED before it is returned. If the harness changes its escaping again this
+    degrades to NOT-FOUND, never to the wrong bucket.
+    """
+    target = os.path.realpath(cwd or os.getcwd())
+    legacy = _legacy_bucket_name(target)
+    seen = set()
+    for name in [legacy] + sorted(os.listdir(PROJECTS)) if os.path.isdir(PROJECTS) else [legacy]:
+        if name in seen:
+            continue
+        seen.add(name)
+        d = os.path.join(PROJECTS, name)
+        if not os.path.isdir(d):
+            continue
+        for t in sorted(glob.glob(os.path.join(glob.escape(d), "*.jsonl")),
+                        key=os.path.getmtime, reverse=True)[:3]:
+            rec = _transcript_cwd(t)
+            if rec and os.path.realpath(rec) == target:
+                return name
+    # No fallback to the computed name. It is NOT collision-free: '.' and '-' both map to
+    # '-', so '/a/b.c' and '/a/b-c' compute to the SAME bucket — the fallback could hand
+    # back another project's transcripts, the exact exposure this resolver exists to close.
+    # And it protects nothing: every transcript on a real host records a cwd (108 of 108
+    # checked), so an undiscoverable bucket means there is genuinely nothing to bind.
+    return None
+
+
+def _one_transcript(bucket_glob: str, sid: str) -> str | None:
+    """Exactly one transcript for `sid` under `bucket_glob`, else None.
+
+    `sid` is ALWAYS glob-escaped. Unescaped, an identifier is executable syntax: `*`,
+    `?` and `[...]` are interpolated straight into the pattern, so an "id" of `*` matches
+    every transcript and resolves one — neither an id nor a prefix. Exact name first, then
+    prefix; MORE THAN ONE match returns None and is never broken by mtime.
+    """
+    esc = glob.escape(sid)
+    exact = glob.glob(os.path.join(PROJECTS, bucket_glob, f"{esc}.jsonl"))
+    hits = exact or glob.glob(os.path.join(PROJECTS, bucket_glob, f"{esc}*.jsonl"))
+    return hits[0] if len(hits) == 1 else None
+
+
+def resolve_session(sid) -> str | None:
+    """TRUSTED id lookup (host/CLI): strict, but searches every project bucket.
+
+    Uniqueness is not workspace binding — do NOT use this for a tool-caller-supplied id;
+    use `resolve_session_local`.
+    """
+    return _one_transcript("*", sid) if valid_session_id(sid) else None
+
+
+def resolve_session_local(sid, cwd: str | None = None) -> str | None:
+    """UNTRUSTED entry point: resolve a TOOL-CALLER-supplied session id, project-locally.
+
+    Searches ONLY the current project's bucket. An exactly-one-match across all projects is
+    uniqueness, not caller-workspace binding: a foreign seat's exact session id would
+    otherwise resolve, and `build_handoff` returns transcript CONTENT. Fails closed on an
+    unsafe id, no match, or more than one match, and never accepts a filesystem path.
+    """
+    if not valid_session_id(sid):
+        return None
+    bucket = project_bucket(cwd)
+    if bucket is None:                    # no bucket belongs to this cwd -> fail closed
+        return None
+    return _one_transcript(glob.escape(bucket), sid)
+
+
+def resolve_local_default(cwd: str | None = None) -> str | None:
+    """The caller-project default transcript for an UNTRUSTED caller that supplied no id.
+
+    Absent-key was treated as the safe default everywhere, but it was the one tool-reachable
+    route into the TRUSTED resolver: `build_handoff(None, None)` -> `resolve_path(None)` ->
+    `latest_transcript()`, which consults MRTOKEN_SESSION / CLAUDE_CODE_SESSION_ID through the
+    GLOBAL `resolve_session` and so could bind another project's transcript. An untrusted
+    caller must never reach that path.
+
+    An environment id is constrained to THIS project; with none, the newest transcript in
+    this project's bucket, preserving the previous local-newest semantics.
+    """
+    sid = os.environ.get("MRTOKEN_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if sid:
+        return resolve_session_local(sid, cwd)
+    bucket = project_bucket(cwd)
+    if not bucket:
+        return None
+    hits = glob.glob(os.path.join(PROJECTS, glob.escape(bucket), "*.jsonl"))
+    return max(hits, key=os.path.getmtime) if hits else None
+
+
 def latest_transcript(cwd: str | None = None) -> str | None:
     # The CURRENT session wins, even if another agent's transcript was written
     # more recently. This is the multi-agent / K2 case: newest-mtime-across-all
@@ -62,26 +205,35 @@ def latest_transcript(cwd: str | None = None) -> str | None:
     # set by Claude Code for CLI commands; MRTOKEN_SESSION overrides it.
     sid = os.environ.get("MRTOKEN_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
     if sid:
-        hits = glob.glob(os.path.join(PROJECTS, "*", f"{sid}*.jsonl"))
-        if hits:
-            return max(hits, key=os.path.getmtime)
+        # An env id that is missing, ambiguous or malformed resolves to NOTHING. Falling
+        # through to cwd-newest here meant a bad id silently produced a different session.
+        return resolve_session(sid)
     cwd = cwd or os.getcwd()
-    escaped = cwd.replace("/", "-").replace(".", "-")
-    candidates = glob.glob(os.path.join(PROJECTS, escaped, "*.jsonl"))
+    bucket = project_bucket(cwd)
+    candidates = glob.glob(os.path.join(PROJECTS, glob.escape(bucket), "*.jsonl")) if bucket else []
     if candidates:
         return max(candidates, key=os.path.getmtime)
-    # last resort only (no session id, cwd dir empty): newest across all projects
+    # Cross-project last resort: EXPLICITLY GATED, default OFF. On a multi-seat host
+    # "newest across all projects" can select ANOTHER SEAT'S transcript.
+    if os.environ.get("MRTOKEN_ALLOW_CROSS_PROJECT", "").strip().lower() not in (
+            "1", "true", "yes", "on"):
+        return None
     candidates = glob.glob(os.path.join(PROJECTS, "*", "*.jsonl"))
     return max(candidates, key=os.path.getmtime) if candidates else None
 
 
 def resolve_path(arg: str | None) -> str | None:
+    """TRUSTED entry point — host- and CLI-supplied transcript PATHS and ids.
+
+    Kept deliberately separate from `resolve_session_local`. Trust is a property of the
+    ENTRY POINT, not of how a string is spelled: an earlier attempt to tell them apart by
+    filename suffix rejected `/etc/passwd` by spelling while still accepting a `.jsonl`
+    SYMLINK to a private file. Untrusted callers no longer reach this function at all.
+    """
     if arg and os.path.isfile(arg):
         return arg
-    if arg:  # treat as session id
-        hits = glob.glob(os.path.join(PROJECTS, "*", f"{arg}*.jsonl"))
-        if hits:
-            return max(hits, key=os.path.getmtime)
+    if arg:
+        return resolve_session(arg)
     return latest_transcript()
 
 

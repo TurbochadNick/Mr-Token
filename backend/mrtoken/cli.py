@@ -155,6 +155,25 @@ def cmd_handoff(args):
     print(build_handoff(args.db, args.session))
 
 
+def cmd_manifest(args):
+    import json as _json
+    from mrtoken.manifest import declare_manifest, load_manifest, verify_manifest, render_section
+    if args.action == "declare":
+        src = sys.stdin if args.json_file in (None, "-") else open(args.json_file, encoding="utf-8")
+        with src:
+            fields = _json.load(src)
+        if not isinstance(fields, dict):
+            sys.exit("manifest declare: a JSON object of fields is required")
+        try:
+            print(declare_manifest(args.session, fields, merge=not args.replace))
+        except ValueError as e:
+            sys.exit(f"manifest declare: {e}")
+    else:
+        m, err = load_manifest(args.session)
+        v = verify_manifest(m, args.session) if m is not None else None
+        print("\n".join(render_section(m, v, load_error=err)))
+
+
 def cmd_migrate(args):
     from mrtoken.migrate import migrate
     sys.exit(migrate(apply=args.apply))
@@ -534,6 +553,15 @@ def main(argv=None):
     p_handoff.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
     p_handoff.add_argument("--db", dest="db_sub")
 
+    p_manifest = sub.add_parser("manifest",
+        help="declare or show a session's continuation manifest (state is DECLARED, never inferred)")
+    p_manifest.add_argument("action", choices=["declare", "show"])
+    p_manifest.add_argument("session", help="session id (one path component)")
+    p_manifest.add_argument("--json", dest="json_file",
+        help="declare: JSON object of manifest fields (file path, or '-' for stdin)")
+    p_manifest.add_argument("--replace", action="store_true",
+        help="declare: replace the whole manifest instead of merging fields")
+
     p_migrate = sub.add_parser("migrate-data",
         help="find scattered .token-tithe DBs and relocate non-project ones to the central store")
     p_migrate.add_argument("--apply", action="store_true",
@@ -618,7 +646,7 @@ def main(argv=None):
                 "config": cmd_config, "savings": cmd_savings, "modules": cmd_modules,
                 "module-measure": cmd_module_measure, "watch": cmd_watch,
                 "init": cmd_init, "uninstall": cmd_uninstall,
-        "handoff": cmd_handoff, "why": cmd_why, "roi": cmd_roi,
+        "handoff": cmd_handoff, "manifest": cmd_manifest, "why": cmd_why, "roi": cmd_roi,
                 "offload-roi": cmd_offload_roi,
                 "migrate-data": cmd_migrate, "status": cmd_status,
                 "doctor": cmd_doctor, "beta-note": cmd_beta_note,

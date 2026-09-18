@@ -41,7 +41,23 @@ def handle_request(req: dict):
     """Handle one JSON-RPC request. Returns a response dict, or None for notifications."""
     mid = req.get("id")
     method = req.get("method")
-    params = req.get("params") or {}
+    # PRESENCE, not truthiness (both here and for `arguments` below). `x or {}` makes a
+    # PRESENT-but-invalid value indistinguishable from an ABSENT one, and every tool
+    # downstream then falls back to server-side defaults — e.g. the environment's session,
+    # which in an MCP server names the SERVER's session, not the caller's. A malformed
+    # call must fail, not quietly resolve to someone else's state.
+    # PRESENCE, not `.get(...) is None`: `.get` returns None for BOTH key-absent and
+    # key-present-with-JSON-null, so testing `is None` is the same collapse one more time.
+    # `"params" not in req` is the only test that separates "no params" from "params: null".
+    if "params" not in req:
+        params = {}
+    else:
+        raw_params = req["params"]
+        if not isinstance(raw_params, dict):
+            if mid is None:
+                return None
+            return _error(mid, -32602, "invalid params: `params` must be an object")
+        params = raw_params
 
     if method == "initialize":
         pv = params.get("protocolVersion") or PROTOCOL_VERSION  # echo the client's version
@@ -56,7 +72,21 @@ def handle_request(req: dict):
         return _result(mid, {"tools": enabled_tool_schemas()})
     if method == "tools/call":
         name = params.get("name")
-        return _result(mid, _call_tool(name, params.get("arguments") or {}))
+        # An ABSENT `arguments` legitimately means "no arguments" -> {}. A PRESENT
+        # non-object is a malformed call and is rejected here, at the boundary, so
+        # offload / handoff / confirm_disposable are covered too — per-tool checks
+        # would not have been.
+        if "arguments" in params:
+            raw_args = params["arguments"]
+            if not isinstance(raw_args, dict):
+                if mid is None:
+                    return None
+                return _error(mid, -32602,
+                              "invalid params: `arguments` must be an object")
+            args = raw_args
+        else:
+            args = {}
+        return _result(mid, _call_tool(name, args))
     if mid is not None:
         return _error(mid, -32601, f"method not found: {method}")
     return None  # unknown notification

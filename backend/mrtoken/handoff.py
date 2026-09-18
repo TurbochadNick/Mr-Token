@@ -70,7 +70,7 @@ def _is_substantive(txt: str) -> bool:
 
 def _scan_transcript(path: str) -> dict:
     """Pull the human-meaningful detail a handoff needs (content, on demand)."""
-    title = first_prompt = last_prompt = None
+    custom_title = ai_title = first_prompt = last_prompt = None
     last_touch: dict[str, int] = {}   # file_path -> last edit index (recency order)
     commands: list[str] = []
     idx = 0
@@ -90,9 +90,10 @@ def _scan_transcript(path: str) -> dict:
             # title lives under customTitle / aiTitle (not "title"); a human-set
             # custom title always wins, an ai-title only fills if none seen yet
             if etype == "custom-title":
-                title = o.get("customTitle") or o.get("title") or o.get("text") or title
-            elif etype == "ai-title" and not title:
-                title = o.get("aiTitle") or o.get("title") or o.get("text")
+                custom_title = (o.get("customTitle") or o.get("title")
+                                or o.get("text") or custom_title)
+            elif etype == "ai-title" and not ai_title:
+                ai_title = o.get("aiTitle") or o.get("title") or o.get("text")
 
             if etype == "assistant":
                 for b in (msg.get("content") or []):
@@ -125,8 +126,25 @@ def _scan_transcript(path: str) -> dict:
     # stale pre-migration / deleted paths so the list shows what's still in play
     changed = [fp for fp in sorted(last_touch, key=last_touch.get, reverse=True)
                if os.path.exists(fp)]
-    return {"title": title, "first_prompt": first_prompt, "last_prompt": last_prompt,
+    return {"title": custom_title or ai_title, "custom_title": custom_title,
+            "ai_title": ai_title,
+            "first_prompt": first_prompt, "last_prompt": last_prompt,
             "changed_files": changed, "commands": commands[-MAX_COMMANDS:]}
+
+
+def goal_from_scan(s: dict) -> str:
+    """The session's CURRENT goal, ranked. Extracted so it is testable on its own.
+
+    A HUMAN-set custom title wins — a person chose it deliberately. An AI-generated title
+    must NOT outrank current work: it is a session-START artifact that never refreshes.
+    Measured on a real 830k-token session: 132 `ai-title` events, ONE distinct value,
+    first == last, emitted early and unchanged all session, so the goal read
+    "Environment validation session" ~24h and eight tasks after that stopped being true.
+    An ai-title is still a better fallback than nothing.
+    """
+    return (s.get("custom_title") or s.get("last_prompt")
+            or s.get("ai_title") or s.get("first_prompt")
+            or "(state the goal)")
 
 
 def build_handoff(db_path: str | None, session_arg: str | None) -> str:
@@ -154,8 +172,12 @@ def build_handoff(db_path: str | None, session_arg: str | None) -> str:
 
     # Goal anchors on the title, else the MOST RECENT substantive request — the
     # first prompt goes stale on long, multi-task, or multiply-compacted sessions.
-    goal = _truncate(s["title"] or s["last_prompt"] or s["first_prompt"]
-                     or "(state the goal)", PROMPT_CHARS)
+    # A HUMAN-set custom title wins: a person chose it deliberately. An AI title must NOT
+    # outrank current work — it is a session-START artifact that never refreshes. Measured
+    # on a real 830k-token session: 132 `ai-title` events, ONE distinct value, first == last,
+    # emitted early and re-emitted unchanged all session. Ranking it above `last_prompt`
+    # made the goal ~24h and eight tasks stale.
+    goal = _truncate(goal_from_scan(s), PROMPT_CHARS)
     out = []
     out.append(f"# Handoff — continue in a fresh session\n")
     out.append(f"_Session {sid[:8]} · profile: {profile or 'unknown'} · "
@@ -198,10 +220,18 @@ def build_handoff(db_path: str | None, session_arg: str | None) -> str:
             out.append(f"- **{rule}**{times} ({slot['sev']}): {slot['message']}")
         out.append("")
 
+    # Declared continuation state — read for the ALREADY-RESOLVED session id, from THIS
+    # project's store. Never consults the environment, never falls back to a newest session,
+    # and renders every undeclared field as a NAMED GAP (see mrtoken/manifest.py).
+    from mrtoken.manifest import load_manifest, verify_manifest, render_section
+    m, load_err = load_manifest(sid)
+    v = verify_manifest(m, sid, transcript_path=path) if m is not None else None
+    out.extend(render_section(m, v, load_error=load_err))
+
     out.append("## Carry into the new session")
     out.append("- The goal and most recent request above")
     out.append("- The files touched (re-open only the ones still in play)")
-    out.append("- Any decisions/constraints not captured here — add them before you paste\n")
+    out.append("- The declared state above — fill every named gap or re-declare before you paste\n")
 
     # --- SEAM: optional LLM polish (paid tier) would rewrite the above here ---
 
