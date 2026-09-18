@@ -89,9 +89,26 @@ export type UiDoctorRunResult = {
   latest: UiDoctorLatest;
 };
 
+// One row of the per-session token ledger (token-native counter). Keyed by session_id.
+// A `measured` row carries the transcript-derived breakdown from the backend
+// session_summary view; an `estimated` row falls back to the char-counted TS event total
+// and carries NO measured breakdown — the two are never silently mixed. Token counts
+// only; no dollars live in this ledger by design.
+export type UiSessionLedgerRow = {
+  session: string;        // short, privacy-safe session prefix for display
+  measured: boolean;      // true iff the backend actually measured this session
+                          // (>=1 model_call recorded), NOT merely that a row exists
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;    // measured total when measured; TS event estimate otherwise
+};
+
 export type UiData = {
   summary: UiSummary;
   accurate: UiAccurate;
+  sessionLedger: UiSessionLedgerRow[];
   findings: UiFinding[];
   events: UiEvent[];
   doctorLatest: UiDoctorLatest;
@@ -153,11 +170,94 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
   }
 }
 
+// Per-session token ledger keyed by events.session_id (the TS-owned table), LEFT JOINed
+// to the backend session_summary view — the documented estimated↔actual join. A row in
+// that view is NOT by itself evidence of measurement: the view LEFT JOINs model_call, so
+// an ingested trace that recorded no model calls still yields a row whose SUMs are all
+// COALESCEd to 0. Provenance is `model_calls > 0`. When provenance is present the ledger
+// row is MEASURED (real transcript fields, including a genuinely observed zero); otherwise it
+// falls back to the char-counted event total and is EXPLICITLY estimated, carrying no
+// measured breakdown (never mixed). Resilient: if session_summary is absent the join
+// throws and we degrade to an estimated-only ledger from events alone. Metadata-only:
+// the session id is truncated to a short prefix for display.
+export function readPerSessionUsage(db: DbClient): UiSessionLedgerRow[] {
+  const shorten = (id: string | null): string =>
+    !id ? 'unknown' : id.length <= 8 ? id : `${id.slice(0, 8)}…`;
+  try {
+    const rows = db
+      .prepare(
+        `select e.session_id as sessionId,
+            coalesce(sum(e.estimated_tokens), 0) as estimatedTokens,
+            s.session_id as measuredSessionId,
+            s.model_calls as modelCalls,
+            s.input_tokens as inputTokens,
+            s.output_tokens as outputTokens,
+            s.cache_read_tokens as cacheReadTokens,
+            s.cache_write_tokens as cacheWriteTokens,
+            s.total_tokens as measuredTotal
+          from events e
+          left join session_summary s on s.session_id = e.session_id
+          group by e.session_id
+          order by e.session_id`
+      )
+      .all() as Array<{
+        sessionId: string | null;
+        estimatedTokens: number;
+        measuredSessionId: string | null;
+        modelCalls: number | null;
+        inputTokens: number | null;
+        outputTokens: number | null;
+        cacheReadTokens: number | null;
+        cacheWriteTokens: number | null;
+        measuredTotal: number | null;
+      }>;
+    return rows.map((r) =>
+      r.measuredSessionId != null && (r.modelCalls ?? 0) > 0
+        ? {
+            session: shorten(r.sessionId),
+            measured: true,
+            inputTokens: r.inputTokens ?? 0,
+            outputTokens: r.outputTokens ?? 0,
+            cacheReadTokens: r.cacheReadTokens ?? 0,
+            cacheWriteTokens: r.cacheWriteTokens ?? 0,
+            totalTokens: r.measuredTotal ?? 0
+          }
+        : {
+            session: shorten(r.sessionId),
+            measured: false,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: r.estimatedTokens
+          }
+    );
+  } catch {
+    // session_summary view (or its session_id column) not present → estimated-only ledger
+    const rows = db
+      .prepare(
+        `select session_id as sessionId, coalesce(sum(estimated_tokens), 0) as estimatedTokens
+          from events group by session_id order by session_id`
+      )
+      .all() as Array<{ sessionId: string | null; estimatedTokens: number }>;
+    return rows.map((r) => ({
+      session: shorten(r.sessionId),
+      measured: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: r.estimatedTokens
+    }));
+  }
+}
+
 export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoot)): UiData {
   const db = openDatabase(dbPath);
   const summary = getSummary(db);
   const events = listEvents(db);
   const accurate = readAccurateUsage(db);
+  const sessionLedger = readPerSessionUsage(db);
   db.close();
 
   const findings = runAuditRules({ events, projectRoot });
@@ -172,6 +272,7 @@ export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoo
   return {
     summary: toUiSummary(summary, findings),
     accurate,
+    sessionLedger,
     findings: findings.map(toUiFinding),
     events: events.map(toUiEvent).reverse(),
     doctorLatest: getLatestDoctorPatch(projectRoot),
@@ -289,6 +390,20 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
           '- Source: ESTIMATED only — char-counted from hook events, not yet reconciled with real API usage',
           'Accurate usage is not available yet. Run the mrtoken-transcript backend (or its Stop hook) to populate real token counts.'
         ]),
+    '',
+    '## Token evidence by session',
+    '',
+    'Metadata only: token counts per session, each labeled measured (transcript-derived) or estimated (char-counted fallback), never mixed. No prompt text, source, secrets, full paths, or money-spend claim; sessions are shown by a short prefix.',
+    '',
+    '| Session | Status | Input | Output | Cache read | Cache write | Total tokens |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    ...(data.sessionLedger.length === 0
+      ? ['| (none) | — | — | — | — | — | — |']
+      : data.sessionLedger.map((s) =>
+          s.measured
+            ? `| ${s.session} | measured | ${s.inputTokens.toLocaleString()} | ${s.outputTokens.toLocaleString()} | ${s.cacheReadTokens.toLocaleString()} | ${s.cacheWriteTokens.toLocaleString()} | ${s.totalTokens.toLocaleString()} |`
+            : `| ${s.session} | estimated | — | — | — | — | ${s.totalTokens.toLocaleString()} |`
+        )),
     '',
     '## Deterministic Audit Findings',
     '',

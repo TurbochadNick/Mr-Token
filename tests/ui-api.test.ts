@@ -125,4 +125,131 @@ describe('Mr Token UI API', () => {
     expect(accurate.cacheHitRatio).toBeCloseTo(850 / (100 + 850 + 0));
     expect(accurate.profiles).toContain('code');
   });
+
+  it('builds a per-session token ledger: measured from session_summary, estimated fallback, money-free Markdown', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-ledger-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8');
+    const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
+    const db = openDatabase(dbPath);
+    // two sessions of TS events; s1 will also have a measured backend row, s2 will not
+    insertNormalizedEvent(db, {
+      timestamp: '2026-08-21T10:00:00.000Z', projectPath: projectRoot, sessionId: 's1',
+      eventType: 'PostToolUse', toolName: 'Bash', filePath: null, command: 'x',
+      promptLength: 0, stdoutLength: 0, stderrLength: 0, resultLength: 0, estimatedTokens: 5000,
+      rawEvent: { session_id: 's1', hook_event_name: 'PostToolUse', cwd: projectRoot, tool_name: 'Bash', tool_input: {}, tool_response: {} }
+    });
+    insertNormalizedEvent(db, {
+      timestamp: '2026-08-21T10:05:00.000Z', projectPath: projectRoot, sessionId: 's2',
+      eventType: 'PostToolUse', toolName: 'Bash', filePath: null, command: 'y',
+      promptLength: 0, stdoutLength: 0, stderrLength: 0, resultLength: 0, estimatedTokens: 300,
+      rawEvent: { session_id: 's2', hook_event_name: 'PostToolUse', cwd: projectRoot, tool_name: 'Bash', tool_input: {}, tool_response: {} }
+    });
+    // backend session_summary contract (WITH session_id) — only s1 is measured
+    // model_calls is part of the real backend view contract (ingest._SESSION_SUMMARY_VIEW)
+    // and is what proves measurement provenance; s1 has real calls behind its numbers.
+    db.exec(`create table session_summary (
+      session_id text, profile text, model_calls integer, input_tokens integer, output_tokens integer,
+      cache_read_tokens integer, cache_write_tokens integer, total_tokens integer,
+      est_cost_usd real, high_recommendations integer
+    );
+    insert into session_summary values ('s1','code',7,100,50,850,0,1000,1.25,2);`);
+    db.close();
+
+    const data = getUiData(projectRoot, dbPath);
+    const bySession = Object.fromEntries(data.sessionLedger.map((r) => [r.session, r]));
+
+    // (a) measured session: exact transcript breakdown, not marked estimated
+    expect(bySession.s1).toMatchObject({
+      measured: true, inputTokens: 100, outputTokens: 50,
+      cacheReadTokens: 850, cacheWriteTokens: 0, totalTokens: 1000
+    });
+    // (b) estimated session: event total, explicitly estimated, no measured breakdown mixed in
+    expect(bySession.s2).toMatchObject({ measured: false, totalTokens: 300 });
+    expect(bySession.s2.inputTokens).toBe(0);
+
+    // (c) Markdown token-evidence table distinguishes both rows with totals and shows no dollars
+    const report = exportMarkdownReport(projectRoot, dbPath);
+    expect(report).toContain('## Token evidence by session');
+    const evidence = report.slice(report.indexOf('## Token evidence by session'));
+    expect(evidence).toContain('measured');
+    expect(evidence).toContain('estimated');
+    expect(evidence).toContain((1000).toLocaleString()); // s1 measured total (locale-independent)
+    expect(evidence).toContain((300).toLocaleString());   // s2 estimated total
+    expect(evidence).not.toContain('$');                  // token counts only — no money in the ledger
+    expect(report).not.toMatch(/\bspent\b/i);             // no money-spend claim anywhere in the report
+  });
+
+  // F1 regression: `measured` must require measurement PROVENANCE, not merely the
+  // existence of a session_summary row. This drives the REAL zero-model-call path —
+  // the backend `trace`/`model_call` tables plus the actual session_summary VIEW
+  // (LEFT JOIN + COUNT + COALESCE SUMs) — because a hand-built summary TABLE cannot
+  // reproduce the defect: the all-zero row only arises from the view's own LEFT JOIN.
+  it('does not mark a zero-model-call trace as measured (F1: provenance, not row existence)', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-f1-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8');
+    const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
+    const db = openDatabase(dbPath);
+
+    // TS-side events exist for both sessions (this is what the ledger keys on)
+    for (const [sessionId, estimatedTokens] of [['z1', 4200], ['m1', 900]] as const) {
+      insertNormalizedEvent(db, {
+        timestamp: '2026-09-15T10:00:00.000Z', projectPath: projectRoot, sessionId,
+        eventType: 'PostToolUse', toolName: 'Bash', filePath: null, command: 'x',
+        promptLength: 0, stdoutLength: 0, stderrLength: 0, resultLength: 0, estimatedTokens,
+        rawEvent: { session_id: sessionId, hook_event_name: 'PostToolUse', cwd: projectRoot, tool_name: 'Bash', tool_input: {}, tool_response: {} }
+      });
+    }
+
+    // Real backend shape: trace + model_call tables, and session_summary as a VIEW
+    // over them — mirroring ingest._SESSION_SUMMARY_VIEW's aggregation semantics.
+    db.exec(`create table trace (
+        id integer primary key, session_id text, source text, profile text,
+        project_path text, title text, started_at text, ended_at text
+      );
+      create table model_call (
+        id integer primary key, trace_id integer, input_tokens integer,
+        output_tokens integer, cache_read_input_tokens integer,
+        cache_creation_input_tokens integer, est_cost_usd real
+      );
+      create view session_summary as
+        select t.id as trace_id, t.session_id as session_id, t.source as source,
+               t.profile as profile, t.project_path as project_path, t.title as title,
+               t.started_at as started_at, t.ended_at as ended_at,
+               count(mc.id) as model_calls,
+               coalesce(sum(mc.input_tokens), 0) as input_tokens,
+               coalesce(sum(mc.output_tokens), 0) as output_tokens,
+               coalesce(sum(mc.cache_read_input_tokens), 0) as cache_read_tokens,
+               coalesce(sum(mc.cache_creation_input_tokens), 0) as cache_write_tokens,
+               coalesce(sum(mc.input_tokens + mc.output_tokens), 0) as total_tokens,
+               round(coalesce(sum(mc.est_cost_usd), 0), 6) as est_cost_usd,
+               0 as high_recommendations
+          from trace t
+          left join model_call mc on mc.trace_id = t.id
+         group by t.id;
+      -- z1: an ingested trace that recorded NO model calls at all (provenance absent).
+      -- The view still yields a row for it, with every SUM coalesced to 0.
+      insert into trace (id, session_id, source) values (1, 'z1', 'claude');
+      -- m1: a trace with a real model call whose measured token counts are all ZERO.
+      -- This is a legitimately OBSERVED zero and must stay measured.
+      insert into trace (id, session_id, source) values (2, 'm1', 'claude');
+      insert into model_call (id, trace_id, input_tokens, output_tokens,
+                              cache_read_input_tokens, cache_creation_input_tokens, est_cost_usd)
+        values (1, 2, 0, 0, 0, 0, 0.0);`);
+    db.close();
+
+    const data = getUiData(projectRoot, dbPath);
+    const bySession = Object.fromEntries(data.sessionLedger.map((r) => [r.session, r]));
+
+    // (a) THE DEFECT: no model calls => no measurement provenance => NOT measured.
+    // It must fall back to the TS event estimate rather than assert a measured zero.
+    expect(bySession.z1.measured).toBe(false);
+    expect(bySession.z1.totalTokens).toBe(4200);
+
+    // (b) THE GUARD: a real model call with zero tokens is an OBSERVED zero and
+    // must survive as measured — the fix distinguishes provenance-absent from zero,
+    // it does not treat zero as suspect.
+    expect(bySession.m1.measured).toBe(true);
+    expect(bySession.m1.totalTokens).toBe(0);
+    expect(bySession.m1.inputTokens).toBe(0);
+  });
 });

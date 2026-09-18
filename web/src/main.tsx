@@ -105,9 +105,20 @@ type Diagnosis = {
   whatToChangeNext: string[];
 };
 
+type SessionLedgerRow = {
+  session: string;
+  measured: boolean;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+};
+
 type ApiData = {
   summary: Summary;
   accurate: Accurate;
+  sessionLedger: SessionLedgerRow[];
   findings: Finding[];
   events: EventRow[];
   doctorLatest: DoctorLatest;
@@ -335,8 +346,7 @@ function Dashboard({
           and presenting both as co-equal headlines is the trust bug). */}
       {data.accurate.available ? (
         <section className="dashboardMetrics" aria-label="Usage from transcripts">
-          <MetricCard icon="$$" label="Cost" value={`$${data.accurate.estCostUsd.toFixed(2)}`} helper="Real API-equivalent cost from transcripts (not a subscription bill)." />
-          <MetricCard icon="AT" label="Tokens (in+out)" value={formatNumber(data.accurate.totalTokens)} helper="Real input + output from transcripts." />
+          <MetricCard icon="AT" label="Tokens (in+out)" value={formatNumber(data.accurate.totalTokens)} helper="Measured input + output tokens from transcripts." />
           <MetricCard icon="CH" label="Cache Hit" value={data.accurate.cacheHitRatio === null ? 'n/a' : `${Math.round(data.accurate.cacheHitRatio * 100)}%`} helper="Share of input-side tokens served from cache." />
           <MetricCard icon="SS" label="Sessions" value={formatNumber(data.accurate.sessions)} helper="Sessions with real token counts." />
           <MetricCard icon="TL" label="Tool Calls" value={formatNumber(data.summary.toolCalls)} helper="Observed tool activity and command execution." />
@@ -351,6 +361,8 @@ function Dashboard({
       )}
 
       <AccurateUsage accurate={data.accurate} />
+
+      <SessionLedger rows={data.sessionLedger} />
 
       <section className="dashboardGrid">
         <TopTokenLeak finding={topFinding} />
@@ -401,6 +413,58 @@ function AccurateUsage({ accurate }: { accurate: Accurate }) {
           body="The mrtoken-transcript backend (or its Stop hook) has not populated this database, so the numbers above are estimates. Once it runs, real token counts, cost, and cache hit rate appear here."
           steps={['Install the backend', 'Use Claude Code', 'Data appears here']}
         />
+      )}
+    </section>
+  );
+}
+
+function SessionLedger({ rows }: { rows: SessionLedgerRow[] }) {
+  return (
+    <section className="section">
+      <div className="sectionHeader dashboardSectionHeader">
+        <div>
+          <p className="eyebrow">Per session</p>
+          <h3>Token evidence by session</h3>
+        </div>
+        <span className="ratingPill">token counts, not dollars</span>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState
+          title="No sessions recorded yet."
+          body="Each Claude Code session appears here with measured token counts once the backend has ingested its transcript, or a clearly labeled estimate until then."
+          steps={['Use Claude Code', 'Backend ingests transcript', 'Measured counts appear']}
+        />
+      ) : (
+        <table className="ledgerTable">
+          <thead>
+            <tr>
+              <th>Session</th>
+              <th>Status</th>
+              <th>Input</th>
+              <th>Output</th>
+              <th>Cache read</th>
+              <th>Cache write</th>
+              <th>Total tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.session} className={row.measured ? 'ledgerRowMeasured' : 'ledgerRowEstimated'}>
+                <td className="mono">{row.session}</td>
+                <td>
+                  <span className={`statusBadge ${row.measured ? 'statusBadgeSuccess' : ''}`}>
+                    {row.measured ? 'measured' : 'estimated'}
+                  </span>
+                </td>
+                <td>{row.measured ? formatNumber(row.inputTokens) : '—'}</td>
+                <td>{row.measured ? formatNumber(row.outputTokens) : '—'}</td>
+                <td>{row.measured ? formatNumber(row.cacheReadTokens) : '—'}</td>
+                <td>{row.measured ? formatNumber(row.cacheWriteTokens) : '—'}</td>
+                <td>{formatNumber(row.totalTokens)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </section>
   );
