@@ -126,8 +126,16 @@ const EMPTY_ACCURATE: UiAccurate = {
 // Falls back to EMPTY_ACCURATE (available=false) when the view does not exist,
 // so a TS-only database never errors here.
 export function readAccurateUsage(db: DbClient): UiAccurate {
+  // Each catch below is scoped to ONE database read, because a missing view/column is the
+  // only failure here that legitimately means "absent". Everything after the reads — the
+  // arithmetic and the result construction — is deliberately OUTSIDE any catch: a defect
+  // there is a defect, and must surface rather than be reported to the user as the benign
+  // "backend has not run" state. Absence and failure must stay distinguishable.
+  type AccurateRow = Omit<UiAccurate, 'available' | 'cacheHitRatio' | 'profiles' | 'wasteSavingsTokens'>;
+
+  let row: AccurateRow | undefined;
   try {
-    const row = db
+    row = db
       .prepare(
         `select count(*) as sessions,
           coalesce(sum(input_tokens), 0) as inputTokens,
@@ -139,35 +147,42 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
           coalesce(sum(high_recommendations), 0) as highRecommendations
         from session_summary`
       )
-      .get() as Omit<UiAccurate, 'available' | 'cacheHitRatio' | 'profiles' | 'wasteSavingsTokens'>;
-    if (!row || row.sessions === 0) return EMPTY_ACCURATE;
-    const profiles = (
-      db.prepare('select distinct profile from session_summary where profile is not null').all() as Array<{
-        profile: string;
-      }>
-    ).map((r) => r.profile);
-    // real recoverable waste = sum of the backend rules' est_savings_tokens.
-    // Resilient on its own: session_summary can exist without the recommendation
-    // table (older/partial backend), and that must not void the accurate data.
-    let wasteSavingsTokens = 0;
-    try {
-      wasteSavingsTokens = (
-        db.prepare('select coalesce(sum(est_savings_tokens), 0) as t from recommendation').get() as { t: number }
-      ).t;
-    } catch {
-      wasteSavingsTokens = 0;
-    }
-    const inputSide = row.inputTokens + row.cacheReadTokens + row.cacheWriteTokens;
-    return {
-      ...row,
-      available: true,
-      cacheHitRatio: inputSide > 0 ? row.cacheReadTokens / inputSide : null,
-      wasteSavingsTokens,
-      profiles
-    };
+      .get() as AccurateRow;
   } catch {
     return EMPTY_ACCURATE; // session_summary view not present (backend has not run)
   }
+  if (!row || row.sessions === 0) return EMPTY_ACCURATE;
+
+  let profileRows: Array<{ profile: string }>;
+  try {
+    profileRows = db
+      .prepare('select distinct profile from session_summary where profile is not null')
+      .all() as Array<{ profile: string }>;
+  } catch {
+    return EMPTY_ACCURATE; // session_summary lacks the profile column (older backend)
+  }
+  const profiles = profileRows.map((r) => r.profile);
+
+  // real recoverable waste = sum of the backend rules' est_savings_tokens.
+  // Resilient on its own: session_summary can exist without the recommendation
+  // table (older/partial backend), and that must not void the accurate data.
+  let wasteSavingsTokens = 0;
+  try {
+    wasteSavingsTokens = (
+      db.prepare('select coalesce(sum(est_savings_tokens), 0) as t from recommendation').get() as { t: number }
+    ).t;
+  } catch {
+    wasteSavingsTokens = 0;
+  }
+
+  const inputSide = row.inputTokens + row.cacheReadTokens + row.cacheWriteTokens;
+  return {
+    ...row,
+    available: true,
+    cacheHitRatio: inputSide > 0 ? row.cacheReadTokens / inputSide : null,
+    wasteSavingsTokens,
+    profiles
+  };
 }
 
 // Per-session token ledger keyed by events.session_id (the TS-owned table), LEFT JOINed

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { openDatabase } from '../src/db/client.js';
+import { openDatabase, type DbClient } from '../src/db/client.js';
 import { insertNormalizedEvent } from '../src/db/events.js';
 import { exportMarkdownReport, getSetupStatus, getUiData, readAccurateUsage, runUiDoctor, runUiInit } from '../src/local-ui/api.js';
 
@@ -251,5 +251,54 @@ describe('Mr Token UI API', () => {
     expect(bySession.m1.measured).toBe(true);
     expect(bySession.m1.totalTokens).toBe(0);
     expect(bySession.m1.inputTokens).toBe(0);
+  });
+
+  // FINDING 1 regression: readAccurateUsage's catch must cover ONLY the boundary where a
+  // missing session_summary view/column can legitimately throw. A defect anywhere else —
+  // notably the arithmetic and object construction after the reads — must propagate, not be
+  // rendered to the user as the benign "backend has not run" absence (available: false).
+  //
+  // These two cases pull in opposite directions on purpose. Narrowing the catch too little
+  // fails the first; narrowing it too much fails the second.
+  describe('readAccurateUsage failure boundary', () => {
+    // A row whose construction-time read throws — i.e. a genuine defect, NOT a missing view.
+    const poisonedRow = {
+      sessions: 1,
+      inputTokens: 10,
+      outputTokens: 5,
+      get cacheReadTokens(): number {
+        throw new Error('construction defect: not a missing-view condition');
+      },
+      cacheWriteTokens: 0,
+      totalTokens: 15,
+      estCostUsd: 0,
+      highRecommendations: 0
+    };
+
+    it('propagates a non-missing-view error instead of reporting absence', () => {
+      const db = {
+        prepare: (sql: string) => ({
+          get: () => (sql.includes('from recommendation') ? { t: 0 } : poisonedRow),
+          all: () => [] as Array<{ profile: string }>
+        })
+      } as unknown as DbClient;
+
+      // Must throw. Returning EMPTY_ACCURATE here would be the defect: a real bug
+      // indistinguishable from "the Python backend has not run yet".
+      expect(() => readAccurateUsage(db)).toThrow(/construction defect/);
+    });
+
+    it('still reports absence when the session_summary view is genuinely missing', () => {
+      const db = {
+        prepare: () => {
+          throw new Error('no such table: session_summary');
+        }
+      } as unknown as DbClient;
+
+      // The legitimate boundary: a TS-only database must not error here.
+      const accurate = readAccurateUsage(db);
+      expect(accurate.available).toBe(false);
+      expect(accurate.sessions).toBe(0);
+    });
   });
 });
