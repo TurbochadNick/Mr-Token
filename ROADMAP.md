@@ -10,8 +10,8 @@ costs you — huge tool dumps, re-read loops, retry loops, runaway steps — and
 **Expansion is gated on proving the heuristics by dogfooding**, so validation comes before
 new product surface.
 
-> Ownership/IP planning is intentionally **out of scope here** (tracked separately in
-> `OWNERSHIP_GATE.md`). This file is engineering + product only.
+> The former ownership gate was resolved by Zach on 2026-09-18. This file remains
+> engineering + product only; ordinary push, release, and deployment approvals still apply.
 
 ---
 

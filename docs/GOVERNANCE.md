@@ -1,23 +1,22 @@
 # MR Token governance
 
-MR Token is still in `~/Projects/gate-pending/` because ownership is not fully
-resolved. See [OWNERSHIP_GATE.md](../OWNERSHIP_GATE.md) for the source-of-truth
-gate.
+Zach resolved the former ownership gate on 2026-09-18. See
+[OWNERSHIP_GATE.md](../OWNERSHIP_GATE.md) for the superseding record. Ownership
+speculation must not stop engineering, review, or commits.
 
-Current facts:
+Current operating facts:
 
-- Zach owns the Python backend work in this checkout.
-- Nick / TurbochadNick co-built the TypeScript and web surfaces.
+- Zach directs the project and has authorized normal project development.
+- Nick / TurbochadNick made earlier TypeScript and web contributions.
 - The repository remote is under Nick's GitHub account:
   `git@github.com:TurbochadNick/Mr-Token.git`.
-- The project is part of an active BYU TTO pilot, so BYU may assert a claim.
+- The project participates in a BYU TTO pilot.
+- None of those facts is, by itself, an active ownership claim or work gate.
 
-Before broad beta expansion or commercial packaging:
+The current `~/Projects/gate-pending/` path is legacy filing, not a restriction.
+Choose a permanent storage bucket and relocate the checkout separately under the
+shared storage standard so active paths and K2 registrations are updated safely.
 
-1. Get BYU TTO's written position on ownership.
-2. Get Zach and Nick's written ownership split.
-3. Decide the permanent storage bucket: personal, shared, or business.
-4. Move the repo out of `gate-pending/` only after the ownership gate closes.
-
-Tester-facing language should stay modest until this is resolved: local beta,
-research/pilot, no hosted service, no production SLA.
+Broad distribution, commercial packaging, pushes, releases, and deployments
+remain subject to their ordinary action-time approvals. They are not blocked by
+an ownership gate.

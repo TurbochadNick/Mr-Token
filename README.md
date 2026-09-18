@@ -43,8 +43,10 @@ mrtoken-transcript offload-roi --codex <ignore-session> <follow-session>
 ```
 
 See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the tester flow.
-Ownership is still gated; see [OWNERSHIP_GATE.md](OWNERSHIP_GATE.md) and
-[docs/GOVERNANCE.md](docs/GOVERNANCE.md) before widening distribution.
+The former ownership gate was resolved by Zach on 2026-09-18; see
+[OWNERSHIP_GATE.md](OWNERSHIP_GATE.md) and
+[docs/GOVERNANCE.md](docs/GOVERNANCE.md). Distribution and publication still
+follow their ordinary action-time approvals.
 
 ## Other Surfaces
 
