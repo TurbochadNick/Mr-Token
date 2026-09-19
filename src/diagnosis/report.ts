@@ -1,4 +1,16 @@
-import { diagnosisExamples, displayDiagnosisCategory, type DiagnosisReport } from './categories.js';
+import { diagnosisExamples, displayDiagnosisCategory, type DiagnosisReport, type NonscorableReason } from './categories.js';
+
+function markdownNonscorableLabel(reason: NonscorableReason): string {
+  switch (reason) {
+    case 'measured-zero-total': return 'measured';
+    case 'estimated-zero-total': return 'estimated';
+  }
+  return exhaustiveNonscorableReason(reason);
+}
+
+function exhaustiveNonscorableReason(reason: never): never {
+  throw new Error(`Unhandled nonscorable reason: ${reason}`);
+}
 
 export function formatDiagnosisMarkdown(report: DiagnosisReport): string {
   return [
@@ -9,7 +21,7 @@ export function formatDiagnosisMarkdown(report: DiagnosisReport): string {
           `- Score: ${report.scoring.fuelScore}/100 (${report.scoring.fuelRating})`,
           `- Waste percentage: ${report.scoring.wastePercentage}%`
         ]
-      : [`- Scoring: unavailable (${report.scoring.reason === 'measured-zero-total' ? 'measured' : 'estimated'} zero total)`]),
+      : [`- Scoring: unavailable (${markdownNonscorableLabel(report.scoring.reason)} zero total)`]),
     `- Useful estimated tokens: ${report.burnProfile.usefulEstimatedTokens.toLocaleString()}`,
     `- Suspected waste tokens: ${report.burnProfile.suspectedWasteTokens.toLocaleString()}`,
     `- Confidence: ${report.burnProfile.confidence}`,

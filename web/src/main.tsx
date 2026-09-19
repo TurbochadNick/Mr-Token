@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { NonscorableReason } from '../../src/diagnosis/categories';
 import './styles.css';
 
 type Summary = {
@@ -93,7 +94,7 @@ type Diagnosis = {
   generatedAt: string;
   scoring:
     | { scorable: true; fuelScore: number; fuelRating: string; wastePercentage: number }
-    | { scorable: false; reason: 'measured-zero-total' | 'estimated-zero-total' };
+    | { scorable: false; reason: NonscorableReason };
   burnProfile: {
     usefulEstimatedTokens: number;
     suspectedWasteTokens: number;
@@ -144,6 +145,26 @@ type DashboardInsights = {
   sessionCount: number;
   tokenFlow: TokenFlowSegment[];
 };
+
+function nonscorableTitle(reason: NonscorableReason): string {
+  switch (reason) {
+    case 'measured-zero-total': return 'Measured';
+    case 'estimated-zero-total': return 'Estimated';
+  }
+  return exhaustiveNonscorableReason(reason);
+}
+
+function nonscorableLowerLabel(reason: NonscorableReason): string {
+  switch (reason) {
+    case 'measured-zero-total': return 'measured';
+    case 'estimated-zero-total': return 'estimated';
+  }
+  return exhaustiveNonscorableReason(reason);
+}
+
+function exhaustiveNonscorableReason(reason: never): never {
+  throw new Error(`Unhandled nonscorable reason: ${reason}`);
+}
 
 function App() {
   const [data, setData] = useState<ApiData | null>(null);
@@ -340,7 +361,7 @@ function Dashboard({
           ) : (
             <>
               <strong>—</strong>
-              <span>{data.diagnosis.scoring.reason === 'measured-zero-total' ? 'Measured' : 'Estimated'} zero total</span>
+              <span>{nonscorableTitle(data.diagnosis.scoring.reason)} zero total</span>
             </>
           )}
           <div className="heroActions">
@@ -649,7 +670,7 @@ function FuelDiagnosisPanel({ data }: { data: ApiData }) {
         <span>Waste: {formatNumber(data.diagnosis.burnProfile.suspectedWasteTokens)}</span>
         {data.diagnosis.scoring.scorable
           ? <span>Waste: {data.diagnosis.scoring.wastePercentage}%</span>
-          : <span>Waste: not scorable ({data.diagnosis.scoring.reason === 'measured-zero-total' ? 'measured' : 'estimated'} zero total)</span>}
+          : <span>Waste: not scorable ({nonscorableLowerLabel(data.diagnosis.scoring.reason)} zero total)</span>}
       </div>
       {data.diagnosis.whatToChangeNext.length === 0 ? (
         <EmptyState

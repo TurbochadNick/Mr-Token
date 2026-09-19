@@ -36,9 +36,11 @@ export type BurnProfile = {
 
 export type FuelRating = 'Efficient' | 'Mostly efficient' | 'Waste detected' | 'Heavy waste' | 'Severe token leak';
 
+export type NonscorableReason = 'measured-zero-total' | 'estimated-zero-total';
+
 export type Scoring =
   | { scorable: true; fuelScore: number; fuelRating: FuelRating; wastePercentage: number }
-  | { scorable: false; reason: 'measured-zero-total' | 'estimated-zero-total' };
+  | { scorable: false; reason: NonscorableReason };
 
 export type DiagnosisReport = {
   generatedAt: string;
