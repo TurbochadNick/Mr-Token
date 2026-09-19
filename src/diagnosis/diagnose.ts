@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StoredEvent } from '../schemas/events.js';
 import { estimateTokens } from '../utils/tokens.js';
-import type { BurnProfile, DiagnosisFinding, DiagnosisReport } from './categories.js';
+import type { BurnProfile, DiagnosisFinding, DiagnosisReport, Scoring } from './categories.js';
 import { aggregateConfidence, calculateFuelScore, fuelRating, savingsRange } from './scoring.js';
 import { generalDiagnosis, rankedNextChanges } from './recommendations.js';
 
@@ -35,25 +35,28 @@ export function diagnoseFuel(input: {
   const useMeasured =
     input.measuredTotalTokens !== undefined && input.measuredTotalTokens > 0 &&
     input.measuredWasteTokens !== undefined;
+  const measuredZeroTotal = input.measuredTotalTokens === 0 && input.measuredWasteTokens === 0;
   const estTotal = input.totalTokens ?? sum(input.events.map((event) => event.estimatedTokens));
   // Score against measured totals only with a measured waste counterpart; never mix.
   const scoreTotal = useMeasured ? (input.measuredTotalTokens as number) : estTotal;
   const scoreWaste = useMeasured
     ? Math.min(scoreTotal, input.measuredWasteTokens as number)
     : Math.min(estTotal, sum(findings.map((finding) => finding.estimatedWasteTokens)));
+  const wastePercentage = scoreTotal === 0 ? 0 : Math.round((scoreWaste / scoreTotal) * 100);
   const fuelScore = calculateFuelScore(scoreTotal, scoreWaste);
+  const scoring: Scoring = measuredZeroTotal
+    ? { scorable: false, reason: 'measured-zero-total' }
+    : { scorable: true, fuelScore, fuelRating: fuelRating(fuelScore), wastePercentage };
   const burnProfile: BurnProfile = {
     usefulEstimatedTokens: Math.max(0, scoreTotal - scoreWaste),
     suspectedWasteTokens: scoreWaste,
-    wastePercentage: scoreTotal === 0 ? 0 : Math.round((scoreWaste / scoreTotal) * 100),
     topBurnCauses: findings.slice(0, 3).map((finding) => finding.category),
     confidence: useMeasured ? 'high' : aggregateConfidence(findings)
   };
 
   return {
     generatedAt: input.generatedAt ?? new Date().toISOString(),
-    fuelScore,
-    fuelRating: fuelRating(fuelScore),
+    scoring,
     burnProfile,
     generalDiagnosis: generalDiagnosis(findings),
     findings,

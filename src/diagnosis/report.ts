@@ -4,10 +4,14 @@ export function formatDiagnosisMarkdown(report: DiagnosisReport): string {
   return [
     `## Fuel Score`,
     '',
-    `- Score: ${report.fuelScore}/100 (${report.fuelRating})`,
+    ...(report.scoring.scorable
+      ? [
+          `- Score: ${report.scoring.fuelScore}/100 (${report.scoring.fuelRating})`,
+          `- Waste percentage: ${report.scoring.wastePercentage}%`
+        ]
+      : ['- Scoring: unavailable (measured zero total)']),
     `- Useful estimated tokens: ${report.burnProfile.usefulEstimatedTokens.toLocaleString()}`,
     `- Suspected waste tokens: ${report.burnProfile.suspectedWasteTokens.toLocaleString()}`,
-    `- Waste percentage: ${report.burnProfile.wastePercentage}%`,
     `- Confidence: ${report.burnProfile.confidence}`,
     '',
     '## General Diagnosis',

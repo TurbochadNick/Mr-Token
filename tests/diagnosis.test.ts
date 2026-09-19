@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { diagnoseFuel } from '../src/diagnosis/diagnose.js';
 import { calculateFuelScore } from '../src/diagnosis/scoring.js';
+import { formatDiagnosisMarkdown } from '../src/diagnosis/report.js';
 import { exportMarkdownReport } from '../src/local-ui/api.js';
 import type { StoredEvent } from '../src/schemas/events.js';
 import { mkdtempSync } from 'node:fs';
@@ -15,10 +16,40 @@ describe('fuel diagnosis', () => {
       measuredTotalTokens: 1000,
       measuredWasteTokens: 100
     });
-    expect(report.fuelScore).toBe(90); // 100 - 100/1000
-    expect(report.burnProfile.wastePercentage).toBe(10);
+    expect(report.scoring.scorable).toBe(true);
+    if (!report.scoring.scorable) throw new Error('expected a scorable measured pair');
+    expect(report.scoring.fuelScore).toBe(90); // 100 - 100/1000
+    expect(report.scoring.wastePercentage).toBe(10);
     expect(report.burnProfile.suspectedWasteTokens).toBe(100);
     expect(report.burnProfile.confidence).toBe('high');
+  });
+
+  it('keeps a measured zero total nonscorable while retaining live findings', () => {
+    const report = diagnoseFuel({
+      projectRoot: '/tmp/p',
+      events: [event({ stdoutLength: 20000, estimatedTokens: 5000, toolName: 'Bash', eventType: 'PostToolUse' })],
+      measuredTotalTokens: 0,
+      measuredWasteTokens: 0
+    });
+
+    expect(report.scoring).toEqual({ scorable: false, reason: 'measured-zero-total' });
+    expect('fuelScore' in report.scoring).toBe(false);
+    expect('fuelRating' in report.scoring).toBe(false);
+    expect('wastePercentage' in report.scoring).toBe(false);
+    expect(report.findings.some((finding) => finding.category === 'Huge Tool Output')).toBe(true);
+    expect(report.findings[0]?.estimatedWasteTokens).toBe(2500);
+    expect(report.burnProfile.suspectedWasteTokens).toBe(report.findings[0]?.estimatedWasteTokens);
+    // This is high because the retained finding is high confidence, not because
+    // zero measurement inherits high confidence.
+    expect(report.burnProfile.confidence).toBe(report.findings[0]?.confidence);
+
+    const noFinding = diagnoseFuel({ projectRoot: '/tmp/p', events: [], measuredTotalTokens: 0, measuredWasteTokens: 0 });
+    expect(noFinding.burnProfile.confidence).toBe('low');
+
+    const markdown = formatDiagnosisMarkdown(report);
+    expect(markdown).toContain('- Scoring: unavailable (measured zero total)');
+    expect(markdown).not.toContain('- Score:');
+    expect(markdown).not.toContain('- Waste percentage:');
   });
 
   it('detects huge tool output', () => {

@@ -153,9 +153,12 @@ describe('Mr Token UI API', () => {
     expect(data.accurate.available).toBe(true);
     expect(data.accurate.addressableWasteTokens).toBeNull();
     expect(data.diagnosis.findings.some((finding) => finding.category === 'Huge Tool Output')).toBe(true);
-    expect(data.diagnosis.fuelScore).toBe(50);
-    expect(data.diagnosis.fuelRating).toBe('Waste detected');
-    expect(data.diagnosis.burnProfile.wastePercentage).toBe(50);
+    expect(data.diagnosis.scoring).toMatchObject({
+      scorable: true,
+      fuelScore: 50,
+      fuelRating: 'Waste detected',
+      wastePercentage: 50
+    });
   });
 
   it('builds a per-session token ledger: measured from session_summary, estimated fallback, money-free Markdown', () => {

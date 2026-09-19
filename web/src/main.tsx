@@ -91,12 +91,12 @@ const DIAGNOSIS_LABELS: Record<string, string> = {
 
 type Diagnosis = {
   generatedAt: string;
-  fuelScore: number;
-  fuelRating: string;
+  scoring:
+    | { scorable: true; fuelScore: number; fuelRating: string; wastePercentage: number }
+    | { scorable: false; reason: 'measured-zero-total' };
   burnProfile: {
     usefulEstimatedTokens: number;
     suspectedWasteTokens: number;
-    wastePercentage: number;
     topBurnCauses: string[];
     confidence: string;
   };
@@ -332,8 +332,17 @@ function Dashboard({
         </div>
         <div className="heroPanel">
           <span className="heroPanelLabel">Fuel Score</span>
-          <strong>{data.diagnosis.fuelScore}</strong>
-          <span>{data.diagnosis.fuelRating}</span>
+          {data.diagnosis.scoring.scorable ? (
+            <>
+              <strong>{data.diagnosis.scoring.fuelScore}</strong>
+              <span>{data.diagnosis.scoring.fuelRating}</span>
+            </>
+          ) : (
+            <>
+              <strong>—</strong>
+              <span>Measured zero total</span>
+            </>
+          )}
           <div className="heroActions">
             <button className="primaryAction" onClick={onRunAudit}>Run Audit</button>
             <button className="secondaryAction" onClick={onRunDoctor}>Run Doctor</button>
@@ -638,7 +647,9 @@ function FuelDiagnosisPanel({ data }: { data: ApiData }) {
       <div className="burnGrid dashboardBurnGrid">
         <span>Useful: {formatNumber(data.diagnosis.burnProfile.usefulEstimatedTokens)}</span>
         <span>Waste: {formatNumber(data.diagnosis.burnProfile.suspectedWasteTokens)}</span>
-        <span>Waste: {data.diagnosis.burnProfile.wastePercentage}%</span>
+        {data.diagnosis.scoring.scorable
+          ? <span>Waste: {data.diagnosis.scoring.wastePercentage}%</span>
+          : <span>Waste: not scorable (measured zero total)</span>}
       </div>
       {data.diagnosis.whatToChangeNext.length === 0 ? (
         <EmptyState

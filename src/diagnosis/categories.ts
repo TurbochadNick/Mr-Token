@@ -30,17 +30,19 @@ export type DiagnosisFinding = {
 export type BurnProfile = {
   usefulEstimatedTokens: number;
   suspectedWasteTokens: number;
-  wastePercentage: number;
   topBurnCauses: string[];
   confidence: DiagnosisConfidence;
 };
 
 export type FuelRating = 'Efficient' | 'Mostly efficient' | 'Waste detected' | 'Heavy waste' | 'Severe token leak';
 
+export type Scoring =
+  | { scorable: true; fuelScore: number; fuelRating: FuelRating; wastePercentage: number }
+  | { scorable: false; reason: 'measured-zero-total' };
+
 export type DiagnosisReport = {
   generatedAt: string;
-  fuelScore: number;
-  fuelRating: FuelRating;
+  scoring: Scoring;
   burnProfile: BurnProfile;
   generalDiagnosis: string;
   findings: DiagnosisFinding[];
