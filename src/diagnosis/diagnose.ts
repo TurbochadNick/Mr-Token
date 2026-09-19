@@ -11,12 +11,10 @@ export function diagnoseFuel(input: {
   projectRoot: string;
   totalTokens?: number;
   generatedAt?: string;
-  // REAL transcript-derived numbers (from the Python session_summary +
-  // recommendation tables). When present, the fuel score and burn profile use
-  // these instead of char-counted estimates. Findings below stay estimate-based
-  // (the TS event ledger) and remain the detailed guidance.
-  realTotalTokens?: number;
-  realWasteTokens?: number;
+  // Measured transcript-derived numbers. Scoring uses them only as a pair;
+  // findings remain estimate-based detailed guidance.
+  measuredTotalTokens?: number;
+  measuredWasteTokens?: number;
 }): DiagnosisReport {
   const findings = [
     hugeToolOutput(input.events),
@@ -34,13 +32,14 @@ export function diagnoseFuel(input: {
   ].filter((finding): finding is DiagnosisFinding => Boolean(finding))
     .sort((a, b) => b.estimatedWasteTokens - a.estimatedWasteTokens || a.category.localeCompare(b.category));
 
-  const useReal = input.realTotalTokens !== undefined && input.realTotalTokens > 0;
+  const useMeasured =
+    input.measuredTotalTokens !== undefined && input.measuredTotalTokens > 0 &&
+    input.measuredWasteTokens !== undefined;
   const estTotal = input.totalTokens ?? sum(input.events.map((event) => event.estimatedTokens));
-  // score against REAL totals when available (both numerator and denominator real,
-  // never a mix); fall back to the estimated event totals otherwise
-  const scoreTotal = useReal ? (input.realTotalTokens as number) : estTotal;
-  const scoreWaste = useReal
-    ? Math.min(scoreTotal, input.realWasteTokens ?? 0)
+  // Score against measured totals only with a measured waste counterpart; never mix.
+  const scoreTotal = useMeasured ? (input.measuredTotalTokens as number) : estTotal;
+  const scoreWaste = useMeasured
+    ? Math.min(scoreTotal, input.measuredWasteTokens as number)
     : Math.min(estTotal, sum(findings.map((finding) => finding.estimatedWasteTokens)));
   const fuelScore = calculateFuelScore(scoreTotal, scoreWaste);
   const burnProfile: BurnProfile = {
@@ -48,7 +47,7 @@ export function diagnoseFuel(input: {
     suspectedWasteTokens: scoreWaste,
     wastePercentage: scoreTotal === 0 ? 0 : Math.round((scoreWaste / scoreTotal) * 100),
     topBurnCauses: findings.slice(0, 3).map((finding) => finding.category),
-    confidence: useReal ? 'high' : aggregateConfidence(findings)
+    confidence: useMeasured ? 'high' : aggregateConfidence(findings)
   };
 
   return {

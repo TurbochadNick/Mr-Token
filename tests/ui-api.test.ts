@@ -116,6 +116,7 @@ describe('Mr Token UI API', () => {
       cache_read_tokens integer, cache_write_tokens integer, total_tokens integer,
       est_cost_usd real, high_recommendations integer
     );
+    create table recommendation (est_savings_tokens integer);
     insert into session_summary values ('code', 100, 50, 850, 0, 150, 1.25, 2);`);
     const accurate = readAccurateUsage(db);
     db.close();
@@ -123,7 +124,38 @@ describe('Mr Token UI API', () => {
     expect(accurate.totalTokens).toBe(150);
     expect(accurate.estCostUsd).toBeCloseTo(1.25);
     expect(accurate.cacheHitRatio).toBeCloseTo(850 / (100 + 850 + 0));
+    expect(accurate.addressableWasteTokens).toBe(0);
     expect(accurate.profiles).toContain('code');
+  });
+
+  it('does not score a measured total with missing measured waste as perfect', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-measured-pair-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8');
+    const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
+    const db = openDatabase(dbPath);
+    insertNormalizedEvent(db, {
+      timestamp: '2026-09-19T00:00:00.000Z', projectPath: projectRoot, sessionId: 'measured',
+      eventType: 'PostToolUse', toolName: 'Bash', filePath: null, command: 'x',
+      promptLength: 0, stdoutLength: 20000, stderrLength: 0, resultLength: 0, estimatedTokens: 5000,
+      rawEvent: { session_id: 'measured', hook_event_name: 'PostToolUse', cwd: projectRoot, tool_name: 'Bash', tool_input: {}, tool_response: {} }
+    });
+    // A measured transcript total is present, but the recommendation table — the
+    // only current UI-path waste source — is intentionally absent.
+    db.exec(`create table session_summary (
+      session_id text, profile text, model_calls integer, input_tokens integer, output_tokens integer,
+      cache_read_tokens integer, cache_write_tokens integer, total_tokens integer,
+      est_cost_usd real, high_recommendations integer
+    );
+    insert into session_summary values ('measured','code',1,700,300,0,0,1000,0,0);`);
+    db.close();
+
+    const data = getUiData(projectRoot, dbPath);
+    expect(data.accurate.available).toBe(true);
+    expect(data.accurate.addressableWasteTokens).toBeNull();
+    expect(data.diagnosis.findings.some((finding) => finding.category === 'Huge Tool Output')).toBe(true);
+    expect(data.diagnosis.fuelScore).toBe(50);
+    expect(data.diagnosis.fuelRating).toBe('Waste detected');
+    expect(data.diagnosis.burnProfile.wastePercentage).toBe(50);
   });
 
   it('builds a per-session token ledger: measured from session_summary, estimated fallback, money-free Markdown', () => {

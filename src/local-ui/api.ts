@@ -34,7 +34,7 @@ export type UiAccurate = {
   estCostUsd: number;
   cacheHitRatio: number | null;
   highRecommendations: number;
-  wasteSavingsTokens: number; // sum of recommendation.est_savings_tokens (real)
+  addressableWasteTokens: number | null; // recommendation estimate; null when unavailable
   profiles: string[];
 };
 
@@ -119,7 +119,7 @@ export type UiData = {
 const EMPTY_ACCURATE: UiAccurate = {
   available: false, sessions: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
   cacheWriteTokens: 0, totalTokens: 0, estCostUsd: 0, cacheHitRatio: null,
-  highRecommendations: 0, wasteSavingsTokens: 0, profiles: []
+  highRecommendations: 0, addressableWasteTokens: null, profiles: []
 };
 
 // Read the Python backend's session_summary view (real token counts) if present.
@@ -131,7 +131,7 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
   // arithmetic and the result construction — is deliberately OUTSIDE any catch: a defect
   // there is a defect, and must surface rather than be reported to the user as the benign
   // "backend has not run" state. Absence and failure must stay distinguishable.
-  type AccurateRow = Omit<UiAccurate, 'available' | 'cacheHitRatio' | 'profiles' | 'wasteSavingsTokens'>;
+  type AccurateRow = Omit<UiAccurate, 'available' | 'cacheHitRatio' | 'profiles' | 'addressableWasteTokens'>;
 
   let row: AccurateRow | undefined;
   try {
@@ -177,16 +177,23 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
   }
   const profiles = profileRows.map((r) => r.profile);
 
-  // real recoverable waste = sum of the backend rules' est_savings_tokens.
-  // Resilient on its own: session_summary can exist without the recommendation
-  // table (older/partial backend), and that must not void the accurate data.
-  let wasteSavingsTokens = 0;
+  // Addressable estimate from backend recommendations. An empty table is an
+  // observed zero; a missing table is unavailable and must remain distinct.
+  let addressableWasteTokens: number | null = null;
   try {
-    wasteSavingsTokens = (
+    addressableWasteTokens = (
       db.prepare('select coalesce(sum(est_savings_tokens), 0) as t from recommendation').get() as { t: number }
     ).t;
-  } catch {
-    wasteSavingsTokens = 0;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error as { code?: unknown }).code === 'SQLITE_ERROR' &&
+      error.message === 'no such table: recommendation'
+    ) {
+      addressableWasteTokens = null;
+    } else {
+      throw error;
+    }
   }
 
   const inputSide = row.inputTokens + row.cacheReadTokens + row.cacheWriteTokens;
@@ -194,7 +201,7 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
     ...row,
     available: true,
     cacheHitRatio: inputSide > 0 ? row.cacheReadTokens / inputSide : null,
-    wasteSavingsTokens,
+    addressableWasteTokens,
     profiles
   };
 }
@@ -292,10 +299,9 @@ export function getUiData(projectRoot: string, dbPath = defaultDbPath(projectRoo
   const findings = runAuditRules({ events, projectRoot });
   const diagnosis = diagnoseFuel({
     events, projectRoot, totalTokens: summary.totalTokens,
-    // prefer REAL transcript totals for the fuel score when the backend has run,
-    // so the headline rating reflects reality not char-counted estimates
-    realTotalTokens: accurate.available ? accurate.totalTokens : undefined,
-    realWasteTokens: accurate.available ? accurate.wasteSavingsTokens : undefined
+    // The UI has a measured total but no measured waste source. Its recommendation
+    // sum is addressable estimated waste and must not be passed as measured waste.
+    measuredTotalTokens: accurate.available ? accurate.totalTokens : undefined
   });
 
   return {

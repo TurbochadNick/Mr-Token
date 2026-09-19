@@ -8,12 +8,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 describe('fuel diagnosis', () => {
-  it('scores against REAL totals when provided, not estimated findings', () => {
+  it('scores against measured pairs when provided, not estimated findings', () => {
     const report = diagnoseFuel({
       projectRoot: '/tmp/p',
       events: [event({ stdoutLength: 20000, estimatedTokens: 5000, toolName: 'Bash', eventType: 'PostToolUse' })],
-      realTotalTokens: 1000,
-      realWasteTokens: 100
+      measuredTotalTokens: 1000,
+      measuredWasteTokens: 100
     });
     expect(report.fuelScore).toBe(90); // 100 - 100/1000
     expect(report.burnProfile.wastePercentage).toBe(10);
