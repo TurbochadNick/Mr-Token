@@ -148,8 +148,15 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
         from session_summary`
       )
       .get() as AccurateRow;
-  } catch {
-    return EMPTY_ACCURATE; // session_summary view not present (backend has not run)
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error as { code?: unknown }).code === 'SQLITE_ERROR' &&
+      error.message === 'no such table: session_summary'
+    ) {
+      return EMPTY_ACCURATE; // session_summary view not present (backend has not run)
+    }
+    throw error;
   }
   if (!row || row.sessions === 0) return EMPTY_ACCURATE;
 
@@ -158,8 +165,15 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
     profileRows = db
       .prepare('select distinct profile from session_summary where profile is not null')
       .all() as Array<{ profile: string }>;
-  } catch {
-    return EMPTY_ACCURATE; // session_summary lacks the profile column (older backend)
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error as { code?: unknown }).code === 'SQLITE_ERROR' &&
+      error.message === 'no such column: profile'
+    ) {
+      return EMPTY_ACCURATE; // session_summary lacks the profile column (older backend)
+    }
+    throw error;
   }
   const profiles = profileRows.map((r) => r.profile);
 

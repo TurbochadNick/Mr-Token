@@ -291,7 +291,9 @@ describe('Mr Token UI API', () => {
     it('still reports absence when the session_summary view is genuinely missing', () => {
       const db = {
         prepare: () => {
-          throw new Error('no such table: session_summary');
+          throw Object.assign(new Error('no such table: session_summary'), {
+            code: 'SQLITE_ERROR'
+          });
         }
       } as unknown as DbClient;
 
@@ -299,6 +301,45 @@ describe('Mr Token UI API', () => {
       const accurate = readAccurateUsage(db);
       expect(accurate.available).toBe(false);
       expect(accurate.sessions).toBe(0);
+    });
+
+    it('still reports absence when an older summary lacks profile', () => {
+      const db = {
+        prepare: (sql: string) => ({
+          get: () => ({
+            sessions: 1,
+            inputTokens: 10,
+            outputTokens: 5,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 15,
+            estCostUsd: 0,
+            highRecommendations: 0
+          }),
+          all: () => {
+            if (sql.includes('select distinct profile')) {
+              throw Object.assign(new Error('no such column: profile'), {
+                code: 'SQLITE_ERROR'
+              });
+            }
+            return [];
+          }
+        })
+      } as unknown as DbClient;
+
+      expect(readAccurateUsage(db).available).toBe(false);
+    });
+
+    it('propagates a corrupt database error instead of reporting absence', () => {
+      const db = {
+        prepare: () => {
+          throw Object.assign(new Error('database disk image is malformed'), {
+            code: 'SQLITE_CORRUPT'
+          });
+        }
+      } as unknown as DbClient;
+
+      expect(() => readAccurateUsage(db)).toThrow('database disk image is malformed');
     });
   });
 });
