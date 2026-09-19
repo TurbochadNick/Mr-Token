@@ -9,7 +9,7 @@ export function formatDiagnosisMarkdown(report: DiagnosisReport): string {
           `- Score: ${report.scoring.fuelScore}/100 (${report.scoring.fuelRating})`,
           `- Waste percentage: ${report.scoring.wastePercentage}%`
         ]
-      : ['- Scoring: unavailable (measured zero total)']),
+      : [`- Scoring: unavailable (${report.scoring.reason === 'measured-zero-total' ? 'measured' : 'estimated'} zero total)`]),
     `- Useful estimated tokens: ${report.burnProfile.usefulEstimatedTokens.toLocaleString()}`,
     `- Suspected waste tokens: ${report.burnProfile.suspectedWasteTokens.toLocaleString()}`,
     `- Confidence: ${report.burnProfile.confidence}`,

@@ -38,7 +38,7 @@ export type FuelRating = 'Efficient' | 'Mostly efficient' | 'Waste detected' | '
 
 export type Scoring =
   | { scorable: true; fuelScore: number; fuelRating: FuelRating; wastePercentage: number }
-  | { scorable: false; reason: 'measured-zero-total' };
+  | { scorable: false; reason: 'measured-zero-total' | 'estimated-zero-total' };
 
 export type DiagnosisReport = {
   generatedAt: string;

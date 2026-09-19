@@ -37,6 +37,7 @@ export function diagnoseFuel(input: {
     input.measuredWasteTokens !== undefined;
   const measuredZeroTotal = input.measuredTotalTokens === 0 && input.measuredWasteTokens === 0;
   const estTotal = input.totalTokens ?? sum(input.events.map((event) => event.estimatedTokens));
+  const estimatedZeroTotal = !useMeasured && !measuredZeroTotal && estTotal === 0;
   // Score against measured totals only with a measured waste counterpart; never mix.
   const scoreTotal = useMeasured ? (input.measuredTotalTokens as number) : estTotal;
   const scoreWaste = useMeasured
@@ -44,8 +45,8 @@ export function diagnoseFuel(input: {
     : Math.min(estTotal, sum(findings.map((finding) => finding.estimatedWasteTokens)));
   const wastePercentage = scoreTotal === 0 ? 0 : Math.round((scoreWaste / scoreTotal) * 100);
   const fuelScore = calculateFuelScore(scoreTotal, scoreWaste);
-  const scoring: Scoring = measuredZeroTotal
-    ? { scorable: false, reason: 'measured-zero-total' }
+  const scoring: Scoring = measuredZeroTotal || estimatedZeroTotal
+    ? { scorable: false, reason: measuredZeroTotal ? 'measured-zero-total' : 'estimated-zero-total' }
     : { scorable: true, fuelScore, fuelRating: fuelRating(fuelScore), wastePercentage };
   const burnProfile: BurnProfile = {
     usefulEstimatedTokens: Math.max(0, scoreTotal - scoreWaste),

@@ -24,6 +24,14 @@ describe('fuel diagnosis', () => {
     expect(report.burnProfile.confidence).toBe('high');
   });
 
+  it('keeps a nonzero measured pair scorable without estimated events', () => {
+    const report = diagnoseFuel({ projectRoot: '/tmp/p', events: [], measuredTotalTokens: 1000, measuredWasteTokens: 100 });
+    expect(report.scoring.scorable).toBe(true);
+    if (!report.scoring.scorable) throw new Error('expected a scorable measured pair');
+    expect(report.scoring.fuelScore).toBe(90);
+    expect(report.scoring.wastePercentage).toBe(10);
+  });
+
   it('keeps a measured zero total nonscorable while retaining live findings', () => {
     const report = diagnoseFuel({
       projectRoot: '/tmp/p',
@@ -50,6 +58,21 @@ describe('fuel diagnosis', () => {
     expect(markdown).toContain('- Scoring: unavailable (measured zero total)');
     expect(markdown).not.toContain('- Score:');
     expect(markdown).not.toContain('- Waste percentage:');
+  });
+
+  it('keeps estimated zero totals nonscorable without changing their honest empty profile', () => {
+    for (const input of [
+      { projectRoot: '/tmp/p', events: [] },
+      { projectRoot: '/tmp/p', events: [], totalTokens: 0 }
+    ]) {
+      const report = diagnoseFuel(input);
+      expect(report.scoring).toEqual({ scorable: false, reason: 'estimated-zero-total' });
+      expect('fuelScore' in report.scoring).toBe(false);
+      expect('fuelRating' in report.scoring).toBe(false);
+      expect('wastePercentage' in report.scoring).toBe(false);
+      expect(report.burnProfile).toMatchObject({ usefulEstimatedTokens: 0, suspectedWasteTokens: 0, confidence: 'low' });
+      expect(formatDiagnosisMarkdown(report)).toContain('- Scoring: unavailable (estimated zero total)');
+    }
   });
 
   it('detects huge tool output', () => {

@@ -93,7 +93,7 @@ type Diagnosis = {
   generatedAt: string;
   scoring:
     | { scorable: true; fuelScore: number; fuelRating: string; wastePercentage: number }
-    | { scorable: false; reason: 'measured-zero-total' };
+    | { scorable: false; reason: 'measured-zero-total' | 'estimated-zero-total' };
   burnProfile: {
     usefulEstimatedTokens: number;
     suspectedWasteTokens: number;
@@ -340,7 +340,7 @@ function Dashboard({
           ) : (
             <>
               <strong>—</strong>
-              <span>Measured zero total</span>
+              <span>{data.diagnosis.scoring.reason === 'measured-zero-total' ? 'Measured' : 'Estimated'} zero total</span>
             </>
           )}
           <div className="heroActions">
@@ -649,7 +649,7 @@ function FuelDiagnosisPanel({ data }: { data: ApiData }) {
         <span>Waste: {formatNumber(data.diagnosis.burnProfile.suspectedWasteTokens)}</span>
         {data.diagnosis.scoring.scorable
           ? <span>Waste: {data.diagnosis.scoring.wastePercentage}%</span>
-          : <span>Waste: not scorable (measured zero total)</span>}
+          : <span>Waste: not scorable ({data.diagnosis.scoring.reason === 'measured-zero-total' ? 'measured' : 'estimated'} zero total)</span>}
       </div>
       {data.diagnosis.whatToChangeNext.length === 0 ? (
         <EmptyState
