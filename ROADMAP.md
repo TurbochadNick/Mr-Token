@@ -362,9 +362,25 @@ any live flip remains gated on outcome/experiment evidence and a per-tool decisi
 ## Backlog / not yet scheduled
 - [x] **Codex live-pressure tracker (proc engine)** — done (v0.5.2, commit `fd1d152`): `codex_ctx_pct()`
   from the rollout + shared `decide()` core; live use is wired through the Codex Stop hook installer.
-- **Cross-session linkage for ROI cohort B** — detect that a *fresh* session started in the
-  same project shortly after a `fresh_handoff` fired, so the acted-vs-ignored split is real
-  (current B is degenerate because the rule only fires on already-deep sessions). Surfaced by 2.1.
-- `--since <iso>` incremental filter on `export` (Nick asked, for dashboard refresh).
-- `session_detail` per-model-call timeline view (drill-down panel for the dashboard).
+- [x] **Cross-session linkage for ROI cohort B** — done: `_acted_by_linkage()`
+  (`backend/mrtoken/roi.py`, 129-152), keyed on a separate top-level session starting
+  in the same project within `LINKAGE_WINDOW_MIN = 30` (`roi.py:115`) of this
+  session's end; subagent transcripts excluded via `parent_session_id IS NULL`, with
+  a fallback to the trace's latest `model_call` timestamp when an older ingest lacks
+  `ended_at` (`roi.py`, 139-141).
+  Surfaced by 2.1. **Still open, and not what the linkage fixes:** whether cohort B
+  is a sound population — `rule_fresh_handoff` fires only on already-deep sessions,
+  so the acted/ignored split stays observational. `print_roi_measure` says so on its
+  face: "OBSERVATIONAL — selection bias, not causal".
+- [x] **`--since <iso>` incremental filter on `export`** — done:
+  `session_summaries(conn, prefix, since)` (`backend/mrtoken/export.py`, def at 30,
+  filter at 39-40) and `export_report(conn, prefix, redact, since)` (same file, def
+  at 78, passes `since` through at 86). Nick asked, for dashboard refresh.
+- [~] **`session_detail` per-model-call timeline view** — **backend done, UI open.**
+  The `session_detail` SQL view is defined in the `_SESSION_DETAIL_VIEW` constant
+  (`backend/mrtoken/ingest.py`, constant at 223, `CREATE VIEW` at 225); the readers
+  are `session_detail()` (`backend/mrtoken/export.py`, 55-61) and `export_detail()`
+  (same file, 64-70), which emits schema `mrtoken.session_detail.v1`. The drill-down
+  panel itself is **not built** — Nick's TS/`web/` lane, coordinate via the contract
+  as with `session_summary.v1`.
 - Dashboard maturity (TS/`web/`) — Nick's lane; coordinate via the `session_summary.v1` contract.
