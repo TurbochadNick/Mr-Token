@@ -467,7 +467,7 @@ def main(argv=None):
     p_explain.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
     p_savings = sub.add_parser("savings",
-        help="show tokens saved — realized (tools that ran) + addressable (rules found)")
+        help="show tokens saved — realized (tools that ran) + estimated addressable upper bound; recommendation estimates may overlap")
     p_savings.add_argument("--db", dest="db_sub")
     p_savings.add_argument("--codex", action="store_true", help="read the central Codex DB")
 

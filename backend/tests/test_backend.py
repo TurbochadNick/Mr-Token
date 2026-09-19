@@ -1776,6 +1776,7 @@ class BackendTest(unittest.TestCase):
                 dd.central_default = o_cd
 
     def test_stage2_repair2_union_no_double_count(self):
+        # UNWIRED DESIGN ARTIFACT: no production caller; claims-emitting rules model never built; current rules emit no unit-id claims and recommendation persists none.
         # Repair 2: three rules firing on one block => that block counted ONCE.
         from mrtoken.ingest import connect, now_iso
         from mrtoken.measure import union_addressable_tokens
@@ -2281,6 +2282,54 @@ class BackendTest(unittest.TestCase):
                 self.assertEqual(savings.addressable(conn), 50000)
             finally:
                 dd.central_default = orig
+
+    def test_addressable_labels_are_estimated_upper_bounds(self):
+        import contextlib, io
+        import mrtoken.datadir as dd
+        import mrtoken.savings as savings
+        from mrtoken import cli
+        from mrtoken.corpus import print_corpus_report
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = connect(os.path.join(tmp, "t.db"))
+            conn.execute("INSERT INTO trace(session_id,ingested_at) VALUES('s','t')")
+            tid = conn.execute("SELECT id FROM trace").fetchone()[0]
+            for rule in ("one", "two"):
+                conn.execute("INSERT INTO recommendation(trace_id,rule,severity,message,"
+                             "est_savings_tokens,created_at) VALUES(?,?,?,?,?,?)",
+                             (tid, rule, "warn", "x", 500, "t"))
+            conn.commit()
+            self.assertEqual(savings.addressable(conn), 1000)  # flat sum stays unchanged
+
+            original_default = dd.central_default
+            dd.central_default = lambda: tmp
+            try:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    savings.print_savings(conn)
+            finally:
+                dd.central_default = original_default
+            label = "upper bound; recommendation estimates may overlap"
+            self.assertIn("estimated", output.getvalue())
+            self.assertIn(label, output.getvalue())
+
+            corpus_output = io.StringIO()
+            with contextlib.redirect_stdout(corpus_output):
+                print_corpus_report({
+                    "errors": [], "files": 1, "tool_versions": [], "sessions": 1,
+                    "low_activity": 0, "total_tokens": 1, "est_cost_usd": 0,
+                    "cache_hit_ratio": None, "rule_fires": {"one": {"warn": 2}},
+                    "est_savings_tokens": 1000,
+                })
+            self.assertIn("estimated", corpus_output.getvalue())
+            self.assertIn(label, corpus_output.getvalue())
+
+            cli_output = io.StringIO()
+            with self.assertRaises(SystemExit) as exit_info:
+                with contextlib.redirect_stdout(cli_output):
+                    cli.main(["--help"])
+            self.assertEqual(exit_info.exception.code, 0)
+            cli_help = " ".join(cli_output.getvalue().split())
+            self.assertIn("estimated addressable upper bound; recommendation estimates may overlap", cli_help)
 
     def test_module_measure_records_savings_and_outcome(self):
         # ROADMAP 7.3: external modules get a lab-only measurement shim that

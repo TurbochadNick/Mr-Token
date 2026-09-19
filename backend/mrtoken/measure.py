@@ -4,13 +4,15 @@
 Two functions the repaired instrument needs, kept separate from the rules so the
 measurement logic is testable in isolation against a temp DB:
 
-  * Repair 2 — a NON-OVERLAPPING, additive addressable total. Rules claim waste by
-    emitting the set of unit-ids they implicate; the addressable quantity is the UNION
-    of those ids, each counted ONCE, with tokens taken from that unit's own recorded
-    count. The canonical unit is `context_block` (keyed on its real uniqueness triple
-    trace_id+hash+block_type). `tool_call` is DELIBERATELY excluded: it has no measured
-    token count (only `output_tokens_est`, an estimate) and a large tool OUTPUT becomes
-    a context_block, so counting both double-counts the same tokens.
+  * Repair 2 — UNWIRED DESIGN ARTIFACT, not a live overlap control: there is no
+    production caller, the claims-emitting rules model was never built, current rules
+    emit no unit-id claims, and `recommendation` persists none. If claims existed, the
+    primitive would calculate a NON-OVERLAPPING, additive addressable total: each
+    implicated unit-id would be counted ONCE using its own recorded count. The canonical
+    unit is `context_block` (keyed on trace_id+hash+block_type). `tool_call` is
+    DELIBERATELY excluded: it has no measured token count (only `output_tokens_est`, an
+    estimate) and a large tool OUTPUT becomes a context_block, so counting both would
+    double-count the same tokens.
 
   * Repair 3 — the OUTCOME, derived ONLY from `model_call` measured columns; never from
     `est_savings_tokens` (which is the estimator grading itself). Estimates stay a
@@ -25,10 +27,10 @@ from typing import Iterable
 
 def union_addressable_tokens(conn: sqlite3.Connection,
                              claims: Iterable[tuple]) -> int:
-    """Repair 2. `claims` = iterable of context_block unit-ids (trace_id, hash,
-    block_type) that rules implicate as waste. Each DISTINCT block is counted once,
-    tokens from its own `token_count` — so three rules claiming one block sum to that
-    block's tokens ONCE, not three times. Unknown or tokenless blocks contribute 0."""
+    """UNWIRED DESIGN ARTIFACT: no production caller exists; the claims-emitting
+    rules model was never built, current rules emit no unit-id claims, and
+    `recommendation` persists none. Given future context_block claims `(trace_id, hash,
+    block_type)`, each DISTINCT block is counted once from its own `token_count`."""
     total = 0
     for key in {(t, h, b) for (t, h, b) in claims}:   # dedup on the real uniqueness triple
         row = conn.execute(

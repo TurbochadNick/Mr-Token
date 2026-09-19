@@ -116,7 +116,7 @@ def print_corpus_report(agg: dict) -> None:
                               sorted(sevs.items(), key=lambda kv: order.get(kv[0], 9)))
             print(f"    {rule:24} ×{sum(sevs.values()):<4} ({parts})")
         if agg["est_savings_tokens"]:
-            print(f"\n  est. addressable savings: ~{agg['est_savings_tokens']:,} tokens")
+            print(f"\n  estimated addressable upper bound; recommendation estimates may overlap: ~{agg['est_savings_tokens']:,} tokens")
     else:
         print("  no recommendations in these exports")
     print(f"{'─'*60}\n")

@@ -148,5 +148,5 @@ def print_savings(conn: sqlite3.Connection) -> None:
         print(f"    {tool:10} ~{d['tokens']:>12,} tok  ({d['uses']} use(s))")
     if not r["by_tool"]:
         print("    (none yet — savings log fills as offload/handoff get used)")
-    print(f"  addressable (rules found)   ~{addr:>12,} tok  ⚠ opportunity, not yet realized")
+    print(f"  addressable (estimated upper bound; recommendation estimates may overlap) ~{addr:>12,} tok  ⚠ not yet realized")
     print(f"{'─'*56}\n")
