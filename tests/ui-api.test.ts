@@ -131,7 +131,7 @@ describe('Mr Token UI API', () => {
     writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8');
     const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
     const db = openDatabase(dbPath);
-    // two sessions of TS events; s1 will also have a measured backend row, s2 will not
+    // two sessions of TS events; s1 will also have a measured backend row, s$debug will not
     insertNormalizedEvent(db, {
       timestamp: '2026-08-21T10:00:00.000Z', projectPath: projectRoot, sessionId: 's1',
       eventType: 'PostToolUse', toolName: 'Bash', filePath: null, command: 'x',
@@ -139,10 +139,10 @@ describe('Mr Token UI API', () => {
       rawEvent: { session_id: 's1', hook_event_name: 'PostToolUse', cwd: projectRoot, tool_name: 'Bash', tool_input: {}, tool_response: {} }
     });
     insertNormalizedEvent(db, {
-      timestamp: '2026-08-21T10:05:00.000Z', projectPath: projectRoot, sessionId: 's2',
+      timestamp: '2026-08-21T10:05:00.000Z', projectPath: projectRoot, sessionId: 's$debug',
       eventType: 'PostToolUse', toolName: 'Bash', filePath: null, command: 'y',
       promptLength: 0, stdoutLength: 0, stderrLength: 0, resultLength: 0, estimatedTokens: 300,
-      rawEvent: { session_id: 's2', hook_event_name: 'PostToolUse', cwd: projectRoot, tool_name: 'Bash', tool_input: {}, tool_response: {} }
+      rawEvent: { session_id: 's$debug', hook_event_name: 'PostToolUse', cwd: projectRoot, tool_name: 'Bash', tool_input: {}, tool_response: {} }
     });
     // backend session_summary contract (WITH session_id) — only s1 is measured
     // model_calls is part of the real backend view contract (ingest._SESSION_SUMMARY_VIEW)
@@ -164,8 +164,8 @@ describe('Mr Token UI API', () => {
       cacheReadTokens: 850, cacheWriteTokens: 0, totalTokens: 1000
     });
     // (b) estimated session: event total, explicitly estimated, no measured breakdown mixed in
-    expect(bySession.s2).toMatchObject({ measured: false, totalTokens: 300 });
-    expect(bySession.s2.inputTokens).toBe(0);
+    expect(bySession['s$debug']).toMatchObject({ measured: false, totalTokens: 300 });
+    expect(bySession['s$debug'].inputTokens).toBe(0);
 
     // (c) Markdown token-evidence table distinguishes both rows with totals and shows no dollars
     const report = exportMarkdownReport(projectRoot, dbPath);
@@ -174,8 +174,10 @@ describe('Mr Token UI API', () => {
     expect(evidence).toContain('measured');
     expect(evidence).toContain('estimated');
     expect(evidence).toContain((1000).toLocaleString()); // s1 measured total (locale-independent)
-    expect(evidence).toContain((300).toLocaleString());   // s2 estimated total
-    expect(evidence).not.toContain('$');                  // token counts only — no money in the ledger
+    expect(evidence).toContain((300).toLocaleString());   // s$debug estimated total
+    expect(evidence).not.toMatch(/\$\s?\d/);             // token counts only — no money in the ledger
+    expect('$1.25').toMatch(/\$\s?\d/);                  // a real currency claim is still detected
+    expect(() => expect('$1.25').not.toMatch(/\$\s?\d/)).toThrow();
     expect(report).not.toMatch(/\bspent\b/i);             // no money-spend claim anywhere in the report
   });
 
