@@ -13,13 +13,14 @@ from mrtoken.rules import analyse
 from mrtoken.watch import resolve_path
 from mrtoken.statusline import context_window, CONTEXT_WARN_PCT
 from mrtoken.pricing import COST_CAVEAT
+from mrtoken.savings_card import card_for_session, render_savings_card
 
 
 def _fmt(n) -> str:
     return f"{n:,}" if isinstance(n, int) else f"{n:,.2f}"
 
 
-def status_snapshot(conn: sqlite3.Connection, tid: int) -> dict:
+def status_snapshot(conn: sqlite3.Connection, tid: int, *, routing: dict | None = None) -> dict:
     s = conn.execute(
         "SELECT profile, model_calls, total_tokens, est_cost_usd, cache_hit_ratio, "
         "tool_errors FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
@@ -36,17 +37,13 @@ def status_snapshot(conn: sqlite3.Connection, tid: int) -> dict:
         "FROM model_call WHERE trace_id=?", (tid,)).fetchone()
     window = context_window(max(context_now, (mx[0] if mx else 0) or 0))
     context_large = context_now >= window * CONTEXT_WARN_PCT / 100
-    top = conn.execute(
-        "SELECT rule, severity, message FROM recommendation WHERE trace_id=? "
-        "ORDER BY CASE rule WHEN 'fresh_handoff' THEN 0 WHEN 'retry_loop' THEN 1 ELSE 2 END, "
-        "CASE severity WHEN 'high' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END LIMIT 1", (tid,)).fetchone()
     return {"profile": profile, "calls": calls or 0, "total_tokens": total_tok or 0,
             "est_cost": cost or 0.0, "cache_ratio": cache, "tool_errors": errs or 0,
             "context_now": context_now, "context_large": context_large,
-            "top": ({"rule": top[0], "severity": top[1], "message": top[2]} if top else None)}
+            "card": card_for_session(conn, tid, routing=routing)}
 
 
-def print_status(db_path: str | None, session_arg: str | None) -> int:
+def print_status(db_path: str | None, session_arg: str | None, *, routing: dict | None = None) -> int:
     path = resolve_path(session_arg)
     if not path:
         print("mrtoken status: no transcript found for this project"); return 1
@@ -55,7 +52,7 @@ def print_status(db_path: str | None, session_arg: str | None) -> int:
     r = ingest_file(conn, path, load_prices(), parent_session_id=parent)
     tid = conn.execute("SELECT id FROM trace WHERE session_id=?", (r["session_id"],)).fetchone()[0]
     analyse(conn, tid)
-    s = status_snapshot(conn, tid)
+    s = status_snapshot(conn, tid, routing=routing)
 
     cache = f"{s['cache_ratio']:.0%}" if s["cache_ratio"] is not None else "n/a"
     print(f"\n  mr token status · {r['session_id'][:8]} · profile: {s['profile'] or '?'}")
@@ -65,12 +62,12 @@ def print_status(db_path: str | None, session_arg: str | None) -> int:
     flag = "  ⚠ large" if s["context_large"] else ""
     print(f"  context now ~{_fmt(s['context_now'])} tok{flag}")
     print(f"  · est $ is an {COST_CAVEAT}")
-    if s["top"]:
-        print(f"\n  next: [{s['top']['rule']}] {s['top']['message']}")
+    print()
+    for line in render_savings_card(s["card"]):
+        print(line)
+    if s["card"]["rule"]:
         print(f"  feedback: mrtoken-transcript feedback {r['session_id'][:8]} "
-              f"{s['top']['rule']} right|wrong|unsure")
-    else:
-        print(f"\n  next: nothing flagged — burning clean.")
+              f"{s['card']['rule']} right|wrong|unsure")
     try:
         from mrtoken.update_check import check_for_update, release_tag_warning
         nudge = check_for_update()

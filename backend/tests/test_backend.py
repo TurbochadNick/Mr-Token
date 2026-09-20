@@ -3931,6 +3931,77 @@ class BackendTest(unittest.TestCase):
         d = diagnose(conn, tid)
         self.assertIn("carrying cached context", d["headline"])
 
+    def test_savings_card_priority_evidence_and_provenance(self):
+        from mrtoken.savings_card import build_savings_card
+        card = build_savings_card([
+            {"rule": "retry_loop", "message": "three errors", "evidence_json": '{"error_count": 3}'},
+            {"rule": "fresh_handoff", "message": "late context growth", "evidence_json": '{"signals": ["growth"]}'},
+        ])
+        self.assertEqual(card["action"], "handoff/compact experiment candidate")
+        self.assertEqual(card["evidence"]["details"]["signals"], ["growth"])
+        self.assertIn("measured", card["provenance"])
+        self.assertIn("not realized", card["provenance"]["estimated"])
+
+    def test_savings_card_quality_gate_and_suppression(self):
+        from mrtoken.savings_card import build_savings_card, render_savings_card
+        recs = [{"rule": "huge_tool_output", "message": "large output", "evidence_json": "{}"},
+                {"rule": "retry_loop", "message": "errors", "evidence_json": "{}"}]
+        card = build_savings_card(recs)
+        self.assertEqual(card["action"], "prevent next bulky output")
+        self.assertIn("oracle", card["quality_gate"])
+        self.assertIn("offload=off", card["suppression"])
+        rendered = "\n".join(render_savings_card(card))
+        self.assertIn("not now:", rendered)
+        self.assertIn("never suggest this:", rendered)
+        suppressed = build_savings_card(recs, suppressed=("offload",))
+        self.assertEqual(suppressed["action"], "stop and re-plan")
+
+    def test_savings_card_routing_requires_all_supplied_inputs(self):
+        from mrtoken.savings_card import build_savings_card
+        from mrtoken.status import status_snapshot
+        from mrtoken.why import print_diagnosis
+        from mrtoken import cli
+        from unittest.mock import patch
+        import contextlib, io
+        partial = build_savings_card([], routing={"baseline": "strong", "candidate": "cheap"})
+        self.assertEqual(partial["action"], "continue")
+        routing = {"baseline": "strong", "candidate": "cheap", "capability_floor": 2,
+                   "budget": 1.0, "oracle": "tests pass"}
+        card = build_savings_card([], routing=routing)
+        self.assertEqual(card["action"], "routing experiment candidate")
+        self.assertIn("no provider is switched", card["provenance"]["estimated"])
+        self.assertIn("savings=off", card["suppression"])
+        conn, tid = make_trace()
+        self.assertEqual(status_snapshot(conn, tid, routing=routing)["card"]["action"],
+                         "routing experiment candidate")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            print_diagnosis(conn, "session-1", routing=routing)
+        self.assertIn("routing experiment candidate", out.getvalue())
+        args = ["why", "s1", "--baseline", "strong", "--candidate", "cheap",
+                "--capability-floor", "2", "--budget", "1.00", "--oracle", "tests pass"]
+        cli_routing = {"baseline": "strong", "candidate": "cheap", "capability_floor": "2",
+                       "budget": "1.00", "oracle": "tests pass"}
+        with patch("mrtoken.cli._open", return_value="db") as opened, \
+             patch("mrtoken.why.print_diagnosis") as printed:
+            cli.main(args)
+        opened.assert_called_once()
+        printed.assert_called_once_with("db", "s1", routing=cli_routing)
+
+    def test_why_prints_one_savings_decision_card(self):
+        from mrtoken.why import print_diagnosis
+        import contextlib, io
+        conn, tid = make_trace()
+        conn.execute("INSERT INTO recommendation(trace_id,rule,severity,message,created_at) "
+                     "VALUES(?,?,?,?,?)", (tid, "retry_loop", "warn", "three errors", "t"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            print_diagnosis(conn, "session-1")
+        text = out.getvalue()
+        self.assertIn("savings decision:", text)
+        self.assertIn("stop and re-plan", text)
+        self.assertIn("provenance: measured", text)
+
     def test_roi_reports_categories_and_handoff(self):
         from mrtoken.roi import roi_session
         conn, tid = make_trace()
@@ -4012,6 +4083,8 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(rc, 0)
             text = out.getvalue()
             self.assertIn("next: [huge_tool_output]", text)
+            self.assertIn("quality gate:", text)
+            self.assertIn("provenance: estimated", text)
             self.assertIn("feedback: mrtoken-transcript feedback fb-statu huge_tool_output", text)
 
     def test_datadir_non_project_routes_central_not_cwd(self):

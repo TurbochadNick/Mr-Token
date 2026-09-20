@@ -181,7 +181,7 @@ def cmd_migrate(args):
 
 def cmd_why(args):
     from mrtoken.why import print_diagnosis
-    print_diagnosis(_open(args.db), args.session or "")
+    print_diagnosis(_open(args.db), args.session or "", routing=_routing_inputs(args))
 
 
 def cmd_roi(args):
@@ -212,7 +212,13 @@ def cmd_offload_roi(args):
 
 def cmd_status(args):
     from mrtoken.status import print_status
-    sys.exit(print_status(args.db, args.session))
+    sys.exit(print_status(args.db, args.session, routing=_routing_inputs(args)))
+
+
+def _routing_inputs(args):
+    fields = ("baseline", "candidate", "capability_floor", "budget", "oracle")
+    supplied = {field: getattr(args, f"routing_{field}", None) for field in fields}
+    return supplied if any(value is not None for value in supplied.values()) else None
 
 
 def cmd_doctor(args):
@@ -571,6 +577,12 @@ def main(argv=None):
     p_why.add_argument("session", nargs="?", help="session ID prefix (default: newest)")
     p_why.add_argument("--db", dest="db_sub")
     p_why.add_argument("--codex", action="store_true", help="read the central Codex DB")
+    for field, help_text in (("baseline", "pinned baseline model/agent"),
+                             ("candidate", "candidate model/agent"),
+                             ("capability-floor", "required capability floor"),
+                             ("budget", "experiment budget"),
+                             ("oracle", "completion oracle")):
+        p_why.add_argument(f"--{field}", dest=f"routing_{field.replace('-', '_')}", help=help_text)
 
     p_roi = sub.add_parser("roi",
         help="estimate addressable token waste (session or fleet) — estimate, not a trial")
@@ -600,6 +612,12 @@ def main(argv=None):
         help="one-glance snapshot of the current session + the top next action")
     p_status.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
     p_status.add_argument("--db", dest="db_sub")
+    for field, help_text in (("baseline", "pinned baseline model/agent"),
+                             ("candidate", "candidate model/agent"),
+                             ("capability-floor", "required capability floor"),
+                             ("budget", "experiment budget"),
+                             ("oracle", "completion oracle")):
+        p_status.add_argument(f"--{field}", dest=f"routing_{field.replace('-', '_')}", help=help_text)
 
     p_doctor = sub.add_parser("doctor",
         help="read-only install check for hooks, skills, DB, Codex, and release tag")

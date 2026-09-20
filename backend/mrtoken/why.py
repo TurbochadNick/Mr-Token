@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 
 from mrtoken.ingest import load_prices, price_for
+from mrtoken.savings_card import card_for_session, render_savings_card
 
 
 def _fmt(n) -> str:
@@ -85,7 +86,7 @@ def diagnose(conn: sqlite3.Connection, tid: int) -> dict:
             "drivers": drivers, "headline": headline}
 
 
-def print_diagnosis(conn: sqlite3.Connection, prefix: str) -> None:
+def print_diagnosis(conn: sqlite3.Connection, prefix: str, *, routing: dict | None = None) -> None:
     row = conn.execute(
         "SELECT id, session_id, profile FROM trace WHERE session_id LIKE ? "
         "ORDER BY started_at DESC LIMIT 1", (prefix + "%",)).fetchone()
@@ -105,4 +106,8 @@ def print_diagnosis(conn: sqlite3.Connection, prefix: str) -> None:
         print("\n  avoidable drivers:")
         for name, detail in d["drivers"]:
             print(f"    • {name}: {detail}")
-    print(f"\n  → {d['headline']}\n")
+    print(f"\n  → {d['headline']}")
+    print("\n  savings decision:")
+    for line in render_savings_card(card_for_session(conn, tid, routing=routing), indent="    "):
+        print(line)
+    print()
