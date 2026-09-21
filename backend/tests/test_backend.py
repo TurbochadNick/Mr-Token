@@ -3988,6 +3988,19 @@ class BackendTest(unittest.TestCase):
         opened.assert_called_once()
         printed.assert_called_once_with("db", "s1", routing=cli_routing)
 
+    def test_disposable_savings_card_demo_is_hermetic_and_fails_bad_oracle(self):
+        from mrtoken.disposable_demo import run
+        with tempfile.TemporaryDirectory() as tmp:
+            status, text = run(os.path.join(tmp, "pass"))
+            self.assertEqual(status, 0)
+            self.assertIn("routing experiment candidate", text)
+            self.assertIn("measured session data: UNKNOWN", text)
+            self.assertIn("provider/model call or switch: none", text)
+            self.assertIn("confinement: PASS", text)
+            failed, text = run(os.path.join(tmp, "fail"), expected_action="continue")
+            self.assertEqual(failed, 1)
+            self.assertIn("oracle: FAIL", text)
+
     def test_why_prints_one_savings_decision_card(self):
         from mrtoken.why import print_diagnosis
         import contextlib, io

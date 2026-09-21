@@ -60,6 +60,16 @@ mrtoken-transcript why [session-id]
 mrtoken-transcript roi [session-id]
 ```
 
+## Disposable Savings Decision Card demo
+
+From a clean source archive, this single command uses synthetic routing inputs,
+creates its own temporary state, and verifies named real-home configuration
+sentinels are unchanged. It makes no provider call or switch:
+
+```bash
+MRTOKEN_PRICES= PYTHONPATH="$PWD/backend" python3 -m mrtoken.cli demo
+```
+
 ## `why` — where did the cost go?
 
 `why` decomposes a session's spend into its shape — generating output vs carrying

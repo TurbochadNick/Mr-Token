@@ -409,6 +409,11 @@ def cmd_statusline(args):
     sys.exit(statusline_hud(getattr(args, "session", None)))
 
 
+def cmd_demo(args):
+    from mrtoken.disposable_demo import main
+    sys.exit(main())
+
+
 def main(argv=None):
     from mrtoken import __version__
     ap = argparse.ArgumentParser(prog="mrtoken-transcript",
@@ -549,6 +554,8 @@ def main(argv=None):
     p_init.add_argument("--dry-run", "--print", dest="print", action="store_true",
         help="dry run — show what would happen, write nothing")
 
+    sub.add_parser("demo", help="run a disposable synthetic Savings Decision Card demo")
+
     p_watch = sub.add_parser("watch", help="live in-session advice (tails the transcript)")
     p_watch.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
     p_watch.add_argument("--interval", type=float, default=2.0, help="poll seconds (default 2)")
@@ -669,7 +676,7 @@ def main(argv=None):
                 "migrate-data": cmd_migrate, "status": cmd_status,
                 "doctor": cmd_doctor, "beta-note": cmd_beta_note,
                 "beta-summary": cmd_beta_summary,
-                "statusline": cmd_statusline, "update": cmd_update}
+                "statusline": cmd_statusline, "demo": cmd_demo, "update": cmd_update}
     dispatch[a.cmd](a)
 
 
