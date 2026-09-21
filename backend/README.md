@@ -67,7 +67,7 @@ creates its own temporary state, and verifies named real-home configuration
 sentinels are unchanged. It makes no provider call or switch:
 
 ```bash
-MRTOKEN_PRICES= PYTHONPATH="$PWD/backend" python3 -m mrtoken.cli demo
+PYTHONDONTWRITEBYTECODE=1 MRTOKEN_PRICES= PYTHONPATH="$PWD/backend" python3 -m mrtoken.cli demo
 ```
 
 ## `why` — where did the cost go?

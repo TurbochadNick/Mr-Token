@@ -1,8 +1,13 @@
+import hashlib
+import io
 import json
 import os
 import sqlite3
+import subprocess
+import tarfile
 import tempfile
 import unittest
+from pathlib import Path
 
 from mrtoken.ingest import connect as _connect, default_db_path, ingest_file, load_prices
 from mrtoken.rules import rule_huge_tool_output, rule_retry_loop
@@ -4000,6 +4005,34 @@ class BackendTest(unittest.TestCase):
             failed, text = run(os.path.join(tmp, "fail"), expected_action="continue")
             self.assertEqual(failed, 1)
             self.assertIn("oracle: FAIL", text)
+
+    def test_documented_disposable_demo_keeps_fresh_archive_clean(self):
+        repo = Path(__file__).resolve().parents[2]
+        command = ("PYTHONDONTWRITEBYTECODE=1 MRTOKEN_PRICES= "
+                   'PYTHONPATH="$PWD/backend" python3 -m mrtoken.cli demo')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "source"
+            archive.mkdir()
+            packed = subprocess.run(["git", "archive", "--format=tar", "HEAD"], cwd=repo,
+                                    check=True, capture_output=True).stdout
+            with tarfile.open(fileobj=io.BytesIO(packed)) as bundle:
+                bundle.extractall(archive, filter="data")
+            before = {path.relative_to(archive).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                      for path in archive.rglob("*") if path.is_file()}
+            env = os.environ.copy()
+            env.update({"HOME": str(root / "real-home"), "XDG_DATA_HOME": str(root / "real-data")})
+            for key in ("MRTOKEN_DB", "TOKEN_TITHE_DB"):
+                env.pop(key, None)
+            completed = subprocess.run(["/bin/sh", "-c", command], cwd=archive, env=env,
+                                       text=True, capture_output=True)
+            after = {path.relative_to(archive).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                     for path in archive.rglob("*") if path.is_file()}
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("routing experiment candidate", completed.stdout)
+        self.assertIn("oracle: PASS", completed.stdout)
+        self.assertEqual(before, after)
+        self.assertFalse(any("__pycache__" in path or path.endswith(".pyc") for path in after))
 
     def test_why_prints_one_savings_decision_card(self):
         from mrtoken.why import print_diagnosis
