@@ -318,6 +318,7 @@ def connect_readonly(db_path: str, *, immutable: bool = False) -> sqlite3.Connec
             "CREATE TEMP VIEW session_summary AS",
         )
         conn.executescript(temp_summary)
+        conn.execute("SELECT * FROM session_summary LIMIT 0")
     except sqlite3.OperationalError as exc:
         conn.close()
         raise ReadOnlyDatabaseError(

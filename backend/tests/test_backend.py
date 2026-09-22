@@ -4461,6 +4461,29 @@ class BackendTest(unittest.TestCase):
             self.assertIn("mrtoken: database upgrade required: missing", out.getvalue())
             self.assertEqual(before, hashlib.sha256(Path(old_db).read_bytes()).hexdigest())
 
+    def test_readonly_analysis_reports_upgrade_requirement_for_outdated_column(self):
+        """A current table missing a migrated column must fail at the read boundary."""
+        from mrtoken import cli
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            old_db = os.path.join(tmp, "old-column.db")
+            conn = connect(old_db)
+            conn.close()
+            legacy = sqlite3.connect(old_db)
+            legacy.execute("DROP VIEW session_summary")
+            legacy.execute("DROP VIEW session_detail")
+            legacy.execute("ALTER TABLE trace DROP COLUMN title")
+            legacy.commit()
+            self.assertNotIn("title", {row[1] for row in legacy.execute("PRAGMA table_info(trace)")})
+            legacy.close()
+            before = hashlib.sha256(Path(old_db).read_bytes()).hexdigest()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as exited:
+                cli.main(["report", "--db", old_db])
+            self.assertEqual(exited.exception.code, 2)
+            self.assertIn("mrtoken: database upgrade required", out.getvalue())
+            self.assertEqual(before, hashlib.sha256(Path(old_db).read_bytes()).hexdigest())
+
     def test_datadir_non_project_routes_central_not_cwd(self):
         """The scatter-bug fix: a non-project cwd must NOT get a .token-tithe/."""
         from mrtoken import datadir
