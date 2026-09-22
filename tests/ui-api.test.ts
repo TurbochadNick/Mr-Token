@@ -114,15 +114,18 @@ describe('Mr Token UI API', () => {
     db.exec(`create table session_summary (
       profile text, input_tokens integer, output_tokens integer,
       cache_read_tokens integer, cache_write_tokens integer, total_tokens integer,
-      est_cost_usd real, high_recommendations integer
+      est_cost_usd real, billing_mode text, cumulative_expenditure_provenance text,
+      high_recommendations integer
     );
     create table recommendation (est_savings_tokens integer);
-    insert into session_summary values ('code', 100, 50, 850, 0, 150, 1.25, 2);`);
+    insert into session_summary values ('code', 100, 50, 850, 0, 150, 1.25, 'subscription', 'computed-disjoint-components', 2);`);
     const accurate = readAccurateUsage(db);
     db.close();
     expect(accurate.available).toBe(true);
     expect(accurate.totalTokens).toBe(150);
     expect(accurate.estCostUsd).toBeCloseTo(1.25);
+    expect(accurate.subscriptionBillingSessions).toBe(1);
+    expect(accurate.computedTotals).toBe(1);
     expect(accurate.cacheHitRatio).toBeCloseTo(850 / (100 + 850 + 0));
     expect(accurate.addressableWasteTokens).toBe(0);
     expect(accurate.profiles).toContain('code');

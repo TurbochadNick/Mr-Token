@@ -184,9 +184,6 @@ def build_statusline_text(session_arg: str | None = None,
     if week:
         parts.append(week)
 
-    if snap["cum_cost"] >= 0.01:
-        parts.append(f"~${snap['cum_cost']:.2f}")
-
     if snap["profile"]:
         parts.append(snap["profile"])
 

@@ -44,10 +44,12 @@ def report(conn: sqlite3.Connection, prefix: str):
     print(f"  cache read          {fmt(cr):>12}")
     print(f"  cache write         {fmt(cw):>12}")
     print(f"  cache hit ratio     {cache_ratio:>11.1%}")
-    if cost:
-        print(f"  est cost (API-eq)   {'$'+f'{cost:,.4f}':>12}   ⚠ not your subscription bill  [{pv}]")
-    total_tok = (inp or 0) + (out or 0)
-    print(f"  total tokens        {fmt(total_tok):>12}")
+    billing = conn.execute("SELECT billing_mode,cumulative_expenditure_tokens,cumulative_expenditure_provenance,api_est_cost_usd FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
+    billing_mode, total_tok, provenance, verified_cost = billing or ("unknown", None, "unknown", None)
+    print(f"  usage type          {billing_mode:>12}   session-owned provider evidence only")
+    if billing_mode == "api" and verified_cost is not None:
+        print(f"  est API usage       {'$'+f'{verified_cost:,.4f}':>12}   table-rate estimate  [{pv}]")
+    print(f"  cumulative token total {fmt(total_tok) if total_tok is not None else 'UNKNOWN':>10}   {provenance}")
 
     # subagent ROI (only if this session spawned subagents)
     from mrtoken.subagents import roi_summary_line

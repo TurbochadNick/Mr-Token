@@ -23,6 +23,7 @@ from __future__ import annotations
 import bisect, hashlib, json, os
 
 from mrtoken.ingest import now_iso, load_prices, est_cost
+from mrtoken.billing import observed_billing_mode, reported_total_tokens
 
 
 def _is_codex_transcript(path: str) -> bool:
@@ -124,6 +125,7 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
     model_calls, tool_calls = [], []
     pending = {}  # call_id -> tool_call dict awaiting its output
     seen_usage = set()   # dedup identical token_count re-emissions within a session
+    final_total_usage = None
     clamp_anomalies = 0  # records where cached_input > input (fresh clamped to 0)
 
     with open(path, encoding="utf-8") as fh:
@@ -148,7 +150,19 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
             elif t == "turn_context":
                 model = p.get("model") or model
             elif t == "event_msg" and p.get("type") == "token_count":
-                u = (p.get("info") or {}).get("last_token_usage") or {}
+                info = p.get("info") or {}
+                u = info.get("last_token_usage") or {}
+                total_usage = info.get("total_token_usage") or {}
+                total_in = _int_or_none(total_usage.get("input_tokens"))
+                total_out = _int_or_none(total_usage.get("output_tokens"))
+                total = _int_or_none(total_usage.get("total_tokens"))
+                if total is not None and total_in is not None and total_out is not None and total == total_in + total_out:
+                    final_total_usage = total
+                elif total_usage:
+                    # A later malformed or non-reconciling provider snapshot makes
+                    # the final total unknown; retaining an earlier total would
+                    # present stale cumulative expenditure as the session final.
+                    final_total_usage = None
                 if not u or not (u.get("total_tokens") or u.get("output_tokens")):
                     continue
                 in_raw = u.get("input_tokens", 0) or 0
@@ -171,6 +185,8 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
                     "timestamp": ts, "model": model,
                     "input_tokens": fresh_in, "output_tokens": out,
                     "cache_read_input_tokens": cached,
+                    "billing_mode": observed_billing_mode(u),
+                    "reported_total_tokens": reported_total_tokens(u),
                     "reasoning_tokens": reasoning,
                     "est_cost_usd": est_cost(prices, model, {
                         "input_tokens": fresh_in, "output_tokens": out,
@@ -221,13 +237,17 @@ def ingest_codex_file(conn, path: str, prices=None) -> dict:
     cur.execute("""INSERT INTO trace(source,session_id,project_path,started_at,ended_at,ingested_at)
                    VALUES('codex',?,?,?,?,?)""", (sid, cwd, first_ts, last_ts, now_iso()))
     tid = cur.lastrowid
+    if final_total_usage is not None:
+        cur.execute("UPDATE trace SET cumulative_total_tokens=?, cumulative_total_provenance='provider_reported' WHERE id=?",
+                    (final_total_usage, tid))
     mc_ts, mc_ids = [], []  # chronological (stream order) → safe to bisect
     for mc in model_calls:
         cur.execute("""INSERT INTO model_call(trace_id,model,timestamp,input_tokens,output_tokens,
-            cache_read_input_tokens,reasoning_tokens,est_cost_usd,price_version)
-            VALUES(?,?,?,?,?,?,?,?,?)""",
+            cache_read_input_tokens,reasoning_tokens,billing_mode,reported_total_tokens,est_cost_usd,price_version)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (tid, mc["model"], mc["timestamp"], mc["input_tokens"], mc["output_tokens"],
-             mc["cache_read_input_tokens"], mc["reasoning_tokens"], mc["est_cost_usd"],
+             mc["cache_read_input_tokens"], mc["reasoning_tokens"], mc["billing_mode"],
+             mc["reported_total_tokens"], mc["est_cost_usd"],
              prices["version"]))
         mc_ts.append(mc["timestamp"] or "")
         mc_ids.append(cur.lastrowid)

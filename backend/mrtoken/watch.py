@@ -359,14 +359,6 @@ class LiveMonitor:
                     self.emit(f"  ℹ context window ~{window//1000}k tokens ({int(window/win*100)}%) — "
                               "consider /compact or a fresh session with a handoff summary")
 
-                # cost milestones — escalating ladder, each crossed once
-                crossed = [m for m in COST_MILESTONES
-                           if self.last_cost_milestone < m <= self.cum_cost]
-                if crossed:
-                    self.last_cost_milestone = crossed[-1]
-                    self.emit(f"  ℹ session est cost crossed ${crossed[-1]:,} "
-                              f"(~${self.cum_cost:,.2f} API-equivalent, not a subscription bill)")
-
                 self.errors_recent.append(0)  # one slot per response; may flip on tool_result
                 if len(self.errors_recent) > RECENT_ERROR_WINDOW:
                     self.errors_recent.pop(0)
@@ -513,8 +505,7 @@ def watch(arg: str | None = None, interval: float = 2.0, once: bool = False) -> 
                 mon.feed(json.loads(ln))
             except json.JSONDecodeError:
                 pass
-        print(f"  — replayed {mon.model_calls} model calls · "
-              f"est cost ~${mon.cum_cost:,.2f}")
+        print(f"  — replayed {mon.model_calls} model calls · billing type UNKNOWN without provider evidence")
         return 0
 
     offset = os.path.getsize(path)  # start at the live tail, ignore history
@@ -528,6 +519,5 @@ def watch(arg: str | None = None, interval: float = 2.0, once: bool = False) -> 
                     pass
             time.sleep(interval)
     except KeyboardInterrupt:
-        print(f"\nmrtoken watch ▸ stopped · {mon.model_calls} calls seen · "
-              f"est cost ~${mon.cum_cost:,.2f}")
+        print(f"\nmrtoken watch ▸ stopped · {mon.model_calls} calls seen · billing type UNKNOWN without provider evidence")
         return 0

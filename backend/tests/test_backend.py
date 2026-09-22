@@ -184,6 +184,41 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rows[0]["cache_read_tokens"], 900)
         self.assertEqual(rows[0]["cache_hit_ratio"], 0.9)
 
+    def test_billing_semantics_require_session_owned_positive_evidence(self):
+        from mrtoken.export import session_summaries
+        conn, api_tid = make_trace()
+        sub_tid = conn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES(?,?,?)",
+                               ("codex", "subscription-session", "now")).lastrowid
+        unknown_tid = conn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES(?,?,?)",
+                                   ("codex", "unknown-session", "now")).lastrowid
+        no_total_tid = conn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES(?,?,?)",
+                                    ("claude_code", "no-total-session", "now")).lastrowid
+        for tid, mode in ((api_tid, "api"), (sub_tid, "subscription"), (unknown_tid, None)):
+            conn.execute("INSERT INTO model_call(trace_id,input_tokens,output_tokens,cache_read_input_tokens,"
+                         "billing_mode,reported_total_tokens,est_cost_usd) VALUES(?,?,?,?,?,?,?)",
+                         (tid, 10, 5, 20, mode, 35, 1.25))
+        conn.execute("INSERT INTO model_call(trace_id,input_tokens,output_tokens,est_cost_usd) VALUES(?,?,?,?)",
+                     (no_total_tid, 10, 5, 1.25))
+        conn.commit()
+        rows = {row["session_id"]: row for row in session_summaries(conn)}
+        self.assertEqual(rows["session-1"]["billing_mode"], "api")
+        self.assertEqual(rows["session-1"]["api_est_cost_usd"], 1.25)
+        self.assertEqual(rows["session-1"]["cumulative_expenditure_tokens"], 35)
+        self.assertEqual(rows["session-1"]["cumulative_expenditure_provenance"], "computed-disjoint-components")
+        self.assertEqual(rows["subscription-session"]["billing_mode"], "subscription")
+        self.assertIsNone(rows["subscription-session"]["api_est_cost_usd"])
+        self.assertEqual(rows["unknown-session"]["billing_mode"], "unknown")
+        self.assertIsNone(rows["unknown-session"]["api_est_cost_usd"])
+        self.assertIsNone(rows["unknown-session"]["cumulative_expenditure_tokens"])
+        from mrtoken.status import status_snapshot
+        self.assertEqual(status_snapshot(conn, no_total_tid)["total_tokens"], 15)
+        self.assertEqual(status_snapshot(conn, no_total_tid)["total_provenance"], "computed-disjoint-components")
+        self.assertIsNone(status_snapshot(conn, unknown_tid)["total_tokens"])
+        from mrtoken.why import diagnose
+        d = diagnose(conn, unknown_tid)
+        self.assertEqual(d["shape"]["carrying cached context"], 20)
+        self.assertIn("57% of observed token activity", d["headline"])
+
 
     def test_repeated_context_is_cache_aware(self):
         from mrtoken.rules import rule_repeated_context
@@ -376,6 +411,58 @@ class BackendTest(unittest.TestCase):
             write_jsonl(claude, [{"type": "assistant", "sessionId": "s",
                                   "message": {"id": "m", "usage": {"input_tokens": 1}}}])
             self.assertFalse(_is_codex_transcript(claude))
+
+    def test_codex_provider_total_requires_input_output_reconciliation(self):
+        # M3 mutation guard: a reported total is publishable only when Codex's
+        # own input + output equality holds.  Do not fall back to per-turn totals.
+        from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.ingest import load_prices
+        from mrtoken.export import session_summaries
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "cumulative-guard", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.6-terra"}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {
+                     "last_token_usage": {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100},
+                     "total_token_usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}}}},
+                # The later snapshot is present but cannot be reconciled.  If the
+                # equality guard is removed, this would incorrectly publish 151.
+                {"timestamp": "2026-06-01T00:00:03Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {
+                     "last_token_usage": {"input_tokens": 90, "output_tokens": 20, "total_tokens": 110},
+                     "total_token_usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 151}}}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            ingest_codex_file(conn, codex, load_prices())
+            row = session_summaries(conn, "cumulative-guard")[0]
+            self.assertIsNone(row["cumulative_expenditure_tokens"])
+            self.assertEqual(row["cumulative_expenditure_provenance"], "unknown")
+
+    def test_codex_reconciled_provider_total_is_not_a_computed_sum(self):
+        from mrtoken.ingest_codex import ingest_codex_file
+        from mrtoken.ingest import load_prices
+        from mrtoken.export import session_summaries
+        with tempfile.TemporaryDirectory() as tmp:
+            codex = os.path.join(tmp, "rollout.jsonl")
+            write_jsonl(codex, [
+                {"timestamp": "2026-06-01T00:00:00Z", "type": "session_meta",
+                 "payload": {"session_id": "provider-total", "cwd": "/proj"}},
+                {"timestamp": "2026-06-01T00:00:01Z", "type": "turn_context",
+                 "payload": {"model": "gpt-5.6-terra"}},
+                {"timestamp": "2026-06-01T00:00:02Z", "type": "event_msg",
+                 "payload": {"type": "token_count", "info": {
+                     "last_token_usage": {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100},
+                     "total_token_usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}}}},
+            ])
+            conn = connect(os.path.join(tmp, "t.db"))
+            ingest_codex_file(conn, codex, load_prices())
+            row = session_summaries(conn, "provider-total")[0]
+            self.assertEqual(row["cumulative_expenditure_tokens"], 150)
+            self.assertEqual(row["cumulative_expenditure_provenance"], "provider-reported")
 
     def test_codex_dedups_duplicate_token_count_and_flags_clamp(self):
         from mrtoken.ingest_codex import ingest_codex_file

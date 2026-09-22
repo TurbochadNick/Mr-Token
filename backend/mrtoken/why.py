@@ -26,6 +26,9 @@ def diagnose(conn: sqlite3.Connection, tid: int) -> dict:
                COALESCE(SUM(est_cost_usd),0), COUNT(*)
         FROM model_call WHERE trace_id=?""", (tid,)).fetchone()
     inp, out, cr, cw, cost, calls = mc
+    billing = conn.execute("SELECT billing_mode,cumulative_expenditure_tokens,cumulative_expenditure_provenance "
+                           "FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
+    billing_mode, cumulative_total, total_provenance = billing or ("unknown", None, "unknown")
     model = conn.execute(
         "SELECT model FROM model_call WHERE trace_id=? AND model IS NOT NULL "
         "GROUP BY model ORDER BY COUNT(*) DESC LIMIT 1", (tid,)).fetchone()
@@ -70,19 +73,27 @@ def diagnose(conn: sqlite3.Connection, tid: int) -> dict:
     if sub_n:
         drivers.append(("subagents", f"{sub_n} subagent(s), ~{_fmt(sub_tok)} tok consumed"))
 
-    # headline: biggest cost-shape lever + matching action
-    shape_rank = sorted(comp.items(), key=lambda kv: -kv[1])
-    top_shape, top_val = shape_rank[0]
+    # headline: use the same unit and denominator as the table.  Cost shares are
+    # meaningful only for positively API-metered sessions; all others use tokens.
     actions = {
         "carrying cached context": "context is large and re-read every call — a fresh handoff (/mr-handoff) cuts the carry",
         "generating output": "generation-heavy — consider lower reasoning effort or tighter asks",
         "writing new context": "lots of new context entering the window — trim what you add (huge reads/logs)",
         "fresh input": "uncached input dominates — ensure stable context sits in cache-eligible positions",
     }
-    headline = f"{top_shape} is the main fuel leak ({top_val/comp_total:.0%} of cost) — {actions[top_shape]}"
+    token_shape = {"generating output": out, "carrying cached context": cr,
+                   "writing new context": cw, "fresh input": inp}
+    shape = comp if billing_mode == "api" else token_shape
+    headline_total = comp_total if billing_mode == "api" else sum(token_shape.values()) or 1
+    top_shape, top_val = max(shape.items(), key=lambda kv: kv[1])
+    unit = "cost" if billing_mode == "api" else "observed token activity"
+    headline = f"{top_shape} is the main fuel leak ({top_val/headline_total:.0%} of {unit}) — {actions[top_shape]}"
 
-    return {"calls": calls, "model": model, "tokens": inp+out, "cost": cost,
-            "shape": comp, "shape_total": comp_total,
+    return {"calls": calls, "model": model, "tokens": inp+out,
+            "cost": cost if billing_mode == "api" else None, "billing_mode": billing_mode,
+            "cumulative_total": cumulative_total, "total_provenance": total_provenance,
+            "shape": shape,
+            "shape_total": comp_total if billing_mode == "api" else sum(token_shape.values()) or 1,
             "drivers": drivers, "headline": headline}
 
 
@@ -94,14 +105,19 @@ def print_diagnosis(conn: sqlite3.Connection, prefix: str, *, routing: dict | No
         print("no matching session"); return
     tid, sid, profile = row
     d = diagnose(conn, tid)
+    cost = f" · est API usage ${_fmt(d['cost'])}" if d["cost"] is not None else ""
     print(f"\n  why is {sid[:8]} expensive?  (profile: {profile or '?'} · "
-          f"{d['calls']} calls · ~{_fmt(d['tokens'])} tok · est ${_fmt(d['cost'])})")
+          f"{d['calls']} calls · ~{_fmt(d['tokens'])} tok · usage type {d['billing_mode']}{cost})")
+    total = (f"~{_fmt(d['cumulative_total'])} tok ({d['total_provenance']})"
+             if d["cumulative_total"] is not None else "UNKNOWN tok")
+    print(f"  cumulative token total: {total}")
     print(f"  {'─'*60}")
-    print("  cost shape:")
+    print("  cost shape:" if d["billing_mode"] == "api" else "  observed token components (computed total uses documented disjoint provider components):")
     for name, val in sorted(d["shape"].items(), key=lambda kv: -kv[1]):
         pct = val / d["shape_total"]
         bar = "█" * round(pct * 24)
-        print(f"    {name:24} {pct:5.0%}  {bar}  ~${_fmt(val)}")
+        amount = f"~${_fmt(val)}" if d["billing_mode"] == "api" else f"~{_fmt(val)} tok"
+        print(f"    {name:24} {pct:5.0%}  {bar}  {amount}")
     if d["drivers"]:
         print("\n  avoidable drivers:")
         for name, detail in d["drivers"]:

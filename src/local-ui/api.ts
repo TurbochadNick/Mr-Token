@@ -32,6 +32,12 @@ export type UiAccurate = {
   cacheWriteTokens: number;
   totalTokens: number;
   estCostUsd: number;
+  apiBillingSessions: number;
+  subscriptionBillingSessions: number;
+  unknownBillingSessions: number;
+  providerReportedTotals: number;
+  computedTotals: number;
+  unknownTotals: number;
   cacheHitRatio: number | null;
   highRecommendations: number;
   addressableWasteTokens: number | null; // recommendation estimate; null when unavailable
@@ -118,7 +124,9 @@ export type UiData = {
 
 const EMPTY_ACCURATE: UiAccurate = {
   available: false, sessions: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
-  cacheWriteTokens: 0, totalTokens: 0, estCostUsd: 0, cacheHitRatio: null,
+  cacheWriteTokens: 0, totalTokens: 0, estCostUsd: 0,
+  apiBillingSessions: 0, subscriptionBillingSessions: 0, unknownBillingSessions: 0,
+  providerReportedTotals: 0, computedTotals: 0, unknownTotals: 0, cacheHitRatio: null,
   highRecommendations: 0, addressableWasteTokens: null, profiles: []
 };
 
@@ -133,21 +141,26 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
   // "backend has not run" state. Absence and failure must stay distinguishable.
   type AccurateRow = Omit<UiAccurate, 'available' | 'cacheHitRatio' | 'profiles' | 'addressableWasteTokens'>;
 
+  const selectAccurate = (includeBilling: boolean) => `select count(*) as sessions,
+    coalesce(sum(input_tokens), 0) as inputTokens,
+    coalesce(sum(output_tokens), 0) as outputTokens,
+    coalesce(sum(cache_read_tokens), 0) as cacheReadTokens,
+    coalesce(sum(cache_write_tokens), 0) as cacheWriteTokens,
+    coalesce(sum(total_tokens), 0) as totalTokens,
+    coalesce(sum(est_cost_usd), 0) as estCostUsd,
+    ${includeBilling ? `coalesce(sum(case when billing_mode = 'api' then 1 else 0 end), 0) as apiBillingSessions,
+    coalesce(sum(case when billing_mode = 'subscription' then 1 else 0 end), 0) as subscriptionBillingSessions,
+    coalesce(sum(case when billing_mode = 'unknown' then 1 else 0 end), 0) as unknownBillingSessions,
+    coalesce(sum(case when cumulative_expenditure_provenance = 'provider-reported' then 1 else 0 end), 0) as providerReportedTotals,
+    coalesce(sum(case when cumulative_expenditure_provenance = 'computed-disjoint-components' then 1 else 0 end), 0) as computedTotals,
+    coalesce(sum(case when cumulative_expenditure_provenance = 'unknown' then 1 else 0 end), 0) as unknownTotals,` : ''}
+    coalesce(sum(high_recommendations), 0) as highRecommendations
+    from session_summary`;
+
   let row: AccurateRow | undefined;
+  let hasBillingProvenance = true;
   try {
-    row = db
-      .prepare(
-        `select count(*) as sessions,
-          coalesce(sum(input_tokens), 0) as inputTokens,
-          coalesce(sum(output_tokens), 0) as outputTokens,
-          coalesce(sum(cache_read_tokens), 0) as cacheReadTokens,
-          coalesce(sum(cache_write_tokens), 0) as cacheWriteTokens,
-          coalesce(sum(total_tokens), 0) as totalTokens,
-          coalesce(sum(est_cost_usd), 0) as estCostUsd,
-          coalesce(sum(high_recommendations), 0) as highRecommendations
-        from session_summary`
-      )
-      .get() as AccurateRow;
+    row = db.prepare(selectAccurate(true)).get() as AccurateRow;
   } catch (error) {
     if (
       error instanceof Error &&
@@ -156,7 +169,18 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
     ) {
       return EMPTY_ACCURATE; // session_summary view not present (backend has not run)
     }
-    throw error;
+    if (
+      error instanceof Error &&
+      (error as { code?: unknown }).code === 'SQLITE_ERROR' &&
+      /^no such column: (billing_mode|cumulative_expenditure_provenance)$/.test(error.message)
+    ) {
+      // A pre-billing backend still has measured tokens, but no evidence to classify
+      // billing or cumulative-total provenance. Surface it as explicitly UNKNOWN.
+      row = db.prepare(selectAccurate(false)).get() as AccurateRow;
+      hasBillingProvenance = false;
+    } else {
+      throw error;
+    }
   }
   if (!row || row.sessions === 0) return EMPTY_ACCURATE;
 
@@ -199,6 +223,12 @@ export function readAccurateUsage(db: DbClient): UiAccurate {
   const inputSide = row.inputTokens + row.cacheReadTokens + row.cacheWriteTokens;
   return {
     ...row,
+    apiBillingSessions: hasBillingProvenance ? row.apiBillingSessions : 0,
+    subscriptionBillingSessions: hasBillingProvenance ? row.subscriptionBillingSessions : 0,
+    unknownBillingSessions: hasBillingProvenance ? row.unknownBillingSessions : row.sessions,
+    providerReportedTotals: hasBillingProvenance ? row.providerReportedTotals : 0,
+    computedTotals: hasBillingProvenance ? row.computedTotals : 0,
+    unknownTotals: hasBillingProvenance ? row.unknownTotals : row.sessions,
     available: true,
     cacheHitRatio: inputSide > 0 ? row.cacheReadTokens / inputSide : null,
     addressableWasteTokens,
@@ -417,7 +447,8 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
           `- Input / output: ${data.accurate.inputTokens.toLocaleString()} / ${data.accurate.outputTokens.toLocaleString()}`,
           `- Cache read / write: ${data.accurate.cacheReadTokens.toLocaleString()} / ${data.accurate.cacheWriteTokens.toLocaleString()}`,
           `- Cache hit ratio: ${data.accurate.cacheHitRatio === null ? 'n/a' : `${Math.round(data.accurate.cacheHitRatio * 100)}%`}`,
-          `- Estimated API-equivalent cost: $${data.accurate.estCostUsd.toFixed(2)} (not a subscription bill)`,
+          `- Billing evidence: API ${data.accurate.apiBillingSessions}; subscription ${data.accurate.subscriptionBillingSessions}; UNKNOWN ${data.accurate.unknownBillingSessions}. Dollar usage is shown only for session-owned API evidence.`,
+          `- Cumulative-token provenance: provider-reported ${data.accurate.providerReportedTotals}; computed from documented disjoint components ${data.accurate.computedTotals}; UNKNOWN ${data.accurate.unknownTotals}. These routes are not combined.`,
           `- Sessions: ${data.accurate.sessions.toLocaleString()}; profiles: ${data.accurate.profiles.join(', ') || 'n/a'}`,
           `- High-priority recommendations: ${data.accurate.highRecommendations.toLocaleString()}`
         ]

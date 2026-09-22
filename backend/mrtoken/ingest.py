@@ -164,6 +164,10 @@ def est_cost(prices, model, usage, at=None) -> float:
 _MIGRATIONS = [
     ("trace", "profile", "TEXT"),
     ("trace", "profile_confidence", "REAL"),
+    ("trace", "cumulative_total_tokens", "INTEGER"),
+    ("trace", "cumulative_total_provenance", "TEXT"),
+    ("model_call", "billing_mode", "TEXT"),
+    ("model_call", "reported_total_tokens", "INTEGER"),
 ]
 
 # A "substantive" session is at least this many model calls (≈ request/response
@@ -194,6 +198,11 @@ SELECT
   COALESCE(SUM(mc.output_tokens), 0)                    AS output_tokens,
   COALESCE(SUM(mc.cache_read_input_tokens), 0)          AS cache_read_tokens,
   COALESCE(SUM(mc.cache_creation_input_tokens), 0)      AS cache_write_tokens,
+  CASE WHEN COUNT(mc.id) > 0 AND COUNT(CASE WHEN mc.billing_mode='api' THEN 1 END)=COUNT(mc.id)
+       THEN 'api'
+       WHEN COUNT(mc.id) > 0 AND COUNT(CASE WHEN mc.billing_mode='subscription' THEN 1 END)=COUNT(mc.id)
+       THEN 'subscription'
+       ELSE 'unknown' END                                AS billing_mode,
   -- reasoning is a SUBSET of output_tokens (Codex: input+output=total, reasoning ⊂
   -- output; Claude folds it into output too), so this is an informational breakdown
   -- and is deliberately NOT added into total_tokens below.
@@ -202,7 +211,20 @@ SELECT
   -- carry the cached throughput; a true "in+out+cache" total balloons into the
   -- 100M+ range on cached sessions and is not a useful headline.
   COALESCE(SUM(mc.input_tokens + mc.output_tokens), 0)  AS total_tokens,
+  -- Anthropic documents its input total as input + cache read + cache write:
+  -- https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+  -- Together with its separately reported output field, that permits this computed
+  -- Claude token total.  It does not establish API billing or a dollar amount.
+  CASE WHEN t.cumulative_total_provenance='provider_reported' THEN t.cumulative_total_tokens
+       WHEN t.source IN ('claude_code','claude_code_subagent') AND COUNT(mc.id) > 0 THEN
+         SUM(mc.input_tokens + mc.output_tokens + mc.cache_read_input_tokens + mc.cache_creation_input_tokens)
+       ELSE NULL END AS cumulative_expenditure_tokens,
+  CASE WHEN t.cumulative_total_provenance='provider_reported' THEN 'provider-reported'
+       WHEN t.source IN ('claude_code','claude_code_subagent') THEN 'computed-disjoint-components'
+       ELSE 'unknown' END AS cumulative_expenditure_provenance,
   ROUND(COALESCE(SUM(mc.est_cost_usd), 0), 6)           AS est_cost_usd,
+  CASE WHEN COUNT(mc.id) > 0 AND COUNT(CASE WHEN mc.billing_mode='api' THEN 1 END)=COUNT(mc.id)
+       THEN ROUND(COALESCE(SUM(mc.est_cost_usd), 0), 6) ELSE NULL END AS api_est_cost_usd,
   CASE
     WHEN COALESCE(SUM(mc.input_tokens + mc.cache_read_input_tokens
                       + mc.cache_creation_input_tokens), 0) = 0 THEN NULL
@@ -370,6 +392,7 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
                 link_uuid = seen_msg_ids.get(dedup_key, o.get("uuid"))
                 if first_seen:
                     u = msg["usage"]
+                    from mrtoken.billing import observed_billing_mode, reported_total_tokens
                     cc = u.get("cache_creation") or {}
                     model_calls.append({
                         "request_id": o.get("requestId"),
@@ -386,6 +409,8 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
                         "service_tier": u.get("service_tier"),
                         "stop_reason": msg.get("stop_reason"),
                         "is_sidechain": 1 if o.get("isSidechain") else 0,
+                        "billing_mode": observed_billing_mode(u),
+                        "reported_total_tokens": reported_total_tokens(u),
                         "est_cost_usd": est_cost(prices, msg.get("model"), u, ts),
                         "price_version": prices["version"],
                     })
@@ -446,11 +471,12 @@ def ingest_file(conn: sqlite3.Connection, path: str, prices, parent_session_id: 
         cur.execute("""INSERT INTO model_call(trace_id,request_id,message_uuid,parent_uuid,model,
             timestamp,input_tokens,output_tokens,cache_read_input_tokens,cache_creation_input_tokens,
             ephemeral_1h_tokens,ephemeral_5m_tokens,service_tier,stop_reason,is_sidechain,
-            est_cost_usd,price_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            billing_mode,reported_total_tokens,est_cost_usd,price_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (tid, mc["request_id"], mc["message_uuid"], mc["parent_uuid"], mc["model"], mc["timestamp"],
              mc["input_tokens"], mc["output_tokens"], mc["cache_read_input_tokens"],
              mc["cache_creation_input_tokens"], mc["ephemeral_1h_tokens"], mc["ephemeral_5m_tokens"],
-             mc["service_tier"], mc["stop_reason"], mc["is_sidechain"], mc["est_cost_usd"], mc["price_version"]))
+             mc["service_tier"], mc["stop_reason"], mc["is_sidechain"], mc["billing_mode"],
+             mc["reported_total_tokens"], mc["est_cost_usd"], mc["price_version"]))
     # build msg_uuid → model_call db id map for linking tool_calls
     uuid_to_mcid = {r[0]: r[1] for r in cur.execute(
         "SELECT message_uuid, id FROM model_call WHERE trace_id=? AND message_uuid IS NOT NULL", (tid,)

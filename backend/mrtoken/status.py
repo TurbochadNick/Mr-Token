@@ -22,9 +22,9 @@ def _fmt(n) -> str:
 
 def status_snapshot(conn: sqlite3.Connection, tid: int, *, routing: dict | None = None) -> dict:
     s = conn.execute(
-        "SELECT profile, model_calls, total_tokens, est_cost_usd, cache_hit_ratio, "
+        "SELECT profile, model_calls, cumulative_expenditure_tokens, cumulative_expenditure_provenance, api_est_cost_usd, billing_mode, cache_hit_ratio, "
         "tool_errors FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
-    profile, calls, total_tok, cost, cache, errs = s or (None,)*6
+    profile, calls, total_tok, total_provenance, cost, billing, cache, errs = s or (None,)*8
     # current context window ≈ the latest call's whole input side
     cur = conn.execute(
         "SELECT input_tokens + cache_read_input_tokens + cache_creation_input_tokens "
@@ -37,8 +37,8 @@ def status_snapshot(conn: sqlite3.Connection, tid: int, *, routing: dict | None 
         "FROM model_call WHERE trace_id=?", (tid,)).fetchone()
     window = context_window(max(context_now, (mx[0] if mx else 0) or 0))
     context_large = context_now >= window * CONTEXT_WARN_PCT / 100
-    return {"profile": profile, "calls": calls or 0, "total_tokens": total_tok or 0,
-            "est_cost": cost or 0.0, "cache_ratio": cache, "tool_errors": errs or 0,
+    return {"profile": profile, "calls": calls or 0, "total_tokens": total_tok,
+            "total_provenance": total_provenance or "unknown", "est_cost": cost, "billing_mode": billing or "unknown", "cache_ratio": cache, "tool_errors": errs or 0,
             "context_now": context_now, "context_large": context_large,
             "card": card_for_session(conn, tid, routing=routing)}
 
@@ -56,12 +56,15 @@ def print_status(db_path: str | None, session_arg: str | None, *, routing: dict 
 
     cache = f"{s['cache_ratio']:.0%}" if s["cache_ratio"] is not None else "n/a"
     print(f"\n  mr token status · {r['session_id'][:8]} · profile: {s['profile'] or '?'}")
-    print(f"  {s['calls']} calls · ~{_fmt(s['total_tokens'])} tok · cache {cache} · "
-          f"est ${_fmt(s['est_cost'])}"
-          + (f" · {s['tool_errors']} tool errors" if s['tool_errors'] else ""))
+    expenditure = (f"~{_fmt(s['total_tokens'])} tok ({s['total_provenance']})"
+                   if s["total_tokens"] is not None else "UNKNOWN tok")
+    line = f"  {s['calls']} calls · cumulative token total {expenditure} · usage type {s['billing_mode']} · cache {cache}"
+    if s["billing_mode"] == "api" and s["est_cost"] is not None:
+        line += f" · est API usage ${_fmt(s['est_cost'])}"
+    print(line + (f" · {s['tool_errors']} tool errors" if s['tool_errors'] else ""))
     flag = "  ⚠ large" if s["context_large"] else ""
     print(f"  context now ~{_fmt(s['context_now'])} tok{flag}")
-    print(f"  · est $ is an {COST_CAVEAT}")
+    print("  · billing evidence: session-owned provider records only; absent evidence is UNKNOWN")
     print()
     for line in render_savings_card(s["card"]):
         print(line)

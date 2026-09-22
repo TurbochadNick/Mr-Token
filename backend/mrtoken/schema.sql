@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS trace (
   started_at        TEXT,
   ended_at          TEXT,
   title             TEXT,
+  cumulative_total_tokens INTEGER,
+  cumulative_total_provenance TEXT,
   ingested_at       TEXT NOT NULL
 );
 
@@ -32,6 +34,8 @@ CREATE TABLE IF NOT EXISTS model_call (
   service_tier                TEXT,
   stop_reason                 TEXT,
   is_sidechain                INTEGER NOT NULL DEFAULT 0,
+  billing_mode                TEXT,
+  reported_total_tokens       INTEGER,
   est_cost_usd                REAL,
   price_version               TEXT
 );
