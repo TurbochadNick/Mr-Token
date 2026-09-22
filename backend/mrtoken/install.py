@@ -349,7 +349,12 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
     changed = bool(_strip_hooks(g, "Stop", HOOK_MARKER))
     if changed:
         emit("  ✓ removed global Stop hook")
-    if statusline_command() in json.dumps(g.get("statusLine") or ""):
+    statusline = g.get("statusLine")
+    stored_statusline_command = (
+        statusline.get("command", "") if isinstance(statusline, dict)
+        else statusline if isinstance(statusline, str) else ""
+    )
+    if stored_statusline_command and statusline_command() == stored_statusline_command:
         g.pop("statusLine", None); changed = True
         emit("  ✓ removed statusLine HUD bar")
     changed = bool(_strip_hooks(g, "UserPromptSubmit", PROMPT_HOOK_MARKER)) or changed

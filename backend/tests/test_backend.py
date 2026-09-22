@@ -2695,6 +2695,32 @@ class BackendTest(unittest.TestCase):
         self.assertNotIn("-m mrtoken statusline", cmd)  # the help-only entry
         self.assertIn("PYTHONPATH=", cmd)               # importable from any cwd
 
+    def test_uninstall_removes_source_install_statusline_without_console_script(self):
+        import mrtoken.install as inst
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "package.json"), "w") as h:
+                h.write("{}")
+            gpath = os.path.join(tmp, "global-settings.json")
+            real_which = inst.shutil.which
+            inst.shutil.which = lambda _name: None
+            try:
+                command = inst.statusline_command()
+                self.assertIn('"', command)  # source fallback must exercise JSON escaping
+                with open(gpath, "w") as h:
+                    json.dump({"statusLine": {"type": "command", "command": command,
+                                               "padding": 0}}, h)
+                inst.uninstall(
+                    project_root=tmp,
+                    settings_path=os.path.join(tmp, ".claude", "settings.local.json"),
+                    global_settings_path=gpath,
+                    codex_hooks_path=os.path.join(tmp, ".codex", "hooks.json"),
+                    remove_skills=False,
+                    emit=lambda *_: None,
+                )
+            finally:
+                inst.shutil.which = real_which
+            self.assertNotIn("statusLine", inst._load_settings(gpath))
+
     def test_uninstall_reverses_init_preserving_other_settings(self):
         from mrtoken.install import (
             init, uninstall, _load_settings, _already_installed,
