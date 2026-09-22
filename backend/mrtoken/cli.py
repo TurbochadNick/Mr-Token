@@ -90,7 +90,8 @@ def cmd_list(args):
 
 def cmd_subagents(args):
     from mrtoken.subagents import subagent_report
-    subagent_report(_open(args.db), args.session or "")
+    print(_store_notice(args))
+    subagent_report(_open(args.db), args.session)
 
 
 def cmd_fleet(args):
@@ -192,9 +193,14 @@ def cmd_migrate(args):
 
 def cmd_why(args):
     from mrtoken.why import print_diagnosis
+    print(_store_notice(args))
     conn = _open_readonly(args.db)
     try:
-        print_diagnosis(conn, args.session or "", routing=_routing_inputs(args))
+        kwargs = {"routing": _routing_inputs(args)}
+        if args.codex:
+            kwargs["source"] = "codex"
+        if not print_diagnosis(conn, args.session, **kwargs):
+            raise SystemExit(1)
     finally:
         conn.close()
 
@@ -227,7 +233,17 @@ def cmd_offload_roi(args):
 
 def cmd_status(args):
     from mrtoken.status import print_status
-    sys.exit(print_status(args.db, args.session, routing=_routing_inputs(args)))
+    print(_store_notice(args))
+    kwargs = {"routing": _routing_inputs(args)}
+    if args.codex:
+        kwargs["source"] = "codex"
+    sys.exit(print_status(args.db, args.session, **kwargs))
+
+
+def _store_notice(args) -> str:
+    kind = "Codex central store" if getattr(args, "codex", False) else (
+        "explicit store" if getattr(args, "db_sub", None) else "project store")
+    return f"mrtoken: store: {kind} ({args.db})"
 
 
 def _routing_inputs(args):
@@ -291,7 +307,9 @@ def cmd_corpus(args):
 
 def cmd_explain(args):
     from mrtoken.feedback import print_explain
-    print_explain(_open(args.db), args.session or "")
+    print(_store_notice(args))
+    kwargs = {"source": "codex"} if args.codex else {}
+    print_explain(_open(args.db), args.session, **kwargs)
 
 
 def cmd_feedback(args):

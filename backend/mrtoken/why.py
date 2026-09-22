@@ -9,7 +9,7 @@ outputs, retries, subagents, uncached repeats), and names the single biggest
 from __future__ import annotations
 import sqlite3
 
-from mrtoken.ingest import load_prices, price_for
+from mrtoken.ingest import SessionSelectionError, load_prices, price_for, select_session
 from mrtoken.savings_card import card_for_session, render_savings_card
 
 
@@ -97,16 +97,17 @@ def diagnose(conn: sqlite3.Connection, tid: int) -> dict:
             "drivers": drivers, "headline": headline}
 
 
-def print_diagnosis(conn: sqlite3.Connection, prefix: str, *, routing: dict | None = None) -> None:
-    row = conn.execute(
-        "SELECT id, session_id, profile FROM trace WHERE session_id LIKE ? "
-        "ORDER BY started_at DESC LIMIT 1", (prefix + "%",)).fetchone()
-    if not row:
-        print("no matching session"); return
-    tid, sid, profile = row
+def print_diagnosis(conn: sqlite3.Connection, prefix: str | None, *,
+                    source: str | None = None, routing: dict | None = None) -> bool:
+    try:
+        tid, sid, selected_source, profile = select_session(conn, prefix, source=source)
+    except SessionSelectionError as exc:
+        print(exc)
+        return False
     d = diagnose(conn, tid)
     cost = f" · est API usage ${_fmt(d['cost'])}" if d["cost"] is not None else ""
-    print(f"\n  why is {sid[:8]} expensive?  (profile: {profile or '?'} · "
+    chosen = "implicit newest" if prefix is None else "explicit"
+    print(f"\n  why is {sid[:8]} expensive?  (source: {selected_source} · {chosen} · profile: {profile or '?'} · "
           f"{d['calls']} calls · ~{_fmt(d['tokens'])} tok · usage type {d['billing_mode']}{cost})")
     total = (f"~{_fmt(d['cumulative_total'])} tok ({d['total_provenance']})"
              if d["cumulative_total"] is not None else "UNKNOWN tok")
@@ -127,3 +128,4 @@ def print_diagnosis(conn: sqlite3.Connection, prefix: str, *, routing: dict | No
     for line in render_savings_card(card_for_session(conn, tid, routing=routing), indent="    "):
         print(line)
     print()
+    return True

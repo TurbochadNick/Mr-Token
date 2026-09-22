@@ -785,6 +785,88 @@ class BackendTest(unittest.TestCase):
             self.assertEqual((summ["right"], summ["wrong"]), (1, 1))
             self.assertEqual(summ["labelled_precision"], 0.5)
 
+    def test_session_selection_contract_names_store_provider_and_session(self):
+        """Implicit selection is visible; Codex never falls back to a Claude row."""
+        import contextlib
+        from unittest.mock import patch
+        from mrtoken import cli
+        from mrtoken.subagents import subagent_report
+
+        def seed(db, sid, source, started, title):
+            conn = connect(db)
+            tid = conn.execute(
+                "INSERT INTO trace(session_id,source,title,started_at,ingested_at) VALUES(?,?,?,?,?)",
+                (sid, source, title, started, started),
+            ).lastrowid
+            conn.execute("INSERT INTO model_call(trace_id,model,input_tokens,output_tokens) VALUES(?,?,?,?)",
+                         (tid, "test-model", 2, 1))
+            conn.commit()
+            conn.close()
+            return tid
+
+        def run_cli(args):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                try:
+                    cli.main(args)
+                except SystemExit as exc:
+                    return exc.code, out.getvalue()
+            return 0, out.getvalue()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project_db = os.path.join(tmp, "project.db")
+            # Same-store control: newer Claude wins unscoped; Codex is scoped.
+            seed(project_db, "codex-shared", "codex", "2026-06-01T00:00:00Z", "Codex")
+            seed(project_db, "claude-shared", "claude_code", "2026-06-02T00:00:00Z", "Claude")
+            _, why = run_cli(["why", "--db", project_db])
+            self.assertIn("mrtoken: store: explicit store", why)
+            self.assertIn("why is claude-s", why)
+            self.assertIn("source: claude_code · implicit newest", why)
+            status_code, status = run_cli(["status", "--db", project_db])
+            self.assertEqual(status_code, 2)
+            self.assertIn("requires an explicit recorded session", status)
+            _, explicit_why = run_cli(["why", "claude-shared", "--db", project_db])
+            self.assertIn("source: claude_code · explicit", explicit_why)
+            _, explicit_status = run_cli(["status", "claude-shared", "--db", project_db])
+            self.assertIn("mr token status · claude-s · source: claude_code", explicit_status)
+
+            # The header and body must use the same newest parent, not two queries.
+            seed(project_db, "parent-old", "claude_code", "2026-06-03T00:00:00Z", "OLD")
+            new_tid = seed(project_db, "parent-new", "claude_code", "2026-06-04T00:00:00Z", "NEW")
+            child = connect(project_db)
+            child.execute("INSERT INTO trace(session_id,source,parent_session_id,started_at,ingested_at) "
+                          "VALUES(?,?,?,?,?)", ("agent-new", "claude_code_subagent", "parent-new",
+                                                  "2026-06-04T00:01:00Z", "2026-06-04T00:01:00Z"))
+            child.execute("INSERT INTO tool_call(trace_id,tool_name,output_chars) VALUES(?,?,?)",
+                          (new_tid, "Task", 400))
+            child.commit()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                subagent_report(child, "parent-")
+            self.assertIn("subagents of parent-n · source: claude_code  NEW", out.getvalue())
+            self.assertNotIn("OLD", out.getvalue())
+            child.close()
+            _, restricted = run_cli(["subagents", "codex-shared", "--db", project_db])
+            self.assertIn("supports Claude parent sessions only", restricted)
+
+            # Different-store control: --codex ignores a newer Claude row in its store.
+            xdg = os.path.join(tmp, "xdg")
+            codex_db = os.path.join(xdg, "token-tithe", "codex.db")
+            seed(codex_db, "codex-central", "codex", "2026-06-05T00:00:00Z", "Codex central")
+            seed(codex_db, "claude-central", "claude_code", "2026-06-06T00:00:00Z", "Claude central")
+            with patch.dict(os.environ, {"XDG_DATA_HOME": xdg}, clear=False):
+                _, codex_why = run_cli(["why", "--codex"])
+                self.assertIn(f"mrtoken: store: Codex central store ({codex_db})", codex_why)
+                self.assertIn("why is codex-ce", codex_why)
+                self.assertIn("source: codex · implicit newest", codex_why)
+                _, codex_explain = run_cli(["explain", "--codex"])
+                self.assertIn("selected: codex-ce · source: codex · implicit newest", codex_explain)
+
+            with patch.dict(os.environ, {"XDG_DATA_HOME": os.path.join(tmp, "missing")}, clear=False):
+                missing_code, missing = run_cli(["why", "--codex"])
+            self.assertEqual(missing_code, 2)
+            self.assertIn("mrtoken: store unavailable:", missing)
+
     def test_offload_stashes_and_summarizes(self):
         # ROADMAP 6.1: offload writes full content to disk, returns a compact summary
         # + stash path, and keeps the bulk out of context.

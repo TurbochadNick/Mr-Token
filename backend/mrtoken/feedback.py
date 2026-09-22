@@ -13,7 +13,7 @@ Two halves of the same loop, both metadata-only:
 from __future__ import annotations
 import json, sqlite3
 
-from mrtoken.ingest import now_iso
+from mrtoken.ingest import SessionSelectionError, now_iso, select_session
 
 VERDICTS = ("right", "wrong", "unsure")
 
@@ -38,14 +38,10 @@ def _fmt_val(v) -> str:
     return str(v)
 
 
-def explain_session(conn: sqlite3.Connection, prefix: str) -> list[dict]:
+def explain_session(conn: sqlite3.Connection, prefix: str | None,
+                    *, source: str | None = None) -> list[dict]:
     """Return each fired recommendation for the session with decoded evidence."""
-    row = conn.execute(
-        "SELECT id, session_id FROM trace WHERE session_id LIKE ? ORDER BY started_at DESC LIMIT 1",
-        (prefix + "%",)).fetchone()
-    if not row:
-        return []
-    tid, sid = row
+    tid, sid, selected_source, _ = select_session(conn, prefix, source=source)
     recs = conn.execute(
         "SELECT rule, severity, message, evidence_json, est_savings_tokens "
         "FROM recommendation WHERE trace_id=? ORDER BY "
@@ -60,17 +56,24 @@ def explain_session(conn: sqlite3.Connection, prefix: str) -> list[dict]:
         evidence = [(k, _fmt_val(ev[k])) for k in keys if k in ev]
         out.append({"rule": rule, "severity": sev, "message": msg,
                     "est_savings_tokens": savings, "session_id": sid,
-                    "trace_id": tid, "evidence": evidence})
+                    "source": selected_source, "trace_id": tid, "evidence": evidence})
     return out
 
 
-def print_explain(conn: sqlite3.Connection, prefix: str) -> None:
-    rows = explain_session(conn, prefix)
+def print_explain(conn: sqlite3.Connection, prefix: str | None, *, source: str | None = None) -> None:
+    try:
+        _, sid, selected_source, _ = select_session(conn, prefix, source=source)
+    except SessionSelectionError as exc:
+        print(exc)
+        return
+    rows = explain_session(conn, sid, source=source)
     print(f"\n{'─'*64}")
     print("  MR Token — explain: why each signal fired")
     print(f"{'─'*64}")
+    chosen = "implicit newest" if prefix is None else "explicit"
+    print(f"  selected: {sid[:8]} · source: {selected_source} · {chosen}")
     if not rows:
-        print("  no session match, or no recommendations fired.\n"); return
+        print("  no recommendations fired.\n"); return
     pref = {"high": "[!]", "warn": "[~]"}
     for r in rows:
         save = f"  · ~{r['est_savings_tokens']:,} tok addressable" if r["est_savings_tokens"] else ""

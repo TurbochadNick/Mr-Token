@@ -15,6 +15,8 @@ Prints a per-session breakdown and fleet verdict.
 from __future__ import annotations
 import json, sqlite3
 
+from mrtoken.ingest import SessionSelectionError, select_session
+
 
 BLOAT_RATIO_WARN = 0.30    # result > 30% of subagent cost → warn
 BLOAT_RATIO_HIGH = 0.60    # result > 60% → high
@@ -161,7 +163,7 @@ def verdict(subs: list[dict]) -> str:
     return "NEUTRAL  — mixed; some subagents focused, some bloated"
 
 
-def subagent_report(conn: sqlite3.Connection, prefix: str):
+def subagent_report(conn: sqlite3.Connection, prefix: str | None):
     if not prefix:
         # fleet view: all parent sessions that have subagents
         parents = conn.execute("""
@@ -178,7 +180,8 @@ def subagent_report(conn: sqlite3.Connection, prefix: str):
             GROUP BY t_parent.id ORDER BY t_parent.started_at DESC
         """).fetchall()
         if not parents:
-            print("  no sessions with subagents found"); return
+            print("  no Claude parent sessions with subagents found "
+                  "(this command supports Claude parent sessions only)"); return
         print(f"\n  {'SESSION':8}  {'SUBS':>4}  {'SUB TOKENS':>12}  TITLE")
         print(f"  {'─'*8}  {'─'*4}  {'─'*12}  {'─'*28}")
         for sid, title, n, toks in parents:
@@ -186,17 +189,17 @@ def subagent_report(conn: sqlite3.Connection, prefix: str):
         print(f"\n  run: mrtoken-transcript subagents <session-prefix>  for per-subagent detail\n")
         return
 
-    subs = get_subagent_data(conn, prefix)
-    parent = conn.execute(
-        "SELECT session_id, title FROM trace WHERE session_id LIKE ? AND source='claude_code' LIMIT 1",
-        (prefix + "%",)
-    ).fetchone()
-    if not parent:
-        print(f"  no parent session matching '{prefix}'"); return
-    psid, ptitle = parent
+    try:
+        parent_tid, psid, _, _ = select_session(conn, prefix, source="claude_code")
+    except SessionSelectionError:
+        print(f"  mrtoken subagents: session unavailable: '{prefix}' in selected store; "
+              "this command supports Claude parent sessions only")
+        return
+    ptitle = conn.execute("SELECT title FROM trace WHERE id=?", (parent_tid,)).fetchone()[0]
+    subs = get_subagent_data(conn, psid)
 
     print(f"\n{'─'*60}")
-    print(f"  subagents of {psid[:8]}  {ptitle or ''}")
+    print(f"  subagents of {psid[:8]} · source: claude_code  {ptitle or ''}")
     print(f"{'─'*60}")
 
     if not subs:

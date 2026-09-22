@@ -3,7 +3,8 @@
 from __future__ import annotations
 import sqlite3
 
-from mrtoken.ingest import ReadOnlyDatabaseError, connect_readonly, default_db_path
+from mrtoken.ingest import (ReadOnlyDatabaseError, SessionSelectionError,
+                            connect_readonly, default_db_path, select_session)
 from mrtoken.statusline import context_window, CONTEXT_WARN_PCT
 from mrtoken.savings_card import card_for_session, render_savings_card
 
@@ -35,7 +36,8 @@ def status_snapshot(conn: sqlite3.Connection, tid: int, *, routing: dict | None 
             "card": card_for_session(conn, tid, routing=routing)}
 
 
-def print_status(db_path: str | None, session_arg: str | None, *, routing: dict | None = None) -> int:
+def print_status(db_path: str | None, session_arg: str | None, *, source: str | None = None,
+                 routing: dict | None = None) -> int:
     if not session_arg:
         print("mrtoken status: read-only analysis requires an explicit recorded session; "
               "session selection is not part of this command")
@@ -44,15 +46,16 @@ def print_status(db_path: str | None, session_arg: str | None, *, routing: dict 
         conn = connect_readonly(db_path or default_db_path())
     except ReadOnlyDatabaseError as exc:
         print(exc); return 2
-    row = conn.execute("SELECT id,session_id FROM trace WHERE session_id LIKE ? "
-                       "ORDER BY started_at DESC LIMIT 1", (session_arg + "%",)).fetchone()
-    if not row:
-        print("mrtoken status: no recorded session in this read-only store"); return 1
-    tid, session_id = row
+    try:
+        tid, session_id, selected_source, _ = select_session(conn, session_arg, source=source)
+    except SessionSelectionError as exc:
+        print(exc)
+        conn.close()
+        return 1
     s = status_snapshot(conn, tid, routing=routing)
 
     cache = f"{s['cache_ratio']:.0%}" if s["cache_ratio"] is not None else "n/a"
-    print(f"\n  mr token status · {session_id[:8]} · profile: {s['profile'] or '?'}")
+    print(f"\n  mr token status · {session_id[:8]} · source: {selected_source} · profile: {s['profile'] or '?'}")
     expenditure = (f"~{_fmt(s['total_tokens'])} tok ({s['total_provenance']})"
                    if s["total_tokens"] is not None else "UNKNOWN tok")
     line = f"  {s['calls']} calls · cumulative token total {expenditure} · usage type {s['billing_mode']} · cache {cache}"

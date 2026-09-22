@@ -290,6 +290,34 @@ class ReadOnlyDatabaseError(RuntimeError):
     """The database cannot satisfy a read-only analysis command."""
 
 
+class SessionSelectionError(RuntimeError):
+    """The selected store cannot supply the requested session."""
+
+
+def select_session(conn: sqlite3.Connection, prefix: str | None = None,
+                   *, source: str | None = None) -> tuple:
+    """Select one explicit or newest session in the already-selected store."""
+    clauses, params = [], []
+    if prefix is not None:
+        clauses.append("session_id LIKE ?")
+        params.append(prefix + "%")
+    if source is not None:
+        clauses.append("source=?")
+        params.append(source)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    row = conn.execute(
+        "SELECT id, session_id, source, profile FROM trace" + where +
+        " ORDER BY started_at DESC LIMIT 1", tuple(params)
+    ).fetchone()
+    if not row:
+        requested = f"'{prefix}'" if prefix is not None else "newest"
+        provider = f" {source}" if source else ""
+        raise SessionSelectionError(
+            f"mrtoken: session unavailable: {requested}{provider} session in selected store"
+        )
+    return row
+
+
 def connect_readonly(db_path: str, *, immutable: bool = False) -> sqlite3.Connection:
     """Open base tables read-only and derive the current summary only in memory."""
     try:
@@ -297,7 +325,7 @@ def connect_readonly(db_path: str, *, immutable: bool = False) -> sqlite3.Connec
         conn = sqlite3.connect(f"file:{os.path.abspath(db_path)}?{query}", uri=True)
     except sqlite3.OperationalError as exc:
         raise ReadOnlyDatabaseError(
-            f"mrtoken: database upgrade required: cannot open read-only store ({exc})"
+            f"mrtoken: store unavailable: cannot open read-only store ({exc})"
         ) from exc
     required = {"trace", "model_call", "tool_call", "recommendation"}
     present = {row[0] for row in conn.execute(
