@@ -164,7 +164,9 @@ def cmd_watch(args):
 
 def cmd_handoff(args):
     from mrtoken.handoff import build_handoff
-    print(build_handoff(args.db, args.session))
+    source = "codex" if getattr(args, "codex", False) else None
+    print(_store_notice(args))
+    print(build_handoff(args.db, args.session, source=source))
 
 
 def cmd_manifest(args):
@@ -600,8 +602,9 @@ def main(argv=None):
 
     p_handoff = sub.add_parser("handoff",
         help="generate a compact handoff to continue a bloated session fresh")
-    p_handoff.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
+    p_handoff.add_argument("session", nargs="?", help="recorded session id (default: newest in selected store)")
     p_handoff.add_argument("--db", dest="db_sub")
+    p_handoff.add_argument("--codex", action="store_true", help="read a recorded session from the central Codex DB")
 
     p_manifest = sub.add_parser("manifest",
         help="declare or show a session's continuation manifest (state is DECLARED, never inferred)")

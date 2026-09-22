@@ -4127,6 +4127,7 @@ class BackendTest(unittest.TestCase):
 
     def test_handoff_builds_from_transcript(self):
         from mrtoken.handoff import build_handoff
+        from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "package.json"), "w") as h:
                 h.write("{}")
@@ -4153,13 +4154,19 @@ class BackendTest(unittest.TestCase):
                  "message": {"content": "now add refresh tokens"}},
             ])
             db = os.path.join(tmp, ".token-tithe", "token-tithe.db")
-            md = build_handoff(db, transcript)
+            conn = connect(db)
+            ingest_file(conn, transcript, load_prices())
+            conn.close()
+            with patch("mrtoken.handoff.resolve_path", return_value=transcript) as resolve:
+                md = build_handoff(db, "sess-handoff")
+            resolve.assert_called_once_with("sess-handoff")
             self.assertIn("now add refresh tokens", md)   # goal = most recent request
             self.assertIn(real, md)                       # edited file that still exists
             self.assertNotIn("/proj/gone.py", md)         # stale path filtered out
 
     def test_handoff_prefers_title_and_filters_stale(self):
         from mrtoken.handoff import _scan_transcript, build_handoff
+        from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "package.json"), "w") as h:
                 h.write("{}")
@@ -4186,7 +4193,12 @@ class BackendTest(unittest.TestCase):
             db = os.path.join(tmp, ".token-tithe", "token-tithe.db")
             # recency-ordered + existence-filtered: f2 (last touched) first, no stale
             self.assertEqual(_scan_transcript(transcript)["changed_files"], [f2, f1])
-            md = build_handoff(db, transcript)
+            conn = connect(db)
+            ingest_file(conn, transcript, load_prices())
+            conn.close()
+            with patch("mrtoken.handoff.resolve_path", return_value=transcript) as resolve:
+                md = build_handoff(db, "sess")
+            resolve.assert_called_once_with("sess")
             # CONTRACT CORRECTED: this is an `ai-title`, a session-START artifact that never
             # refreshes (measured: 132 events, 1 distinct value, first == last on a real
             # session). It must NOT outrank the most recent substantive request. A HUMAN
@@ -4197,6 +4209,78 @@ class BackendTest(unittest.TestCase):
             self.assertNotIn("continue harkable", md)          # stale opener never surfaces
             self.assertNotIn("/gone/old.py", md)               # stale path filtered
 
+    def test_handoff_codex_selects_recorded_session_readonly_and_hides_subscription_dollars(self):
+        from unittest.mock import patch
+        import mrtoken.handoff as handoff
+        from mrtoken.ingest_codex import ingest_codex_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "rollouts")
+            os.makedirs(root)
+            sid = "codex-selected"
+            rollout = os.path.join(root, f"rollout-{sid}.jsonl")
+            write_jsonl(rollout, [
+                {"type": "session_meta", "timestamp": "2026-06-01T00:00:00Z",
+                 "payload": {"session_id": sid, "cwd": tmp}},
+                {"type": "turn_context", "timestamp": "2026-06-01T00:00:01Z",
+                 "payload": {"model": "gpt-5.6-terra"}},
+                {"type": "response_item", "timestamp": "2026-06-01T00:00:02Z",
+                 "payload": {"type": "message", "role": "user",
+                             "content": [{"type": "input_text", "text": "first Codex request"}]}},
+                {"type": "response_item", "timestamp": "2026-06-01T00:00:03Z",
+                 "payload": {"type": "message", "role": "user",
+                             "content": [{"type": "input_text", "text": "latest selected Codex request"}]}},
+                {"type": "event_msg", "timestamp": "2026-06-01T00:00:04Z",
+                 "payload": {"type": "token_count", "info": {
+                     "last_token_usage": {"input_tokens": 8, "output_tokens": 3,
+                                          "total_tokens": 11, "billing_mode": "subscription"},
+                     "total_token_usage": {"input_tokens": 8, "output_tokens": 3,
+                                           "total_tokens": 11}}}},
+            ])
+            db = os.path.join(tmp, "codex.db")
+            conn = connect(db)
+            ingest_codex_file(conn, rollout, load_prices())
+            # A newer Claude row with the same prefix must never displace the
+            # selected Codex row when the caller declares source='codex'.
+            conn.execute("INSERT INTO trace(source,session_id,started_at,ended_at,ingested_at,title) "
+                         "VALUES(?,?,?,?,?,?)",
+                         ("claude_code", "codex-selected-claude", "2026-09-01", "2026-09-01",
+                          "2026-09-01", "newer Claude trap"))
+            conn.commit()
+            conn.close()
+
+            before = hashlib.sha256(Path(db).read_bytes()).hexdigest()
+            md = handoff.build_handoff(db, "codex-selected", source="codex", codex_root=root)
+            self.assertEqual(before, hashlib.sha256(Path(db).read_bytes()).hexdigest())
+            self.assertIn("Session codex-se", md)
+            self.assertIn("source: codex", md)
+            self.assertIn("latest selected Codex request", md)
+            self.assertNotIn("newer Claude trap", md)
+            self.assertNotIn("est API usage $", md)
+
+            frozen = os.path.join(tmp, "frozen.db")
+            shutil.copy2(db, frozen)
+            tree_before = sorted((p.name, hashlib.sha256(p.read_bytes()).hexdigest())
+                                 for p in Path(tmp).glob("frozen.db*"))
+            original_open = handoff.connect_readonly
+            with patch("mrtoken.handoff.connect_readonly",
+                       side_effect=lambda path: original_open(path, immutable=True)):
+                immutable_md = handoff.build_handoff(
+                    frozen, "codex-selected", source="codex", codex_root=root)
+            tree_after = sorted((p.name, hashlib.sha256(p.read_bytes()).hexdigest())
+                                for p in Path(tmp).glob("frozen.db*"))
+            self.assertIn("latest selected Codex request", immutable_md)
+            self.assertEqual(tree_before, tree_after)
+
+    def test_cli_handoff_codex_sets_source_filter(self):
+        from unittest.mock import patch
+        import contextlib
+        from mrtoken import cli
+        with patch("mrtoken.handoff.build_handoff", return_value="handoff") as build:
+            with patch("mrtoken.datadir.codex_db_path", return_value="/tmp/codex.db"):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    cli.main(["handoff", "abc", "--codex"])
+        build.assert_called_once_with("/tmp/codex.db", "abc", source="codex")
 
     def test_why_names_dominant_cost_shape(self):
         from mrtoken.why import diagnose
@@ -4263,7 +4347,8 @@ class BackendTest(unittest.TestCase):
                        "budget": "1.00", "oracle": "tests pass"}
         db = Mock()
         with patch("mrtoken.cli._open_readonly", return_value=db) as opened, \
-             patch("mrtoken.why.print_diagnosis") as printed:
+             patch("mrtoken.why.print_diagnosis") as printed, \
+             contextlib.redirect_stdout(io.StringIO()):
             cli.main(args)
         opened.assert_called_once()
         printed.assert_called_once_with(db, "s1", routing=cli_routing)

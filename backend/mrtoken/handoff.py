@@ -10,7 +10,7 @@ have — deterministically, NO AI call in v1:
   • Changed files   — edited files that still exist on disk, most-recent first
   • Recent commands — last few Bash commands (truncated)
   • Open signals    — recommendations the rule engine fired for this session
-  • Cost so far     — real tokens + API-equivalent estimate
+  • Cost so far     — real tokens + verified-API estimate when available
 
 The result is PRINTED for the user to review and paste into a fresh session.
 Content (paths, prompts, commands) is read on demand and never persisted — the
@@ -22,8 +22,8 @@ natural paid enhancement; the seam is marked below but not implemented in v1.)
 from __future__ import annotations
 import json, os
 
-from mrtoken.ingest import connect, load_prices, ingest_file, default_db_path
-from mrtoken.rules import analyse
+from mrtoken.ingest import (ReadOnlyDatabaseError, SessionSelectionError,
+                            connect_readonly, default_db_path, select_session)
 from mrtoken.watch import resolve_path
 
 EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
@@ -132,6 +132,78 @@ def _scan_transcript(path: str) -> dict:
             "changed_files": changed, "commands": commands[-MAX_COMMANDS:]}
 
 
+def _codex_text(content) -> str:
+    """Extract text from the user-message shapes emitted in a Codex rollout."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        return _codex_text(content.get("text") or content.get("content") or "")
+    if isinstance(content, list):
+        return "\n".join(_codex_text(part) for part in content)
+    return ""
+
+
+def _rollout_session_id(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                if item.get("type") == "session_meta":
+                    payload = item.get("payload") or {}
+                    session_id = payload.get("session_id") or payload.get("id")
+                    return session_id if isinstance(session_id, str) else None
+                return None
+    except (OSError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def _find_codex_rollout(session_id: str, root: str | None = None) -> str | None:
+    """Find only the rollout whose own session meta matches the selected DB row."""
+    root = root or os.path.expanduser("~/.codex/sessions")
+    if not os.path.isdir(root):
+        return None
+    for directory, _, names in os.walk(root):
+        for name in names:
+            if not name.endswith(".jsonl") or session_id not in name:
+                continue
+            path = os.path.join(directory, name)
+            if _rollout_session_id(path) == session_id:
+                return path
+    return None
+
+
+def _scan_codex_rollout(path: str) -> dict:
+    """Read a selected Codex rollout on demand; never add its content to the DB."""
+    first_prompt = last_prompt = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                payload = item.get("payload") or {}
+                role = payload.get("role")
+                kind = payload.get("type")
+                if item.get("type") == "response_item" and kind == "message" and role == "user":
+                    text = _codex_text(payload.get("content")).strip()
+                elif item.get("type") == "event_msg" and kind == "user_message":
+                    text = _codex_text(payload.get("message") or payload.get("content")).strip()
+                else:
+                    continue
+                if text and _is_substantive(text):
+                    first_prompt = first_prompt or text
+                    last_prompt = text
+    except OSError:
+        pass
+    return {"title": None, "custom_title": None, "ai_title": None,
+            "first_prompt": first_prompt, "last_prompt": last_prompt,
+            "changed_files": [], "commands": []}
+
+
 def goal_from_scan(s: dict) -> str:
     """The session's CURRENT goal, ranked. Extracted so it is testable on its own.
 
@@ -147,25 +219,39 @@ def goal_from_scan(s: dict) -> str:
             or "(state the goal)")
 
 
-def build_handoff(db_path: str | None, session_arg: str | None) -> str:
-    path = resolve_path(session_arg)
-    if not path:
-        return "mrtoken handoff: no transcript found for this project"
-
+def build_handoff(db_path: str | None, session_arg: str | None, *,
+                  source: str | None = None, codex_root: str | None = None) -> str:
+    """Render one already-recorded session without ingesting or changing its store."""
     db_path = db_path or default_db_path()
-    conn = connect(db_path)
-    prices = load_prices()
-    parent = path.split(os.sep)[-3] if "subagents" in path else None
-    r = ingest_file(conn, path, prices, parent_session_id=parent)
-    sid = r["session_id"]
-    tid = conn.execute("SELECT id FROM trace WHERE session_id=?", (sid,)).fetchone()[0]
-    analyse(conn, tid)
+    try:
+        conn = connect_readonly(db_path)
+    except ReadOnlyDatabaseError as exc:
+        return str(exc)
+    try:
+        tid, sid, selected_source, profile = select_session(conn, session_arg, source=source)
+    except SessionSelectionError as exc:
+        conn.close()
+        return str(exc)
 
-    s = _scan_transcript(path)
+    # Database selection is authoritative. A transcript is read only afterwards,
+    # for on-demand handoff detail, and must attest to that already-selected id.
+    if selected_source == "codex":
+        path = _find_codex_rollout(sid, codex_root)
+        s = _scan_codex_rollout(path) if path else {
+            "title": None, "custom_title": None, "ai_title": None,
+            "first_prompt": None, "last_prompt": None,
+            "changed_files": [], "commands": []}
+    else:
+        path = resolve_path(sid)
+        s = _scan_transcript(path) if path else {
+            "title": None, "custom_title": None, "ai_title": None,
+            "first_prompt": None, "last_prompt": None,
+            "changed_files": [], "commands": []}
+
     summary = conn.execute(
-        "SELECT profile, model_calls, total_tokens, est_cost_usd, cache_hit_ratio, "
-        "tool_calls, tool_errors FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
-    profile, calls, total_tok, cost, cache, tools, errs = summary or (None,)*7
+        "SELECT model_calls, cumulative_expenditure_tokens, cumulative_expenditure_provenance, "
+        "api_est_cost_usd, billing_mode FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
+    calls, total_tok, total_provenance, api_cost, billing_mode = summary or (None,)*5
     recs = conn.execute(
         "SELECT rule, severity, message FROM recommendation WHERE trace_id=? "
         "ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END", (tid,)).fetchall()
@@ -180,9 +266,12 @@ def build_handoff(db_path: str | None, session_arg: str | None) -> str:
     goal = _truncate(goal_from_scan(s), PROMPT_CHARS)
     out = []
     out.append(f"# Handoff — continue in a fresh session\n")
-    out.append(f"_Session {sid[:8]} · profile: {profile or 'unknown'} · "
-               f"{calls or 0} model calls · ~{(total_tok or 0):,} tokens · "
-               f"est ${cost or 0:,.2f} (API-equivalent)_\n")
+    line = (f"_Session {sid[:8]} · source: {selected_source} · profile: {profile or 'unknown'} · "
+            f"{calls or 0} model calls · "
+            + (f"~{total_tok:,} tokens ({total_provenance})" if total_tok is not None else "UNKNOWN cumulative tokens"))
+    if billing_mode == "api" and api_cost is not None:
+        line += f" · est API usage ${api_cost:,.2f}"
+    out.append(line + "_\n")
 
     out.append("## Goal")
     out.append(f"{goal}\n")
@@ -235,4 +324,5 @@ def build_handoff(db_path: str | None, session_arg: str | None) -> str:
 
     # --- SEAM: optional LLM polish (paid tier) would rewrite the above here ---
 
+    conn.close()
     return "\n".join(out)

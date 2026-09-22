@@ -4,8 +4,9 @@
 Fixtures come from GROUND TRUTH, never from the code under test: the repository HEAD is read
 with `git rev-parse` in the test, the dirty count is the number of files the test created, the
 manifest is written BY HAND as JSON (not through `declare_manifest`), and the artifact digest
-is a precomputed constant for fixed bytes. The six-facts test imports only `build_handoff`, so
-it FAILS (not errors) on a build without the manifest — that is its known-negative arm.
+is a precomputed constant for fixed bytes. The recorded trace is prepared before the handoff;
+handoff itself must stay read-only. The six-facts test imports only `build_handoff`, so it
+FAILS (not errors) on a build without the manifest — that is its known-negative arm.
 
 Environment-mediated protections leave the environment BOUND: `MRTOKEN_SESSION` is set to a
 foreign id and never popped inside the test that checks it is ignored.
@@ -83,6 +84,10 @@ class ManifestFixture(unittest.TestCase):
         ])
         self.manifest_dir = os.path.join(self.project, ".token-tithe", "manifest")
         self.db = os.path.join(self.project, ".token-tithe", "token-tithe.db")
+        from mrtoken.ingest import connect, ingest_file, load_prices
+        conn = connect(self.db)
+        ingest_file(conn, self.transcript, load_prices())
+        conn.close()
         self._cwd = os.getcwd()
         os.chdir(self.project)
         for v in ("MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID"):
@@ -125,7 +130,11 @@ class ManifestFixture(unittest.TestCase):
 
     def handoff(self):
         from mrtoken.handoff import build_handoff
-        return build_handoff(self.db, self.transcript)
+        from unittest.mock import patch
+        with patch("mrtoken.handoff.resolve_path", return_value=self.transcript) as resolve:
+            rendered = build_handoff(self.db, SID)
+        resolve.assert_called_once_with(SID)
+        return rendered
 
     def goal_line(self, md):
         lines = md.splitlines()
