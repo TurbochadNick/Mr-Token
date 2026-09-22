@@ -36,6 +36,7 @@ PROMPT_HOOK_MARKER = "on_prompt_submit.py"  # idempotency sentinel for UserPromp
 COMPACT_HOOK_MARKER = "on_pre_compact.py"   # idempotency sentinel for PreCompact
 CODEX_MCP_NAME = "mrtoken"
 CODEX_MCP_MARKER = "mcp_servers.mrtoken"
+STATUSLINE_COMMAND_TAILS = ("mrtoken-transcript statusline", "-m mrtoken.cli statusline")
 
 
 def hook_command() -> str:
@@ -354,7 +355,8 @@ def uninstall(project_root: str | None = None, settings_path: str | None = None,
         statusline.get("command", "") if isinstance(statusline, dict)
         else statusline if isinstance(statusline, str) else ""
     )
-    if stored_statusline_command and statusline_command() == stored_statusline_command:
+    if (isinstance(stored_statusline_command, str)
+            and stored_statusline_command.endswith(STATUSLINE_COMMAND_TAILS)):
         g.pop("statusLine", None); changed = True
         emit("  ✓ removed statusLine HUD bar")
     changed = bool(_strip_hooks(g, "UserPromptSubmit", PROMPT_HOOK_MARKER)) or changed

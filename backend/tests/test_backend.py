@@ -2695,20 +2695,65 @@ class BackendTest(unittest.TestCase):
         self.assertNotIn("-m mrtoken statusline", cmd)  # the help-only entry
         self.assertIn("PYTHONPATH=", cmd)               # importable from any cwd
 
-    def test_uninstall_removes_source_install_statusline_without_console_script(self):
+    def test_uninstall_removes_statusline_across_path_transitions(self):
         import mrtoken.install as inst
-        with tempfile.TemporaryDirectory() as tmp:
-            with open(os.path.join(tmp, "package.json"), "w") as h:
-                h.write("{}")
-            gpath = os.path.join(tmp, "global-settings.json")
-            real_which = inst.shutil.which
-            inst.shutil.which = lambda _name: None
-            try:
-                command = inst.statusline_command()
-                self.assertIn('"', command)  # source fallback must exercise JSON escaping
+        modes = {"source": None, "console": "/tmp/mrtoken-transcript"}
+        for installed, uninstalled in (("source", "console"), ("console", "source"),
+                                       ("source", "source"), ("console", "console")):
+            with self.subTest(installed=installed, uninstalled=uninstalled), tempfile.TemporaryDirectory() as tmp:
+                with open(os.path.join(tmp, "package.json"), "w") as h:
+                    h.write("{}")
+                gpath = os.path.join(tmp, "global-settings.json")
+                real_which = inst.shutil.which
+                try:
+                    inst.shutil.which = lambda _name: modes[installed]
+                    command = inst.statusline_command()
+                    if installed == "source":
+                        self.assertIn('"', command)  # source fallback must exercise JSON escaping
+                    inst.shutil.which = lambda _name: modes[uninstalled]
+                    if installed != uninstalled:
+                        self.assertNotEqual(command, inst.statusline_command())
+                    with open(gpath, "w") as h:
+                        json.dump({"statusLine": {"type": "command", "command": command,
+                                                   "padding": 0}}, h)
+                    inst.uninstall(
+                        project_root=tmp,
+                        settings_path=os.path.join(tmp, ".claude", "settings.local.json"),
+                        global_settings_path=gpath,
+                        codex_hooks_path=os.path.join(tmp, ".codex", "hooks.json"),
+                        remove_skills=False,
+                        emit=lambda *_: None,
+                    )
+                finally:
+                    inst.shutil.which = real_which
+                self.assertNotIn("statusLine", inst._load_settings(gpath))
+
+    def test_uninstall_statusline_marker_preserves_unrecognized_values(self):
+        import mrtoken.install as inst
+        source = 'PYTHONPATH="/tmp/backend" /tmp/python -m mrtoken.cli statusline'
+        console = "/tmp/mrtoken-transcript statusline"
+        cases = (
+            ("dict-source", {"type": "command", "command": source}, True),
+            ("string-source", source, True),
+            ("dict-console", {"type": "command", "command": console}, True),
+            ("string-console", console, True),
+            ("dict-without-command", {"type": "command"}, False),
+            ("dict-with-int-command", {"command": 1}, False),
+            ("int", 1, False),
+            ("list", [], False),
+            ("none", None, False),
+            ("empty", "", False),
+            ("missing", None, False),
+            ("superstring", source + " --user-argument", False),
+        )
+        for label, stored, removed in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                with open(os.path.join(tmp, "package.json"), "w") as h:
+                    h.write("{}")
+                gpath = os.path.join(tmp, "global-settings.json")
+                settings = {} if label == "missing" else {"statusLine": stored}
                 with open(gpath, "w") as h:
-                    json.dump({"statusLine": {"type": "command", "command": command,
-                                               "padding": 0}}, h)
+                    json.dump(settings, h)
                 inst.uninstall(
                     project_root=tmp,
                     settings_path=os.path.join(tmp, ".claude", "settings.local.json"),
@@ -2717,9 +2762,9 @@ class BackendTest(unittest.TestCase):
                     remove_skills=False,
                     emit=lambda *_: None,
                 )
-            finally:
-                inst.shutil.which = real_which
-            self.assertNotIn("statusLine", inst._load_settings(gpath))
+                present = "statusLine" in inst._load_settings(gpath)
+                expected_present = False if label == "missing" else not removed
+                self.assertEqual(expected_present, present)
 
     def test_uninstall_reverses_init_preserving_other_settings(self):
         from mrtoken.install import (
