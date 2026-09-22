@@ -166,7 +166,10 @@ def cmd_handoff(args):
     from mrtoken.handoff import build_handoff
     source = "codex" if getattr(args, "codex", False) else None
     print(_store_notice(args))
-    print(build_handoff(args.db, args.session, source=source))
+    rendered = build_handoff(args.db, args.session, source=source)
+    print(rendered)
+    if rendered.startswith("mrtoken:"):
+        raise SystemExit(1 if rendered.startswith("mrtoken: session unavailable:") else 2)
 
 
 def cmd_manifest(args):

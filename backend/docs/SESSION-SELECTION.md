@@ -39,7 +39,7 @@ Omitted-session behaviour is deliberately command-specific:
   matching transcript for paste-ready detail. `handoff --codex` restricts the
   selected row to Codex and never ingests or updates the selected store. Without
   `--codex`, an omitted id selects the newest permitted row and the handoff
-  header names that selected session and provider.
+  header names that selected session, provider, and implicit choice.
 
 `report`, `list`, `fleet`, `export`, `savings`, `roi`, the UI, and MCP tools are
 aggregate or separately scoped surfaces in this revision; they do not silently

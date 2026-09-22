@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""MR Token — session-end Stop hook (Claude Code AND Codex).
+"""MR Token — Stop hook (Claude Code AND Codex).
 
-Fires when a session ends. Ingests the just-finished session transcript
+This hook ingests AND analyses repeatedly within a live session; handoff and
+status both depend on that cadence. It ingests the available session transcript
 (+ any subagent transcripts) into the project-local .token-tithe DB and runs the rule engine.
 Prints a one-line summary visible in the CLI output.
 

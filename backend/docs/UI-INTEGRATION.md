@@ -8,6 +8,11 @@ char-counted) and the backend tables (real API token counts) coexist and are
 **joinable on `session_id`**. This doc is everything you need to show the real
 numbers in the dashboard / Doctor.
 
+**Before labeling a token value, read [TOKEN-ACCOUNTING.md](TOKEN-ACCOUNTING.md).**
+`total_tokens` is the measured *fresh input + output* subtotal, while
+`cumulative_expenditure_tokens` is a separately provenance-labeled cumulative
+total. They are not interchangeable.
+
 ---
 
 ## Two ways to consume (pick one)
@@ -61,11 +66,13 @@ Safe on any DB: if the backend tables don't exist yet it returns
 | `started_at`, `ended_at` | text | ISO8601 |
 | `model_calls` | int | assistant turns |
 | `is_low_activity` | int | 1 if the session has too few model calls to be meaningful (near-empty / aborted) — gray out or filter in the UI |
-| `input_tokens` | int | **real** (non-cached input) |
-| `output_tokens` | int | **real** |
-| `cache_read_tokens` | int | **real** |
-| `cache_write_tokens` | int | **real** |
-| `total_tokens` | int | input + output |
+| `input_tokens` | int | **real** cumulative fresh (non-cached) input |
+| `output_tokens` | int | **real** cumulative output; reasoning is a subset |
+| `cache_read_tokens` | int | **real** cumulative cached-input throughput |
+| `cache_write_tokens` | int | **real** cumulative cache-creation throughput |
+| `total_tokens` | int | fresh input + output; excludes cache throughput |
+| `cumulative_expenditure_tokens` | int/null | provider-reported or computed-disjoint cumulative total; label its provenance |
+| `cumulative_expenditure_provenance` | text | `provider-reported`, `computed-disjoint-components`, or `unknown` |
 | `est_cost_usd` | real | API-equivalent estimate — **label as estimate, not a bill** |
 | `cache_hit_ratio` | real | 0..1, NULL if no input-side tokens |
 | `tool_calls` | int | |

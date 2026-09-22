@@ -382,7 +382,7 @@ function Dashboard({
           and presenting both as co-equal headlines is the trust bug). */}
       {data.accurate.available ? (
         <section className="dashboardMetrics" aria-label="Usage from transcripts">
-          <MetricCard icon="AT" label="Tokens (in+out)" value={formatNumber(data.accurate.totalTokens)} helper="Measured input + output tokens from transcripts." />
+          <MetricCard icon="AT" label="Fresh input + output" value={formatNumber(data.accurate.totalTokens)} helper="Measured fresh input plus output; cache throughput is separate below." />
           <MetricCard icon="CH" label="Cache Hit" value={data.accurate.cacheHitRatio === null ? 'n/a' : `${Math.round(data.accurate.cacheHitRatio * 100)}%`} helper="Share of input-side tokens served from cache." />
           <MetricCard icon="SS" label="Sessions" value={formatNumber(data.accurate.sessions)} helper="Sessions with real token counts." />
           <MetricCard icon="TL" label="Tool Calls" value={formatNumber(data.summary.toolCalls)} helper="Observed tool activity and command execution." />
@@ -483,7 +483,7 @@ function SessionLedger({ rows }: { rows: SessionLedgerRow[] }) {
               <th>Output</th>
               <th>Cache read</th>
               <th>Cache write</th>
-              <th>Total tokens</th>
+              <th>Fresh input + output</th>
             </tr>
           </thead>
           <tbody>

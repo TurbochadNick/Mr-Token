@@ -443,7 +443,7 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
     ...(data.accurate.available
       ? [
           '- Source: MEASURED — real API token counts from the transcript backend',
-          `- Actual total tokens: ${data.accurate.totalTokens.toLocaleString()} (vs estimated ${data.summary.totalEstimatedTokens.toLocaleString()})`,
+          `- Measured fresh input + output: ${data.accurate.totalTokens.toLocaleString()} (vs estimated ${data.summary.totalEstimatedTokens.toLocaleString()})`,
           `- Input / output: ${data.accurate.inputTokens.toLocaleString()} / ${data.accurate.outputTokens.toLocaleString()}`,
           `- Cache read / write: ${data.accurate.cacheReadTokens.toLocaleString()} / ${data.accurate.cacheWriteTokens.toLocaleString()}`,
           `- Cache hit ratio: ${data.accurate.cacheHitRatio === null ? 'n/a' : `${Math.round(data.accurate.cacheHitRatio * 100)}%`}`,
@@ -461,7 +461,7 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
     '',
     'Metadata only: token counts per session, each labeled measured (transcript-derived) or estimated (char-counted fallback), never mixed. No prompt text, source, secrets, full paths, or money-spend claim; sessions are shown by a short prefix.',
     '',
-    '| Session | Status | Input | Output | Cache read | Cache write | Total tokens |',
+    '| Session | Status | Fresh input | Output | Cache read | Cache write | Fresh input + output |',
     '| --- | --- | --- | --- | --- | --- | --- |',
     ...(data.sessionLedger.length === 0
       ? ['| (none) | — | — | — | — | — | — |']

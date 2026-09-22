@@ -108,7 +108,7 @@ def print_diagnosis(conn: sqlite3.Connection, prefix: str | None, *,
     cost = f" · est API usage ${_fmt(d['cost'])}" if d["cost"] is not None else ""
     chosen = "implicit newest" if prefix is None else "explicit"
     print(f"\n  why is {sid[:8]} expensive?  (source: {selected_source} · {chosen} · profile: {profile or '?'} · "
-          f"{d['calls']} calls · ~{_fmt(d['tokens'])} tok · usage type {d['billing_mode']}{cost})")
+          f"{d['calls']} calls · fresh input + output ~{_fmt(d['tokens'])} tok · usage type {d['billing_mode']}{cost})")
     total = (f"~{_fmt(d['cumulative_total'])} tok ({d['total_provenance']})"
              if d["cumulative_total"] is not None else "UNKNOWN tok")
     print(f"  cumulative token total: {total}")

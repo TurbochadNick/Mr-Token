@@ -266,9 +266,10 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
     goal = _truncate(goal_from_scan(s), PROMPT_CHARS)
     out = []
     out.append(f"# Handoff — continue in a fresh session\n")
-    line = (f"_Session {sid[:8]} · source: {selected_source} · profile: {profile or 'unknown'} · "
+    chosen = "implicit newest" if session_arg is None else "explicit"
+    line = (f"_Session {sid[:8]} · source: {selected_source} · {chosen} · profile: {profile or 'unknown'} · "
             f"{calls or 0} model calls · "
-            + (f"~{total_tok:,} tokens ({total_provenance})" if total_tok is not None else "UNKNOWN cumulative tokens"))
+            + (f"cumulative token total ~{total_tok:,} ({total_provenance})" if total_tok is not None else "UNKNOWN cumulative token total"))
     if billing_mode == "api" and api_cost is not None:
         line += f" · est API usage ${api_cost:,.2f}"
     out.append(line + "_\n")

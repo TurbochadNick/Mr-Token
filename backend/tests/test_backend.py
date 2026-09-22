@@ -4257,6 +4257,8 @@ class BackendTest(unittest.TestCase):
             self.assertIn("latest selected Codex request", md)
             self.assertNotIn("newer Claude trap", md)
             self.assertNotIn("est API usage $", md)
+            implicit = handoff.build_handoff(db, None, source="codex", codex_root=root)
+            self.assertIn("implicit newest", implicit)
 
             frozen = os.path.join(tmp, "frozen.db")
             shutil.copy2(db, frozen)
@@ -4282,6 +4284,24 @@ class BackendTest(unittest.TestCase):
                     cli.main(["handoff", "abc", "--codex"])
         build.assert_called_once_with("/tmp/codex.db", "abc", source="codex")
 
+    def test_cli_handoff_reports_selection_and_store_failures_nonzero(self):
+        import contextlib
+        from mrtoken import cli
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "fixture.db")
+            connect(db).close()
+            out = io.StringIO()
+            with self.assertRaises(SystemExit) as session_exit, contextlib.redirect_stdout(out):
+                cli.main(["handoff", "typo", "--db", db])
+            self.assertEqual(session_exit.exception.code, 1)
+            self.assertIn("mrtoken: session unavailable", out.getvalue())
+
+            out = io.StringIO()
+            with self.assertRaises(SystemExit) as store_exit, contextlib.redirect_stdout(out):
+                cli.main(["handoff", "typo", "--db", os.path.join(tmp, "missing.db")])
+            self.assertEqual(store_exit.exception.code, 2)
+            self.assertIn("mrtoken: store unavailable", out.getvalue())
+
     def test_why_names_dominant_cost_shape(self):
         from mrtoken.why import diagnose
         conn, tid = make_trace()
@@ -4293,6 +4313,19 @@ class BackendTest(unittest.TestCase):
         conn.commit()
         d = diagnose(conn, tid)
         self.assertIn("carrying cached context", d["headline"])
+
+    def test_why_header_labels_fresh_input_plus_output(self):
+        import contextlib
+        from mrtoken.why import print_diagnosis
+        conn, tid = make_trace()
+        conn.execute("INSERT INTO model_call(trace_id, input_tokens, output_tokens) VALUES(?,?,?)",
+                     (tid, 7, 11))
+        conn.commit()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            print_diagnosis(conn, "session-1")
+        self.assertIn("fresh input + output ~18 tok", out.getvalue())
+        self.assertIn("cumulative token total:", out.getvalue())
 
     def test_savings_card_priority_evidence_and_provenance(self):
         from mrtoken.savings_card import build_savings_card
