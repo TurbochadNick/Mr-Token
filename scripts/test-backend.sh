@@ -39,9 +39,11 @@ trap cleanup EXIT
 
 if [[ "$#" -gt 0 ]]; then
   TARGETS=("$@")
+  echo "Running selected backend test targets: ${TARGETS[*]}"
+  cd "$ROOT/backend"
+  HOME="$TEST_HOME" "$PY" -m unittest "${TARGETS[@]}"
 else
-  TARGETS=(tests.test_backend)
+  echo "Running complete backend/tests suite."
+  cd "$ROOT/backend"
+  HOME="$TEST_HOME" "$PY" -m unittest discover -s tests
 fi
-
-cd "$ROOT/backend"
-HOME="$TEST_HOME" "$PY" -m unittest "${TARGETS[@]}"
