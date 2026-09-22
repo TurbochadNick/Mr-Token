@@ -219,6 +219,39 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(d["shape"]["carrying cached context"], 20)
         self.assertIn("57% of observed token activity", d["headline"])
 
+    def test_claude_computed_total_pins_every_component(self):
+        from mrtoken.export import session_summaries
+        components = {
+            "input": 10,
+            "cache read": 20,
+            "cache write": 3,
+            "output": 5,
+        }
+        for dropped, amount in components.items():
+            with self.subTest(dropped=dropped):
+                conn, tid = make_trace()
+                conn.execute("INSERT INTO model_call(trace_id,input_tokens,output_tokens,"
+                             "cache_read_input_tokens,cache_creation_input_tokens) VALUES(?,?,?,?,?)",
+                             (tid, components["input"], components["output"],
+                              components["cache read"], components["cache write"]))
+                conn.commit()
+                total = session_summaries(conn, "session-1")[0]["cumulative_expenditure_tokens"]
+                self.assertEqual(total, sum(components.values()))
+                self.assertNotEqual(total, sum(components.values()) - amount)
+
+    def test_report_suppresses_provenance_for_null_cumulative_total(self):
+        from mrtoken.report import report
+        conn = connect(":memory:")
+        conn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES(?,?,?)",
+                     ("claude_code", "zero-call", "now"))
+        conn.commit()
+        out = io.StringIO()
+        import contextlib
+        with contextlib.redirect_stdout(out):
+            report(conn, "zero-call")
+        self.assertIn("cumulative token total    UNKNOWN", out.getvalue())
+        self.assertNotIn("computed-disjoint-components", out.getvalue())
+
 
     def test_repeated_context_is_cache_aware(self):
         from mrtoken.rules import rule_repeated_context

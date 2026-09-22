@@ -49,7 +49,8 @@ def report(conn: sqlite3.Connection, prefix: str):
     print(f"  usage type          {billing_mode:>12}   session-owned provider evidence only")
     if billing_mode == "api" and verified_cost is not None:
         print(f"  est API usage       {'$'+f'{verified_cost:,.4f}':>12}   table-rate estimate  [{pv}]")
-    print(f"  cumulative token total {fmt(total_tok) if total_tok is not None else 'UNKNOWN':>10}   {provenance}")
+    print(f"  cumulative token total {fmt(total_tok):>10}   {provenance}" if total_tok is not None
+          else "  cumulative token total    UNKNOWN")
 
     # subagent ROI (only if this session spawned subagents)
     from mrtoken.subagents import roi_summary_line
