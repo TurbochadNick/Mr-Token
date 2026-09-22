@@ -286,6 +286,46 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+class ReadOnlyDatabaseError(RuntimeError):
+    """The database cannot satisfy a read-only analysis command."""
+
+
+def connect_readonly(db_path: str, *, immutable: bool = False) -> sqlite3.Connection:
+    """Open base tables read-only and derive the current summary only in memory."""
+    try:
+        query = "mode=ro&immutable=1" if immutable else "mode=ro"
+        conn = sqlite3.connect(f"file:{os.path.abspath(db_path)}?{query}", uri=True)
+    except sqlite3.OperationalError as exc:
+        raise ReadOnlyDatabaseError(
+            f"mrtoken: database upgrade required: cannot open read-only store ({exc})"
+        ) from exc
+    required = {"trace", "model_call", "tool_call", "recommendation"}
+    present = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+    )}
+    missing = sorted(required - present)
+    if missing:
+        conn.close()
+        raise ReadOnlyDatabaseError(
+            "mrtoken: database upgrade required: missing " + ", ".join(missing)
+        )
+    try:
+        # Shadow any persisted view with the current definition in SQLite's temp
+        # database. This reads base tables, so an old persisted view cannot silently
+        # change analysis; TEMP state never reaches the evidence store.
+        temp_summary = _SESSION_SUMMARY_VIEW.replace(
+            "DROP VIEW IF EXISTS session_summary;\nCREATE VIEW session_summary AS",
+            "CREATE TEMP VIEW session_summary AS",
+        )
+        conn.executescript(temp_summary)
+    except sqlite3.OperationalError as exc:
+        conn.close()
+        raise ReadOnlyDatabaseError(
+            f"mrtoken: database upgrade required: derived analysis schema is absent or outdated ({exc})"
+        ) from exc
+    return conn
+
+
 def content_text(content) -> str:
     """Flatten a message.content (str or list of blocks) to text for hashing/sizing."""
     if isinstance(content, str):

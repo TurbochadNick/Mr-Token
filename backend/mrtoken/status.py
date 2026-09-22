@@ -1,18 +1,10 @@
 #!/usr/bin/env python3
-"""MR Token — `status`: a one-glance "where am I right now" for the current session.
-
-A lighter, one-shot cousin of `watch`: ingests the current session, runs the
-rules, and prints a compact snapshot (profile, calls, tokens, cache, est cost,
-current context size) plus the single most important next action. Deterministic.
-"""
+"""MR Token — `status`: a read-only snapshot of an already recorded session."""
 from __future__ import annotations
-import os, sqlite3
+import sqlite3
 
-from mrtoken.ingest import connect, load_prices, ingest_file, default_db_path
-from mrtoken.rules import analyse
-from mrtoken.watch import resolve_path
+from mrtoken.ingest import ReadOnlyDatabaseError, connect_readonly, default_db_path
 from mrtoken.statusline import context_window, CONTEXT_WARN_PCT
-from mrtoken.pricing import COST_CAVEAT
 from mrtoken.savings_card import card_for_session, render_savings_card
 
 
@@ -44,18 +36,23 @@ def status_snapshot(conn: sqlite3.Connection, tid: int, *, routing: dict | None 
 
 
 def print_status(db_path: str | None, session_arg: str | None, *, routing: dict | None = None) -> int:
-    path = resolve_path(session_arg)
-    if not path:
-        print("mrtoken status: no transcript found for this project"); return 1
-    conn = connect(db_path or default_db_path())
-    parent = path.split(os.sep)[-3] if "subagents" in path else None
-    r = ingest_file(conn, path, load_prices(), parent_session_id=parent)
-    tid = conn.execute("SELECT id FROM trace WHERE session_id=?", (r["session_id"],)).fetchone()[0]
-    analyse(conn, tid)
+    if not session_arg:
+        print("mrtoken status: read-only analysis requires an explicit recorded session; "
+              "session selection is not part of this command")
+        return 2
+    try:
+        conn = connect_readonly(db_path or default_db_path())
+    except ReadOnlyDatabaseError as exc:
+        print(exc); return 2
+    row = conn.execute("SELECT id,session_id FROM trace WHERE session_id LIKE ? "
+                       "ORDER BY started_at DESC LIMIT 1", (session_arg + "%",)).fetchone()
+    if not row:
+        print("mrtoken status: no recorded session in this read-only store"); return 1
+    tid, session_id = row
     s = status_snapshot(conn, tid, routing=routing)
 
     cache = f"{s['cache_ratio']:.0%}" if s["cache_ratio"] is not None else "n/a"
-    print(f"\n  mr token status · {r['session_id'][:8]} · profile: {s['profile'] or '?'}")
+    print(f"\n  mr token status · {session_id[:8]} · profile: {s['profile'] or '?'}")
     expenditure = (f"~{_fmt(s['total_tokens'])} tok ({s['total_provenance']})"
                    if s["total_tokens"] is not None else "UNKNOWN tok")
     line = f"  {s['calls']} calls · cumulative token total {expenditure} · usage type {s['billing_mode']} · cache {cache}"
@@ -69,7 +66,7 @@ def print_status(db_path: str | None, session_arg: str | None, *, routing: dict 
     for line in render_savings_card(s["card"]):
         print(line)
     if s["card"]["rule"]:
-        print(f"  feedback: mrtoken-transcript feedback {r['session_id'][:8]} "
+        print(f"  feedback: mrtoken-transcript feedback {session_id[:8]} "
               f"{s['card']['rule']} right|wrong|unsure")
     try:
         from mrtoken.update_check import check_for_update, release_tag_warning
@@ -86,4 +83,5 @@ def print_status(db_path: str | None, session_arg: str | None, *, routing: dict 
     except Exception:
         pass  # never let an update check break status
     print()
+    conn.close()
     return 0

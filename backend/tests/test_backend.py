@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import shutil
 import tarfile
 import tempfile
 import unittest
@@ -4157,7 +4158,7 @@ class BackendTest(unittest.TestCase):
         from mrtoken.status import status_snapshot
         from mrtoken.why import print_diagnosis
         from mrtoken import cli
-        from unittest.mock import patch
+        from unittest.mock import Mock, patch
         import contextlib, io
         partial = build_savings_card([], routing={"baseline": "strong", "candidate": "cheap"})
         self.assertEqual(partial["action"], "continue")
@@ -4178,11 +4179,13 @@ class BackendTest(unittest.TestCase):
                 "--capability-floor", "2", "--budget", "1.00", "--oracle", "tests pass"]
         cli_routing = {"baseline": "strong", "candidate": "cheap", "capability_floor": "2",
                        "budget": "1.00", "oracle": "tests pass"}
-        with patch("mrtoken.cli._open", return_value="db") as opened, \
+        db = Mock()
+        with patch("mrtoken.cli._open_readonly", return_value=db) as opened, \
              patch("mrtoken.why.print_diagnosis") as printed:
             cli.main(args)
         opened.assert_called_once()
-        printed.assert_called_once_with("db", "s1", routing=cli_routing)
+        printed.assert_called_once_with(db, "s1", routing=cli_routing)
+        db.close.assert_called_once()
 
     def test_disposable_savings_card_demo_is_hermetic_and_fails_bad_oracle(self):
         from mrtoken.disposable_demo import run
@@ -4298,6 +4301,8 @@ class BackendTest(unittest.TestCase):
 
     def test_status_prints_feedback_command_for_top_signal(self):
         from mrtoken.status import print_status
+        from mrtoken.ingest import ingest_file
+        from mrtoken.rules import analyse
         import contextlib, io
         with tempfile.TemporaryDirectory() as tmp:
             transcript = os.path.join(tmp, "fb-status.jsonl")
@@ -4314,15 +4319,147 @@ class BackendTest(unittest.TestCase):
                              "usage": {"input_tokens": 10, "output_tokens": 5},
                              "content": [{"type": "text", "text": "ok"}]}},
             ])
+            db = os.path.join(tmp, "t.db")
+            conn = connect(db)
+            ingested = ingest_file(conn, transcript, load_prices())
+            tid = conn.execute("SELECT id FROM trace WHERE session_id=?", (ingested["session_id"],)).fetchone()[0]
+            analyse(conn, tid)
+            conn.close()
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                rc = print_status(os.path.join(tmp, "t.db"), transcript)
+                rc = print_status(db, "fb-status")
             self.assertEqual(rc, 0)
             text = out.getvalue()
             self.assertIn("next: [huge_tool_output]", text)
             self.assertIn("quality gate:", text)
             self.assertIn("provenance: estimated", text)
             self.assertIn("feedback: mrtoken-transcript feedback fb-statu huge_tool_output", text)
+
+    def test_readonly_analysis_commands_never_mutate_a_complete_codex_store(self):
+        """CLI reads use mode=ro; the immutable copy proves the full render is write-free."""
+        from unittest.mock import patch
+        import contextlib
+        from mrtoken import cli
+        from mrtoken.ingest import connect_readonly
+
+        def run_cli(args):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                try:
+                    cli.main(args)
+                except SystemExit as exc:
+                    self.assertIn(exc.code, (None, 0), out.getvalue())
+            return out.getvalue()
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "XDG_DATA_HOME": os.path.join(tmp, "xdg"), "MRTOKEN_PRICES": ""
+        }, clear=False):
+            db = os.path.join(tmp, "codex.db")
+            conn = connect(db)
+            tid = conn.execute(
+                "INSERT INTO trace(source,session_id,started_at,ingested_at) VALUES(?,?,?,?)",
+                ("codex", "codex-readonly", "2026-06-01T00:00:00Z", "now"),
+            ).lastrowid
+            conn.execute("INSERT INTO model_call(trace_id,model,input_tokens,output_tokens,"
+                         "cache_read_input_tokens,est_cost_usd) VALUES(?,?,?,?,?,?)",
+                         (tid, "gpt-5.6-terra", 10, 5, 20, 1.25))
+            conn.commit()
+            conn.close()
+
+            # Product connection: SQLite itself rejects attempted writes.
+            ro = connect_readonly(db)
+            with self.assertRaises(sqlite3.OperationalError):
+                ro.execute("UPDATE trace SET title='must-not-write'")
+            ro.close()
+
+            # Deliberately stale persisted view: the copied store is never opened by
+            # ordinary connect(), so only the read path can make this agree with code.
+            stale = sqlite3.connect(db)
+            stale.execute("PRAGMA journal_mode=WAL")
+            stale.execute("DROP VIEW session_summary")
+            stale.execute("CREATE VIEW session_summary AS SELECT t.id AS trace_id, "
+                          "'api' AS billing_mode, 999 AS cumulative_expenditure_tokens, "
+                          "'provider-reported' AS cumulative_expenditure_provenance, "
+                          "999 AS api_est_cost_usd, 0 AS cache_hit_ratio, 0 AS tool_errors "
+                          "FROM trace t")
+            stale.commit()
+            stale.close()
+            product_outputs = {
+                "why": run_cli(["why", "codex-readonly", "--db", db]),
+                "status": run_cli(["status", "codex-readonly", "--db", db]),
+                "report": run_cli(["report", "codex-readonly", "--db", db]),
+                "savings": run_cli(["savings", "--db", db]),
+            }
+            self.assertIn("why is codex-re", product_outputs["why"])
+            self.assertIn("mr token status · codex-re", product_outputs["status"])
+            self.assertIn("usage type unknown", product_outputs["status"])
+            self.assertIn("cumulative token total", product_outputs["report"])
+            self.assertIn("MR Token — savings", product_outputs["savings"])
+            frozen_dir = os.path.join(tmp, "immutable")
+            os.mkdir(frozen_dir)
+            frozen_db = os.path.join(frozen_dir, "codex.db")
+            shutil.copyfile(db, frozen_db)
+            before_tree = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                           for p in Path(frozen_dir).iterdir() if p.is_file()}
+            opened = []
+
+            def immutable_open(_):
+                conn = connect_readonly(frozen_db, immutable=True)
+                opened.append(conn)
+                return conn
+
+            with patch("mrtoken.cli.connect_readonly", side_effect=immutable_open), \
+                 patch("mrtoken.status.connect_readonly", side_effect=immutable_open):
+                outputs = {
+                    "why": run_cli(["why", "codex-readonly", "--db", frozen_db]),
+                    "status": run_cli(["status", "codex-readonly", "--db", frozen_db]),
+                    "report": run_cli(["report", "codex-readonly", "--db", frozen_db]),
+                    "savings": run_cli(["savings", "--db", frozen_db]),
+                }
+            for conn in opened:
+                conn.close()
+            self.assertIn("why is codex-re", outputs["why"])
+            self.assertIn("mr token status · codex-re", outputs["status"])
+            self.assertIn("usage type unknown", outputs["status"])
+            self.assertIn("cumulative token total", outputs["report"])
+            self.assertIn("MR Token — savings", outputs["savings"])
+            after_tree = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                          for p in Path(frozen_dir).iterdir() if p.is_file()}
+            self.assertEqual(before_tree, after_tree)
+
+            # Positive control: ingest is intentionally write-capable, so the
+            # fixture and the before/after assertion can actually observe a write.
+            control_db = os.path.join(tmp, "control.db")
+            shutil.copyfile(db, control_db)
+            control = sqlite3.connect(control_db)
+            control.execute("PRAGMA journal_mode=DELETE")
+            control.close()
+            control_before = hashlib.sha256(Path(control_db).read_bytes()).hexdigest()
+            transcript = os.path.join(tmp, "control.jsonl")
+            write_jsonl(transcript, [{"type": "assistant", "sessionId": "control", "uuid": "u1",
+                                     "message": {"id": "m1", "model": "claude-sonnet-4",
+                                                 "usage": {"input_tokens": 1, "output_tokens": 1},
+                                                 "content": [{"type": "text", "text": "ok"}]}}])
+            run_cli(["ingest", transcript, "--db", control_db])
+            control_after = hashlib.sha256(Path(control_db).read_bytes()).hexdigest()
+            self.assertNotEqual(control_before, control_after)
+
+    def test_readonly_analysis_reports_upgrade_requirement_without_migration(self):
+        from mrtoken import cli
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            old_db = os.path.join(tmp, "old.db")
+            old = sqlite3.connect(old_db)
+            old.execute("CREATE TABLE trace(id INTEGER PRIMARY KEY)")
+            old.commit()
+            old.close()
+            before = hashlib.sha256(Path(old_db).read_bytes()).hexdigest()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as exited:
+                cli.main(["report", "old", "--db", old_db])
+            self.assertEqual(exited.exception.code, 2)
+            self.assertIn("mrtoken: database upgrade required: missing", out.getvalue())
+            self.assertEqual(before, hashlib.sha256(Path(old_db).read_bytes()).hexdigest())
 
     def test_datadir_non_project_routes_central_not_cwd(self):
         """The scatter-bug fix: a non-project cwd must NOT get a .token-tithe/."""

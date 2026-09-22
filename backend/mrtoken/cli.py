@@ -14,7 +14,7 @@ Options shared by most commands:
 """
 import argparse, sys
 
-from mrtoken.ingest import connect, default_db_path
+from mrtoken.ingest import ReadOnlyDatabaseError, connect, connect_readonly, default_db_path
 
 DEFAULT_DB = default_db_path()
 
@@ -26,6 +26,14 @@ def _open(db_path):
     ingest — e.g. a pilot DB created by the TypeScript `init` (events table only).
     """
     return connect(db_path)
+
+
+def _open_readonly(db_path):
+    try:
+        return connect_readonly(db_path)
+    except ReadOnlyDatabaseError as exc:
+        print(exc)
+        raise SystemExit(2)
 
 
 def cmd_ingest(args):
@@ -65,11 +73,14 @@ def cmd_ingest(args):
 
 def cmd_report(args):
     from mrtoken.report import report, list_traces
-    conn = _open(args.db)
-    if args.session:
-        report(conn, args.session)
-    else:
-        list_traces(conn)
+    conn = _open_readonly(args.db)
+    try:
+        if args.session:
+            report(conn, args.session)
+        else:
+            list_traces(conn)
+    finally:
+        conn.close()
 
 
 def cmd_list(args):
@@ -181,7 +192,11 @@ def cmd_migrate(args):
 
 def cmd_why(args):
     from mrtoken.why import print_diagnosis
-    print_diagnosis(_open(args.db), args.session or "", routing=_routing_inputs(args))
+    conn = _open_readonly(args.db)
+    try:
+        print_diagnosis(conn, args.session or "", routing=_routing_inputs(args))
+    finally:
+        conn.close()
 
 
 def cmd_roi(args):
@@ -318,7 +333,11 @@ def cmd_config(args):
 
 def cmd_savings(args):
     from mrtoken.savings import print_savings
-    print_savings(_open(args.db))
+    conn = _open_readonly(args.db)
+    try:
+        print_savings(conn)
+    finally:
+        conn.close()
 
 
 def cmd_modules(args):
@@ -617,8 +636,9 @@ def main(argv=None):
 
     p_status = sub.add_parser("status",
         help="one-glance snapshot of the current session + the top next action")
-    p_status.add_argument("session", nargs="?", help="session id or transcript path (default: newest)")
+    p_status.add_argument("session", nargs="?", help="recorded session ID or prefix (required for read-only analysis)")
     p_status.add_argument("--db", dest="db_sub")
+    p_status.add_argument("--codex", action="store_true", help="read the central Codex DB")
     for field, help_text in (("baseline", "pinned baseline model/agent"),
                              ("candidate", "candidate model/agent"),
                              ("capability-floor", "required capability floor"),
