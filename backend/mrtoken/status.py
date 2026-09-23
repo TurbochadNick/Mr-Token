@@ -41,7 +41,7 @@ def print_status(db_path: str | None, session_arg: str | None, *, source: str | 
     if not session_arg:
         print("mrtoken status: read-only analysis requires an explicit recorded session; "
               "session selection is not part of this command")
-        return 2
+        return 3
     try:
         conn = connect_readonly(db_path or default_db_path())
     except ReadOnlyDatabaseError as exc:

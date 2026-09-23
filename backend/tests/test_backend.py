@@ -823,7 +823,7 @@ class BackendTest(unittest.TestCase):
             self.assertIn("why is claude-s", why)
             self.assertIn("source: claude_code · implicit newest", why)
             status_code, status = run_cli(["status", "--db", project_db])
-            self.assertEqual(status_code, 2)
+            self.assertEqual(status_code, 3)
             self.assertIn("requires an explicit recorded session", status)
             _, explicit_why = run_cli(["why", "claude-shared", "--db", project_db])
             self.assertIn("source: claude_code · explicit", explicit_why)
@@ -4498,6 +4498,15 @@ class BackendTest(unittest.TestCase):
         conn.commit()
         s = status_snapshot(conn, tid)
         self.assertFalse(s["context_large"])         # 360k/1M = 36% -> not large
+
+    def test_status_refusal_has_distinct_exit_code(self):
+        import contextlib
+        from mrtoken.status import print_status
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = print_status(None, None)
+        self.assertEqual(rc, 3)
+        self.assertIn("requires an explicit recorded session", out.getvalue())
 
     def test_status_prints_feedback_command_for_top_signal(self):
         from mrtoken.status import print_status

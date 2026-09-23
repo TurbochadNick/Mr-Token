@@ -13,8 +13,9 @@ be inferred from a successful-looking report.
 
 The session-selecting CLI commands print `mrtoken: store: ...` on stdout before
 their result. Failure to open it is `mrtoken: store unavailable: ...` and exits
-2; a present store without the requested session exits 1. The distinct codes are
-part of the contract so callers can distinguish store from session failure.
+2; a present store without the requested session exits 1; and `status` refusing
+an omitted session exits 3. The distinct codes are part of the contract so
+callers can distinguish store, session, and caller-refusal failures.
 
 ## Session
 
