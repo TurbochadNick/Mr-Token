@@ -255,6 +255,9 @@ def print_roi(conn: sqlite3.Connection, prefix: str | None) -> None:
         print(f"    est saving ~{_fmt(h['saving_per_future_call'])} tok on the NEXT calls")
         print(f"    (a fresh session re-accumulates, so total saving depends on how much")
         print(f"     longer you'd have continued — this is the marginal, not a forever, number)")
+    elif prefix:
+        print(f"    no cache reads recorded for this session, so there is no carried context")
+        print(f"    for a fresh start to cut.")
     else:
         cr = r.get("cache_read_tokens", 0)
         crx = cr / r["total_tokens"] if r["total_tokens"] else 0

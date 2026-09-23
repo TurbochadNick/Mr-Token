@@ -337,6 +337,25 @@ class BackendTest(unittest.TestCase):
             subagent_report(conn, None)
         self.assertRegex(out.getvalue(), re.compile(r"^  zc-paren\s+1\s+0\s", re.M))
 
+    def test_roi_session_without_cache_reads_renders(self):
+        # _handoff_carry is None when a session re-read no cache (zero calls, or a
+        # Codex / short session); roi <session> must render, not take the fleet branch.
+        import contextlib
+        from mrtoken.roi import print_roi
+        conn = connect(":memory:")
+        tid = conn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES('codex','nocache-s','now')").lastrowid
+        conn.execute("INSERT INTO model_call(trace_id,input_tokens,output_tokens,cache_read_input_tokens,"
+                     "cache_creation_input_tokens,est_cost_usd) VALUES(?,?,?,?,?,?)", (tid, 1000, 200, 0, 0, 0.0))
+        conn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES('claude_code','zerocall-s','now')")
+        conn.commit()
+        for prefix in ("nocache-s", "zerocall-s"):
+            with self.subTest(prefix=prefix):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    print_roi(conn, prefix)
+                self.assertIn("no cache reads recorded for this session", out.getvalue())
+                self.assertIn("Tactical waste", out.getvalue())
+
     def test_repeated_context_is_cache_aware(self):
         from mrtoken.rules import rule_repeated_context
         conn, tid = make_trace()
