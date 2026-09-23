@@ -126,7 +126,7 @@ def print_beta_evidence(report: dict) -> None:
     if exports["low_activity"]:
         print(f"low activity:     {exports['low_activity']} excluded")
     print(f"tool versions:    {versions}")
-    print(f"total tokens:     {exports['total_tokens']:,}")
+    print(f"fresh input + output: {exports['total_tokens']:,}")
     print(f"est cost API-eq:  ${exports['est_cost_usd']:,.2f}")
     if exports["cache_hit_ratio"] is not None:
         print(f"cache hit ratio:  {exports['cache_hit_ratio']:.1%}")

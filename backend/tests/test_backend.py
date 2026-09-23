@@ -255,11 +255,15 @@ class BackendTest(unittest.TestCase):
 
 
     def test_cli_accounting_labels_come_from_token_accounting_doc(self):
-        # report and fleet must print the TOKEN-ACCOUNTING.md display label (lowercased)
-        # beside the value it names; a doc-only or code-only rename fails.
+        # Every Python CLI printer of a component sum or of the fresh input + output
+        # subtotal must print the TOKEN-ACCOUNTING.md display label (lowercased) beside
+        # the value it names; a doc-only or code-only rename fails.
         import contextlib, re
         from mrtoken.report import report
         from mrtoken.fleet import fleet_summary
+        from mrtoken.corpus import print_corpus_report
+        from mrtoken.beta_evidence import print_beta_evidence
+        from mrtoken.subagents import subagent_report
         doc = (Path(__file__).resolve().parents[1] / "docs" / "TOKEN-ACCOUNTING.md").read_text("utf-8")
 
         def label(field):
@@ -274,18 +278,41 @@ class BackendTest(unittest.TestCase):
                      "cache_read_input_tokens,cache_creation_input_tokens,est_cost_usd) VALUES(?,?,?,?,?,?)",
                      (tid, 110, 220, 440, 550, 0.0))
         conn.commit()
+        subs = connect(":memory:")
+        subs.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES(?,?,?)",
+                     ("claude_code", "parent-l", "now"))
+        sub_tid = subs.execute("INSERT INTO trace(source,session_id,parent_session_id,ingested_at) "
+                               "VALUES(?,?,?,?)", ("claude_code_subagent", "sub-l", "parent-l", "now")).lastrowid
+        subs.execute("INSERT INTO model_call(trace_id,input_tokens,output_tokens,est_cost_usd) VALUES(?,?,?,?)",
+                     (sub_tid, 100, 200, 0.0))
+        subs.commit()
+        exports = {"errors": [], "files": 1, "tool_versions": [], "sessions": 1, "low_activity": 0,
+                   "total_tokens": 330, "est_cost_usd": 0, "cache_hit_ratio": None, "rule_fires": {},
+                   "est_savings_tokens": 0}
+        doctors = {"files": 0, "ok": 0, "failures": 0, "failed_checks": {}, "warnings": 0,
+                   "warning_checks": {}}
+
+        leading = r"^  {l}\s+{v}\b"
         components = {"input_tokens": 110, "output_tokens": 220,
                       "cache_read_tokens": 440, "cache_write_tokens": 550}
-        for name, run, expected in (
-            ("report", lambda: report(conn, "labels-s"), components),
-            ("fleet", lambda: fleet_summary(conn), {**components, "total_tokens": 330}),
+        for name, run, shape, expected in (
+            ("report", lambda: report(conn, "labels-s"), leading, components),
+            ("fleet", lambda: fleet_summary(conn), leading, {**components, "total_tokens": 330}),
+            ("fleet subagents", lambda: fleet_summary(subs), r"•  {v} {l}$", {"total_tokens": 300}),
+            ("subagents", lambda: subagent_report(subs, "parent-l"), r"•  {v} {l}$", {"total_tokens": 300}),
+            ("corpus", lambda: print_corpus_report(exports), leading, {"total_tokens": 330}),
+            ("beta evidence", lambda: print_beta_evidence(
+                {"errors": [], "exports": exports, "doctor_bundles": doctors,
+                 "automatic_gate": {"passed": True, "blockers": []}, "manual_questions": []}),
+             r"^{l}:\s+{v}\b", {"total_tokens": 330}),
         ):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 run()
             for field, value in expected.items():
                 with self.subTest(surface=name, field=field):
-                    self.assertRegex(out.getvalue(), re.compile(rf"^  {re.escape(label(field))}\s+{value}\b", re.M))
+                    pattern = shape.format(l=re.escape(label(field)), v=value)
+                    self.assertRegex(out.getvalue(), re.compile(pattern, re.M))
 
     def test_repeated_context_is_cache_aware(self):
         from mrtoken.rules import rule_repeated_context

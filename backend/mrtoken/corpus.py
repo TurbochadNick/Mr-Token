@@ -102,7 +102,7 @@ def print_corpus_report(agg: dict) -> None:
     print(f"  sessions          {agg['sessions']:>12,}")
     if agg["low_activity"]:
         print(f"  low-activity      {agg['low_activity']:>12,}  (excluded)")
-    print(f"  total tokens      {agg['total_tokens']:>12,}")
+    print(f"  fresh input + output {agg['total_tokens']:>9,}")
     print(f"  est cost (API-eq) {'$'+format(agg['est_cost_usd'], ',.2f'):>12}   ⚠ not a real bill")
     if agg["cache_hit_ratio"] is not None:
         print(f"  cache hit ratio   {agg['cache_hit_ratio']:>11.1%}")

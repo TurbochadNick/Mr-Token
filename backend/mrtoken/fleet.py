@@ -96,7 +96,7 @@ def fleet_summary(conn: sqlite3.Connection):
             FROM model_call mc JOIN trace t ON t.id=mc.trace_id
             WHERE t.source='claude_code_subagent'
         """).fetchone()[0] or 0
-        print(f"\n  subagent sessions: {sub_count}  •  {fmt(sub_tok)} tokens total")
+        print(f"\n  subagent sessions: {sub_count}  •  {fmt(sub_tok)} fresh input + output")
         print(f"  run: mrtoken-transcript subagents  for per-parent breakdown")
 
     print(f"{'─'*54}\n")

@@ -206,7 +206,7 @@ def subagent_report(conn: sqlite3.Connection, prefix: str | None):
         print("  no subagent transcripts linked to this session\n"); return
 
     total_sub_tokens = sum(s["sub_total_tokens"] for s in subs)
-    print(f"  {len(subs)} subagent(s)  •  {fmt(total_sub_tokens)} total tokens consumed\n")
+    print(f"  {len(subs)} subagent(s)  •  {fmt(total_sub_tokens)} fresh input + output\n")
     print(f"  {'AGENT':14}  {'CALLS':>5}  {'TOKENS':>10}  {'RESULT':>8}  {'RATIO':>6}  {'NET':>9}  VERDICT")
     print(f"  {'─'*14}  {'─'*5}  {'─'*10}  {'─'*8}  {'─'*6}  {'─'*9}  {'─'*16}")
 
