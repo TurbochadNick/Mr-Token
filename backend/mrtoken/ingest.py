@@ -272,22 +272,63 @@ def _migrate(conn: sqlite3.Connection) -> None:
             pass  # column already exists
 
 
-def connect(db_path: str) -> sqlite3.Connection:
-    db_dir = os.path.dirname(os.path.abspath(db_path))
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+def _ensure_schema(conn: sqlite3.Connection) -> None:
     with open(SCHEMA) as f:
         conn.executescript(f.read())   # tables + indexes
     _migrate(conn)                     # add columns to pre-existing tables
     conn.executescript(_SESSION_SUMMARY_VIEW)  # view references migrated columns
     conn.executescript(_SESSION_DETAIL_VIEW)   # per-model-call timeline (drill-down)
     conn.commit()
+
+
+def connect(db_path: str) -> sqlite3.Connection:
+    """Open for WRITING: creates the store and migrates its schema in place."""
+    db_dir = os.path.dirname(os.path.abspath(db_path))
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    _ensure_schema(conn)
     return conn
 
 
 class ReadOnlyDatabaseError(RuntimeError):
     """The database cannot satisfy a read-only analysis command."""
+
+
+class SchemaUpgradeRequired(ReadOnlyDatabaseError):
+    """The store opened read-only but predates the current schema (or was never ingested)."""
+
+
+# Above this, analysis refuses a store that needs upgrading instead of copying it into
+# memory (peak RSS is ~1.15x the store size; measured 2026-09-23).
+ANALYSIS_COPY_LIMIT_BYTES = 1 << 30
+
+
+def connect_for_analysis(db_path: str) -> sqlite3.Connection:
+    """Open for ANALYSIS: never writes the store and never creates one.
+
+    A current store is opened read-only. A store that exists but predates the schema,
+    or was never through ingest (e.g. a pilot DB from the TypeScript `init`), is copied
+    into memory and the same schema/migration code as `connect` runs on the copy, so
+    analysis sees exactly what a migrated store would hold. The store itself is
+    upgraded only by a writer (ingest).
+    """
+    try:
+        return connect_readonly(db_path)
+    except SchemaUpgradeRequired as exc:
+        if os.path.getsize(db_path) > ANALYSIS_COPY_LIMIT_BYTES:
+            raise SchemaUpgradeRequired(
+                f"{exc}; the store is too large to upgrade in memory, "
+                "run `mrtoken-transcript ingest` to upgrade it in place"
+            ) from exc
+    src = sqlite3.connect(f"file:{os.path.abspath(db_path)}?mode=ro", uri=True)
+    mem = sqlite3.connect(":memory:")
+    try:
+        src.backup(mem)
+    finally:
+        src.close()
+    _ensure_schema(mem)
+    return mem
 
 
 class SessionSelectionError(RuntimeError):
@@ -334,7 +375,7 @@ def connect_readonly(db_path: str, *, immutable: bool = False) -> sqlite3.Connec
     missing = sorted(required - present)
     if missing:
         conn.close()
-        raise ReadOnlyDatabaseError(
+        raise SchemaUpgradeRequired(
             "mrtoken: database upgrade required: missing " + ", ".join(missing)
         )
     try:
@@ -349,7 +390,7 @@ def connect_readonly(db_path: str, *, immutable: bool = False) -> sqlite3.Connec
         conn.execute("SELECT * FROM session_summary LIMIT 0")
     except sqlite3.OperationalError as exc:
         conn.close()
-        raise ReadOnlyDatabaseError(
+        raise SchemaUpgradeRequired(
             f"mrtoken: database upgrade required: derived analysis schema is absent or outdated ({exc})"
         ) from exc
     return conn
