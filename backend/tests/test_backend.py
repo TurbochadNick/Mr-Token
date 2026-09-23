@@ -254,6 +254,39 @@ class BackendTest(unittest.TestCase):
         self.assertNotIn("computed-disjoint-components", out.getvalue())
 
 
+    def test_cli_accounting_labels_come_from_token_accounting_doc(self):
+        # report and fleet must print the TOKEN-ACCOUNTING.md display label (lowercased)
+        # beside the value it names; a doc-only or code-only rename fails.
+        import contextlib, re
+        from mrtoken.report import report
+        from mrtoken.fleet import fleet_summary
+        doc = (Path(__file__).resolve().parents[1] / "docs" / "TOKEN-ACCOUNTING.md").read_text("utf-8")
+
+        def label(field):
+            m = re.search(rf"^\| ([^|]+) \| `{field}` \|", doc, re.M)
+            self.assertIsNotNone(m, field)
+            return m.group(1).lower()
+
+        conn = connect(":memory:")
+        tid = conn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES(?,?,?)",
+                           ("claude_code", "labels-s", "now")).lastrowid
+        conn.execute("INSERT INTO model_call(trace_id,input_tokens,output_tokens,"
+                     "cache_read_input_tokens,cache_creation_input_tokens,est_cost_usd) VALUES(?,?,?,?,?,?)",
+                     (tid, 110, 220, 440, 550, 0.0))
+        conn.commit()
+        components = {"input_tokens": 110, "output_tokens": 220,
+                      "cache_read_tokens": 440, "cache_write_tokens": 550}
+        for name, run, expected in (
+            ("report", lambda: report(conn, "labels-s"), components),
+            ("fleet", lambda: fleet_summary(conn), {**components, "total_tokens": 330}),
+        ):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                run()
+            for field, value in expected.items():
+                with self.subTest(surface=name, field=field):
+                    self.assertRegex(out.getvalue(), re.compile(rf"^  {re.escape(label(field))}\s+{value}\b", re.M))
+
     def test_repeated_context_is_cache_aware(self):
         from mrtoken.rules import rule_repeated_context
         conn, tid = make_trace()
