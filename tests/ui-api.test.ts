@@ -133,7 +133,10 @@ describe('Mr Token UI API', () => {
 
   it('exports accounting labels from TOKEN-ACCOUNTING.md', () => {
     const definitions = readFileSync(new URL('../backend/docs/TOKEN-ACCOUNTING.md', import.meta.url), 'utf8');
-    const fresh = /^\| ([^|]+) \| `total_tokens` \|/m.exec(definitions)?.[1];
+    const label = (field: string) => new RegExp(`^\\| ([^|]+) \\| \`${field}\` \\|`, 'm').exec(definitions)?.[1];
+    const fresh = label('total_tokens');
+    const components = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens'].map(label);
+    if (components.some((c) => !c)) throw new Error('missing component labels');
     const cumulative = /displayed \*\*([^*]+)\*\* answers/.exec(definitions)?.[1];
     const providerReported = /^\| `([^`]+)` \| Codex provider/m.exec(definitions)?.[1];
     const computed = /^\| `([^`]+)` \| Claude component sum/m.exec(definitions)?.[1];
@@ -160,7 +163,7 @@ describe('Mr Token UI API', () => {
     const computedLabel = computed.replace(/^computed-/, '').replaceAll('-', ' ');
     expect(report).toContain(`- Measured ${fresh.toLowerCase()}: 30 (vs estimated 0)`);
     expect(report).toContain(`- ${cumulativeLabel}: ${providerReported} 0; computed from documented ${computedLabel} 1; ${unknown.toUpperCase()} 0.`);
-    expect(report).toContain(`| Session | Status | Fresh input | Output | Cache read | Cache write | ${fresh} |`);
+    expect(report).toContain(`| Session | Status | ${components.join(' | ')} | ${fresh} |`);
   });
 
   it('does not score a measured total with missing measured waste as perfect', () => {
