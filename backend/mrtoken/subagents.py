@@ -169,7 +169,7 @@ def subagent_report(conn: sqlite3.Connection, prefix: str | None):
         parents = conn.execute("""
             SELECT DISTINCT t_parent.session_id, t_parent.title,
                    COUNT(t_sub.id) n_subs,
-                   SUM(mc_sub.total) sub_tokens
+                   COALESCE(SUM(mc_sub.total), 0) sub_tokens
             FROM trace t_parent
             JOIN trace t_sub ON t_sub.parent_session_id = t_parent.session_id
             LEFT JOIN (

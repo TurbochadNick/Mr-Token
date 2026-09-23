@@ -314,6 +314,29 @@ class BackendTest(unittest.TestCase):
                     pattern = shape.format(l=re.escape(label(field)), v=value)
                     self.assertRegex(out.getvalue(), re.compile(pattern, re.M))
 
+    def test_fleet_and_subagents_render_zero_model_calls_as_zero(self):
+        # SUM over zero rows is NULL in SQL; a fresh DB (or a subagent with no
+        # recorded calls) must print 0, not crash and not "?".
+        import contextlib, re
+        from mrtoken.fleet import fleet_summary
+        from mrtoken.subagents import subagent_report
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            fleet_summary(connect(":memory:"))
+        for line in (r"^  fresh input\s+0$", r"^  cache write\s+0$",
+                     r"^  fresh input \+ output\s+0$", r"^  est cost \(API-eq\)\s+\$0\.00\b"):
+            self.assertRegex(out.getvalue(), re.compile(line, re.M))
+
+        conn = connect(":memory:")
+        conn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES('claude_code','zc-parent','now')")
+        conn.execute("INSERT INTO trace(source,session_id,parent_session_id,ingested_at) "
+                     "VALUES('claude_code_subagent','zc-sub','zc-parent','now')")
+        conn.commit()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            subagent_report(conn, None)
+        self.assertRegex(out.getvalue(), re.compile(r"^  zc-paren\s+1\s+0\s", re.M))
+
     def test_repeated_context_is_cache_aware(self):
         from mrtoken.rules import rule_repeated_context
         conn, tid = make_trace()

@@ -16,14 +16,14 @@ def fleet_summary(conn: sqlite3.Connection):
           (SELECT COUNT(*) FROM model_call)                                    model_calls,
           (SELECT COUNT(*) FROM tool_call)                                     tool_calls,
           (SELECT COUNT(*) FROM tool_call WHERE is_error=1)                    tool_errors,
-          (SELECT SUM(input_tokens+output_tokens) FROM model_call)             total_tokens,
-          (SELECT SUM(input_tokens) FROM model_call)                           input_tokens,
-          (SELECT SUM(output_tokens) FROM model_call)                          output_tokens,
-          (SELECT SUM(cache_read_input_tokens) FROM model_call)                cache_read,
-          (SELECT SUM(cache_creation_input_tokens) FROM model_call)            cache_write,
-          (SELECT SUM(input_tokens+cache_read_input_tokens
-                      +cache_creation_input_tokens) FROM model_call)           total_input_side,
-          (SELECT SUM(est_cost_usd) FROM model_call)                           est_cost
+          (SELECT COALESCE(SUM(input_tokens+output_tokens), 0) FROM model_call) total_tokens,
+          (SELECT COALESCE(SUM(input_tokens), 0) FROM model_call)              input_tokens,
+          (SELECT COALESCE(SUM(output_tokens), 0) FROM model_call)             output_tokens,
+          (SELECT COALESCE(SUM(cache_read_input_tokens), 0) FROM model_call)   cache_read,
+          (SELECT COALESCE(SUM(cache_creation_input_tokens), 0) FROM model_call) cache_write,
+          (SELECT COALESCE(SUM(input_tokens+cache_read_input_tokens
+                      +cache_creation_input_tokens), 0) FROM model_call)       total_input_side,
+          (SELECT COALESCE(SUM(est_cost_usd), 0) FROM model_call)              est_cost
         FROM trace
     """).fetchone()
     (sessions, sub_sess, mc, tc, te, total_tok, inp, out, cr, cw, total_in, cost) = r
