@@ -448,7 +448,7 @@ export function exportMarkdownReport(projectRoot: string, dbPath = defaultDbPath
           `- Cache read / write: ${data.accurate.cacheReadTokens.toLocaleString()} / ${data.accurate.cacheWriteTokens.toLocaleString()}`,
           `- Cache hit ratio: ${data.accurate.cacheHitRatio === null ? 'n/a' : `${Math.round(data.accurate.cacheHitRatio * 100)}%`}`,
           `- Billing evidence: API ${data.accurate.apiBillingSessions}; subscription ${data.accurate.subscriptionBillingSessions}; UNKNOWN ${data.accurate.unknownBillingSessions}. Dollar usage is shown only for session-owned API evidence.`,
-          `- Cumulative-token provenance: provider-reported ${data.accurate.providerReportedTotals}; computed from documented disjoint components ${data.accurate.computedTotals}; UNKNOWN ${data.accurate.unknownTotals}. These routes are not combined.`,
+          `- Cumulative token total provenance: provider-reported ${data.accurate.providerReportedTotals}; computed from documented disjoint components ${data.accurate.computedTotals}; UNKNOWN ${data.accurate.unknownTotals}. These routes are not combined.`,
           `- Sessions: ${data.accurate.sessions.toLocaleString()}; profiles: ${data.accurate.profiles.join(', ') || 'n/a'}`,
           `- High-priority recommendations: ${data.accurate.highRecommendations.toLocaleString()}`
         ]

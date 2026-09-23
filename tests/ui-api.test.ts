@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -129,6 +129,38 @@ describe('Mr Token UI API', () => {
     expect(accurate.cacheHitRatio).toBeCloseTo(850 / (100 + 850 + 0));
     expect(accurate.addressableWasteTokens).toBe(0);
     expect(accurate.profiles).toContain('code');
+  });
+
+  it('exports accounting labels from TOKEN-ACCOUNTING.md', () => {
+    const definitions = readFileSync(new URL('../backend/docs/TOKEN-ACCOUNTING.md', import.meta.url), 'utf8');
+    const fresh = /^\| ([^|]+) \| `total_tokens` \|/m.exec(definitions)?.[1];
+    const cumulative = /displayed \*\*([^*]+)\*\* answers/.exec(definitions)?.[1];
+    const providerReported = /^\| `([^`]+)` \| Codex provider/m.exec(definitions)?.[1];
+    const computed = /^\| `([^`]+)` \| Claude component sum/m.exec(definitions)?.[1];
+    const unknown = /^\| `([^`]+)` \| no number/m.exec(definitions)?.[1];
+    expect(fresh && cumulative && providerReported && computed && unknown).toBeTruthy();
+    if (!fresh || !cumulative || !providerReported || !computed || !unknown) throw new Error('missing accounting definitions');
+
+    const projectRoot = mkdtempSync(join(tmpdir(), 'token-tithe-accounting-labels-'));
+    writeFileSync(join(projectRoot, 'package.json'), '{}', 'utf8');
+    const dbPath = join(projectRoot, '.token-tithe', 'token-tithe.db');
+    const db = openDatabase(dbPath);
+    db.exec(`create table session_summary (
+      profile text, input_tokens integer, output_tokens integer,
+      cache_read_tokens integer, cache_write_tokens integer, total_tokens integer,
+      est_cost_usd real, billing_mode text, cumulative_expenditure_provenance text,
+      high_recommendations integer
+    );
+    create table recommendation (est_savings_tokens integer);
+    insert into session_summary values ('code', 10, 20, 30, 40, 30, 0, 'subscription', 'computed-disjoint-components', 0);`);
+    db.close();
+
+    const report = exportMarkdownReport(projectRoot, dbPath);
+    const cumulativeLabel = `${cumulative[0].toUpperCase()}${cumulative.slice(1)} provenance`;
+    const computedLabel = computed.replace(/^computed-/, '').replaceAll('-', ' ');
+    expect(report).toContain(`- Measured ${fresh.toLowerCase()}: 30 (vs estimated 0)`);
+    expect(report).toContain(`- ${cumulativeLabel}: ${providerReported} 0; computed from documented ${computedLabel} 1; ${unknown.toUpperCase()} 0.`);
+    expect(report).toContain(`| Session | Status | Fresh input | Output | Cache read | Cache write | ${fresh} |`);
   });
 
   it('does not score a measured total with missing measured waste as perfect', () => {
