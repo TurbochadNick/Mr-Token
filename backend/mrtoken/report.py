@@ -42,7 +42,7 @@ def report(conn: sqlite3.Connection, prefix: str):
     print(f"  fresh input tokens  {fmt(inp):>12}")
     print(f"  output tokens       {fmt(out):>12}")
     print(f"  cache read          {fmt(cr):>12}")
-    print(f"  cache write/create  {fmt(cw):>12}")
+    print(f"  cache write         {fmt(cw):>12}")
     print(f"  cache hit ratio     {cache_ratio:>11.1%}")
     billing = conn.execute("SELECT billing_mode,cumulative_expenditure_tokens,cumulative_expenditure_provenance,api_est_cost_usd FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
     billing_mode, total_tok, provenance, verified_cost = billing or ("unknown", None, "unknown", None)
