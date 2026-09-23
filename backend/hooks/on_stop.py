@@ -209,7 +209,7 @@ def main():
                 totals["high"]        += sum(1 for rc in recs if rc["severity"] == "high")
 
         # Build the HUD line for the just-finished turn (context %, cost, profile,
-        # top signal). The Stop hook fires per-turn in the desktop app, so this is
+        # top signal). The Stop hook runs repeatedly within a live desktop session, so this is
         # our live status surface there.
         hud = None
         if codex_path:
