@@ -356,6 +356,26 @@ class BackendTest(unittest.TestCase):
                 self.assertIn("no cache reads recorded for this session", out.getvalue())
                 self.assertIn("Tactical waste", out.getvalue())
 
+    def test_roi_claims_context_carry_only_where_carry_exists(self):
+        import contextlib
+        from mrtoken.roi import print_roi
+        conn = connect(":memory:")
+        mc = ("INSERT INTO model_call(trace_id,input_tokens,output_tokens,cache_read_input_tokens,"
+              "cache_creation_input_tokens,est_cost_usd) VALUES(?,?,?,?,?,?)")
+        for sid, cache_read in (("carry-s", 50_000), ("nocarry-s", 0)):
+            tid = conn.execute("INSERT INTO trace(source,session_id,ingested_at) VALUES('claude_code',?,'now')",
+                               (sid,)).lastrowid
+            conn.execute(mc, (tid, 1000, 200, cache_read, 0, 0.0))
+        conn.commit()
+        claim = "the real money is ① context carry"
+        for prefix, expected in (("carry-s", True), ("nocarry-s", False), (None, True)):
+            with self.subTest(prefix=prefix):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    print_roi(conn, prefix)
+                self.assertEqual(claim in out.getvalue(), expected)
+                self.assertIn("All figures are ESTIMATES of opportunity", out.getvalue())
+
     def test_repeated_context_is_cache_aware(self):
         from mrtoken.rules import rule_repeated_context
         conn, tid = make_trace()

@@ -274,6 +274,8 @@ def print_roi(conn: sqlite3.Connection, prefix: str | None) -> None:
     print(f"    {'tactical total (upper bound)':34} ~{_fmt(r['addressable_tokens']):>12} tok  "
           f"({r['addressable_pct']:.1%} of spend)")
 
-    print(f"\n  Read together: on well-cached sessions the tactical categories are small —")
-    print(f"  the real money is ① context carry, which the handoff/compaction wedge targets.")
+    print()
+    if h or not prefix:
+        print(f"  Read together: on well-cached sessions the tactical categories are small —")
+        print(f"  the real money is ① context carry, which the handoff/compaction wedge targets.")
     print(f"  All figures are ESTIMATES of opportunity; true ROI needs a controlled trial.\n")
