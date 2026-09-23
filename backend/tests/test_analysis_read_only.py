@@ -94,22 +94,29 @@ SESSION = [["subagents", "s-"], ["export", "s-"], ["export", "--detail", "s-"], 
 
 
 def snapshot(path):
-    """(main file sha256, logical content sha256, store files other than WAL sidecars).
+    """(main file sha256, logical content sha256, header pragmas, store files other than
+    WAL sidecars).
 
     The logical dump is read through a fresh read-only connection, so it sees committed
     content still sitting in a -wal sidecar: on a WAL store a write can leave the main
-    file byte-identical until checkpoint, and a file hash alone would miss it."""
+    file byte-identical until checkpoint, and a file hash alone would miss it.
+
+    user_version and application_id are durable writes that iterdump, the main file (on
+    WAL, before checkpoint) and the file set ALL miss at once. Nothing in backend/ writes
+    either today; they are guarded because user_version is the conventional home for a
+    schema version, and this module guards the migration path that would write it."""
     d, base = os.path.dirname(path), os.path.basename(path)
     files = {f for f in os.listdir(d) if f.startswith(base) and not f.endswith(SIDECARS)}
     if not os.path.exists(path):
-        return None, None, files
+        return None, None, None, files
     digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
     ro = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         logical = hashlib.sha256("\n".join(ro.iterdump()).encode()).hexdigest()
+        pragmas = tuple(ro.execute(f"PRAGMA {p}").fetchone()[0] for p in ("user_version", "application_id"))
     finally:
         ro.close()
-    return digest, logical, files
+    return digest, logical, pragmas, files
 
 
 def run(args, path):
@@ -196,6 +203,38 @@ class AnalysisReadOnlyTest(unittest.TestCase):
                     if expect:
                         self.assertIn("too large to upgrade in memory", out)
                     self.assertEqual(snapshot(path), before)
+
+    def test_invariant_check_detects_a_pragma_write(self):
+        # user_version is a durable write invisible to the main file (WAL, no
+        # checkpoint), to iterdump and to the file set, all at once
+        for pragma in ("user_version", "application_id"):
+            with self.subTest(pragma=pragma):
+                path = self.store("ts_pilot")
+                before = snapshot(path)
+                c = sqlite3.connect(path)
+                c.execute("PRAGMA wal_autocheckpoint=0")
+                c.execute(f"PRAGMA {pragma} = 42")
+                c.commit()
+                self.assertNotEqual(snapshot(path), before)
+                c.close()
+
+    def test_copy_guard_counts_uncheckpointed_wal(self):
+        # on WAL the main file is not the store: content in -wal is copied too
+        import mrtoken.ingest as ingest
+        path = self.store("ts_pilot")
+        writer = sqlite3.connect(path)
+        self.addCleanup(writer.close)
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.executemany("INSERT INTO events(event_name, session_id, estimated_tokens, raw_json) "
+                           "VALUES(?, ?, 0, '{}')", [("PreToolUse", f"s{i}") for i in range(20_000)])
+        writer.commit()
+        main, wal = os.path.getsize(path), os.path.getsize(path + "-wal")
+        self.assertGreater(wal, main)  # precondition: the content really is in -wal
+        with mock.patch.object(ingest, "ANALYSIS_COPY_LIMIT_BYTES", main + wal // 2):
+            code, out, crash = run(["fleet"], path)
+        self.assertIsNone(crash)
+        self.assertEqual(code, 2)
+        self.assertIn("too large to upgrade in memory", out)
 
     def test_invariant_check_detects_a_write(self):
         with mock.patch.object(cli, "_open_for_analysis", cli._open):

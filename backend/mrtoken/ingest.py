@@ -300,7 +300,8 @@ class SchemaUpgradeRequired(ReadOnlyDatabaseError):
 
 
 # Above this, analysis refuses a store that needs upgrading instead of copying it into
-# memory (peak RSS is ~1.15x the store size; measured 2026-09-23).
+# memory (peak RSS is ~1.15x the store size; measured 2026-09-23). A refusal threshold
+# for memory safety, not a performance budget.
 ANALYSIS_COPY_LIMIT_BYTES = 1 << 30
 
 
@@ -316,7 +317,13 @@ def connect_for_analysis(db_path: str) -> sqlite3.Connection:
     try:
         return connect_readonly(db_path)
     except SchemaUpgradeRequired as exc:
-        if os.path.getsize(db_path) > ANALYSIS_COPY_LIMIT_BYTES:
+        # Size what the copy materialises: main file PLUS -wal. On a WAL store the main
+        # file is not the store; uncheckpointed content sits in -wal and backup copies it
+        # too, so the main file alone can be far under the limit while the copy is not.
+        # (-shm is only SQLite's index into the WAL and is not copied.)
+        wal = db_path + "-wal"
+        copied = os.path.getsize(db_path) + (os.path.getsize(wal) if os.path.exists(wal) else 0)
+        if copied > ANALYSIS_COPY_LIMIT_BYTES:
             raise SchemaUpgradeRequired(
                 f"{exc}; the store is too large to upgrade in memory, "
                 "run `mrtoken-transcript ingest` to upgrade it in place"
