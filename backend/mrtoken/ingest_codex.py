@@ -62,7 +62,9 @@ def codex_usage_snapshot(path: str) -> dict:
     """
     last = None
     model = None
+    effort = None
     window = None
+    rate_limits = None
     try:
         with open(path, encoding="utf-8") as fh:
             for line in fh:
@@ -76,14 +78,18 @@ def codex_usage_snapshot(path: str) -> dict:
                 payload = d.get("payload") or {}
                 if d.get("type") == "turn_context":
                     model = payload.get("model") or model
+                    effort = payload.get("effort") or effort
                 elif d.get("type") == "event_msg" and payload.get("type") == "token_count":
                     info = payload.get("info") or {}
-                    last = info
+                    if info:  # an info-less event must not blank the last real reading
+                        last = info
                     window = _int_or_none(info.get("model_context_window")) or window
+                    if isinstance(payload.get("rate_limits"), dict):
+                        rate_limits = payload["rate_limits"]
     except OSError:
         return {}
     if not last:
-        return {"model": model}
+        return {"model": model, "effort": effort}
 
     usage = last.get("last_token_usage") or {}
     input_tokens = _int_or_none(usage.get("input_tokens")) or 0  # includes cached = current ctx
@@ -105,6 +111,15 @@ def codex_usage_snapshot(path: str) -> dict:
         "cached_input_tokens": cached_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
+        "effort": effort,
+        # the provider's own running session total, kept whole so the caller can
+        # check it reconciles (total == input + output) before trusting it
+        "provider_total": {k: _int_or_none((last.get("total_token_usage") or {}).get(src))
+                           for k, src in (("input", "input_tokens"), ("cached", "cached_input_tokens"),
+                                          ("output", "output_tokens"), ("total", "total_tokens"))},
+        "rate_windows": [(_int_or_none(w.get("window_minutes")), w.get("used_percent"))
+                         for w in ((rate_limits or {}).get(slot) for slot in ("primary", "secondary"))
+                         if isinstance(w, dict)],
     }
 
 

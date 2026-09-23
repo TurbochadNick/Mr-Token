@@ -245,6 +245,8 @@ class LiveMonitor:
         self.prices, self.est_cost = _load_prices()
         self.model_calls = 0
         self.cum_cost = 0.0
+        # cumulative token components, counted once per API response (see feed)
+        self.cum_tokens = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
         self._seen_msg_ids: set[str] = set()  # dedup usage per API response (msg.id)
         self._ctx_history: list[int] = []     # recent per-response context sizes (trajectory)
         self.errors_recent: list[int] = []   # 1/0 per recent model call
@@ -345,6 +347,9 @@ class LiveMonitor:
                 self.model_calls += 1
                 u = msg["usage"]
                 self.cum_cost += self.est_cost(self.prices, msg.get("model"), u)
+                for key, src in (("input", "input_tokens"), ("cache_read", "cache_read_input_tokens"),
+                                 ("cache_write", "cache_creation_input_tokens"), ("output", "output_tokens")):
+                    self.cum_tokens[key] += u.get(src) or 0
 
                 # context-size proxy: this call's whole input side ≈ current window
                 window = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
@@ -466,6 +471,7 @@ class LiveMonitor:
         return {
             "model_calls": self.model_calls,
             "cum_cost": self.cum_cost,
+            "cum_tokens": dict(self.cum_tokens),
             "profile": self.profile,
             "context_now": self._context_now,
             "context_max": self._context_max,

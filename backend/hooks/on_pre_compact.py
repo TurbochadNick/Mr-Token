@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """MR Token — PreCompact hook.
 
-Fires when Claude Code is about to auto-compact the context. Surfaces the
-/mr-handoff option as a structured alternative — especially if the session
-already has a fresh_handoff signal active.
+Fires when Claude Code is about to compact the context, a material state change,
+so it is the one Claude event surface kept. Surfaces /mr-handoff as a structured
+alternative. It shows no ctx %: the payload carries no measured window.
 
 Returns a systemMessage (does NOT block compaction — user chooses).
 """
@@ -31,39 +31,15 @@ def main():
         sys.exit(0)
 
     try:
-        from mrtoken.watch import resolve_path, LiveMonitor, _iter_new_lines
-        from mrtoken.statusline import context_window
+        from mrtoken.hud import attribution
 
-        # use the EXACT transcript Claude Code handed us, not a newest-file guess
-        path = resolve_path(payload.get("transcript_path"))
-        if not path:
+        # Compaction IS the event, so the suggestion needs no percentage. The PreCompact
+        # payload carries no measured context window (only the statusLine stdin does), so
+        # any ctx % here would be a guess over an inferred window; it is not shown.
+        if not payload.get("transcript_path"):
             sys.exit(0)
-
-        mon = LiveMonitor(emit=lambda _: None)
-        lines, _ = _iter_new_lines(path, 0)
-        for ln in lines:
-            try:
-                mon.feed(json.loads(ln))
-            except json.JSONDecodeError:
-                pass
-
-        snap = mon.snapshot()
-        has_handoff_signal = "context" in snap["signals_fired"]
-        cn = snap["context_now"]
-        ctx_pct = min(99, int(cn / context_window(cn) * 100)) if cn else 0
-
-        if has_handoff_signal or ctx_pct >= 70:
-            msg = (
-                f"mr ⚠  context at {ctx_pct}% — before Claude compacts: "
-                "run /mr-handoff for a structured handoff (goal · files · decisions · next steps) "
-                "vs lossy auto-compact. Your call."
-            )
-        else:
-            msg = (
-                "mr · about to compact — /mr-handoff gives a structured handoff summary "
-                "if you'd rather start fresh cleanly."
-            )
-
+        msg = (f"{attribution()} · about to compact — /mr-handoff gives a structured handoff "
+               "(goal · files · decisions · next steps) if you'd rather start fresh cleanly.")
         print(json.dumps({"systemMessage": msg}))
 
     except Exception:

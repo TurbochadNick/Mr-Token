@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix="mrtoken-codex-accept-") as tmp:
         {"timestamp": "2026-06-30T00:00:00Z", "type": "session_meta",
          "payload": {"session_id": sid, "cwd": root}},
         {"timestamp": "2026-06-30T00:00:01Z", "type": "turn_context",
-         "payload": {"model": "gpt-5.5"}},
+         "payload": {"model": "gpt-5.5", "effort": "xhigh"}},
         {"timestamp": "2026-06-30T00:00:02Z", "type": "event_msg",
          "payload": {"type": "token_count", "info": {
              "model_context_window": 1_000_000,
@@ -46,7 +46,16 @@ with tempfile.TemporaryDirectory(prefix="mrtoken-codex-accept-") as tmp:
                  "cached_input_tokens": 260_000,
                  "output_tokens": 1_000,
                  "total_tokens": 281_000,
-             }}}},
+             },
+             # the provider's running session total, which the HUD shows as total expenditure
+             "total_token_usage": {
+                 "input_tokens": 280_000,
+                 "cached_input_tokens": 260_000,
+                 "output_tokens": 1_000,
+                 "total_tokens": 281_000,
+             }},
+             "rate_limits": {"primary": {"used_percent": 42.0, "window_minutes": 10080,
+                                         "resets_at": 1790000000}}}},
     ]
     with open(rollout, "w", encoding="utf-8") as handle:
         for row in rows:
@@ -67,8 +76,16 @@ with tempfile.TemporaryDirectory(prefix="mrtoken-codex-accept-") as tmp:
         print(proc.stderr, file=sys.stderr)
         sys.exit(proc.returncode)
     msg = json.loads(proc.stdout)["systemMessage"]
-    required = ["mr · codex gpt-5.5", "ctx 28%", "~21k tok", "cache 93%"]
+    # CHANGED EXPECTATION (fix/hud-parity), not a weakened check. This used to pin "~21k tok",
+    # which was the fresh input + output SUBTOTAL; the HUD now shows the provider's running
+    # TOTAL (281k). Cost is gone (no billing ground truth); the Codex CLI line already shows
+    # model and effort, so the window rides on ctx; the version attributes the line.
+    sys.path.insert(0, os.path.join(root, "backend"))
+    from mrtoken.hud import attribution
+    required = [f"{attribution()} · ", "ctx 28% used of 1M", "~281k tok", "cache hit 93%", "7d 42% used"]
     missing = [part for part in required if part not in msg]
+    if "$" in msg:
+        missing.append("no dollar figure")
     if missing:
         print(f"unexpected HUD: {msg}", file=sys.stderr)
         print(f"missing: {missing}", file=sys.stderr)

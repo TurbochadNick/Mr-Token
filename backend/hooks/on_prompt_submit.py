@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""MR Token — UserPromptSubmit hook.
+"""MR Token — UserPromptSubmit hook: SILENT by policy.
 
-Fires before each user prompt is processed. Reads the current session
-transcript and injects a compact status line as a systemMessage so the
-user sees context %, cost, profile, and top rule signal each turn.
+It fires when the user presses Enter, i.e. at INITIATION, the one moment the
+numbers cannot have changed since the persistent statusLine last showed them. It
+used to inject a status-line copy (an inferior one: no stdin, so no effort, window
+or limit, and a raw model id) and, via mrtoken.intervene, a proc-engine
+intervention (which also wrote debounce state). Both are gone: Claude's statusLine
+is its one readout, and event surfaces fire at completion (Stop, PreCompact), never
+at initiation. The intervention engine is silenced here, not deleted; it is carded
+separately for its own evidence before anyone revives or removes it.
 
-Example systemMessage: mr · ctx 45% · ~$0.84 · code · ⚠ retry loop
+Kept registered so the settings.json wiring needs no change.
 """
 import json, os, sys
 
@@ -15,46 +20,7 @@ if BACKEND_ROOT not in sys.path:
 
 
 def main():
-    raw = sys.stdin.read().strip()
-    try:
-        payload = json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        payload = {}
-
-    # run from the project cwd so resolve_path finds the right transcript
-    cwd = payload.get("cwd")
-    if cwd and os.path.isdir(cwd):
-        os.chdir(cwd)
-
-    # Stage-1 cohort gate: automatic behaviour runs only in allowlisted projects.
-    # Checked BEFORE the heavy imports below, so an out-of-cohort session costs
-    # nothing (no tokens injected, no DB opened). Empty allowlist => unchanged.
-    from mrtoken.cohort import in_cohort
-    if not in_cohort(cwd):
-        sys.exit(0)
-
-    tpath = payload.get("transcript_path")
-    # proc engine (ROADMAP 6.4–6.6): pressure + reclaimable junk → an actionable
-    # intervention (tell, or ask w/ AFK escalation), debounced + policy-gated.
-    try:
-        from mrtoken.intervene import intervention_for_session
-        iv = intervention_for_session(transcript_path=tpath,
-                                      session_id=payload.get("session_id", ""))
-        if iv:
-            print(json.dumps({"systemMessage": "mr · " + iv["message"]}))
-            sys.exit(0)
-    except Exception:
-        pass  # never block the prompt
-
-    try:
-        from mrtoken.statusline import build_statusline_text
-        # use the EXACT transcript Claude Code handed us, not a newest-file guess
-        line = build_statusline_text(transcript_path=tpath)
-        if line:
-            print(json.dumps({"systemMessage": line}))
-    except Exception:
-        pass  # never block the prompt
-
+    sys.stdin.read()  # drain the payload; nothing is emitted, nothing is written
     sys.exit(0)
 
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """MR Token — one-line HUD for Claude Code's statusLine setting.
 
-Reads the current session's live transcript, computes context %, cost,
-profile, and the highest-priority rule signal, then prints ONE line to stdout.
+Reads the current session's live transcript, builds the provider-neutral HUD
+fields (mrtoken.hud), and prints the one-line view to stdout. No cost is shown:
+there is no billing ground truth (backend/docs/ACCURACY-VALIDATION-2026-09-23.md).
 
 Typical output:
-  mr · Opus 4.8·high · ctx 78% ⚠ · 5h 88%⚠ · ~$1.20 · code · ⚠ retry loop
-  mr · Opus 4.8·medium · ctx 42% · 5h 30% · ~$0.18 · research
+  mr · Opus 5 (1M context)·high · ctx 80% ⚠ · ~2.1M tok · cache 94% · 5h 45% · code · ⚠ compact soon
+  mr · Opus 4.8·? · ctx 42% · ~310k tok · cache 88% · research      (no stdin: effort unknown)
   mr · no session
 
 Registered in Claude Code settings.json as `statusLine` (object form). NOTE:
@@ -18,10 +19,11 @@ from __future__ import annotations
 import json
 import re
 
+from mrtoken.hud import (CONTEXT_WARN_PCT, HudFields, binding_limiter, ctx_field,  # noqa: F401
+                         format_line, known, not_applicable, recommend, unknown)
+
 CONTEXT_TIERS = (200_000, 1_000_000)  # known Claude context windows
-CONTEXT_WARN_PCT = 70                 # show ⚠ flag at this % of the window or above
-PLAN_WARN_PCT = 85                    # flag the 5h plan window at this % used or above
-WEEKLY_WARN_PCT = 80                  # surface the 7-day window only once it nears this
+# ⚠ threshold: ONE definition, in hud.py, re-exported here for existing importers
 
 
 def _config_context_max() -> int | None:
@@ -61,24 +63,6 @@ def context_window(context_now: int) -> int:
             return tier
     return CONTEXT_TIERS[-1]
 
-_SIGNAL_LABELS: dict[str, str] = {
-    "huge_tool_output": "huge output",
-    "retry_loop":       "retry loop",
-    "context":          "compact soon",
-}
-
-# priority order — last item in this list wins when multiple signals fired
-_SIGNAL_PRIORITY = ["context", "huge_tool_output", "retry_loop"]
-
-
-def _top_signal(signals: list[str]) -> str | None:
-    best: str | None = None
-    for s in _SIGNAL_PRIORITY:
-        if s in signals:
-            best = s
-    return best
-
-
 def _model_label(model) -> str | None:
     """Compact model name for the HUD. Accepts the statusLine `model` object
     ({id, display_name}) OR a bare model-id string (from the transcript).
@@ -93,35 +77,21 @@ def _model_label(model) -> str | None:
     if disp and any(c.isdigit() for c in disp):
         return disp
     if mid:
-        m = re.match(r"(?:claude-)?([a-z]+)-(\d+)-(\d+)", mid)
+        # family-M[-m][-YYYYMMDD]: 'claude-opus-5' -> 'Opus 5', 'claude-opus-4-8' -> 'Opus 4.8'.
+        # The minor is 1-2 digits, so a date suffix is never read as a version.
+        m = re.match(r"(?:claude-)?([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$", mid)
         if m:
-            return f"{m.group(1).capitalize()} {m.group(2)}.{m.group(3)}"
+            minor = f".{m.group(3)}" if m.group(3) else ""
+            return f"{m.group(1).capitalize()} {m.group(2)}{minor}"
     return disp or mid
-
-
-def _plan_segment(pct: int | None) -> str | None:
-    """5-hour subscription window usage, e.g. '5h 88%⚠' (⚠ when near the limit).
-    From the statusLine stdin payload's rate_limits.five_hour; absent otherwise."""
-    if pct is None:
-        return None
-    return f"5h {pct}%{'⚠' if pct >= PLAN_WARN_PCT else ''}"
-
-
-def _weekly_segment(pct: int | None) -> str | None:
-    """7-day (weekly) window — surfaced ONLY when getting close. The weekly cap is
-    the painful one (a multi-day lockout, not a 5h cooldown), so it warrants an
-    early heads-up; below the threshold it stays hidden to keep the line clean.
-    From rate_limits.seven_day."""
-    if pct is None or pct < WEEKLY_WARN_PCT:
-        return None
-    return f"7d {pct}%⚠"
 
 
 def build_statusline_text(session_arg: str | None = None,
                           transcript_path: str | None = None,
                           model=None, effort: str | None = None,
                           plan_5h: int | None = None,
-                          plan_7d: int | None = None) -> str | None:
+                          plan_7d: int | None = None,
+                          context_window_size: int | None = None) -> str | None:
     """Return the HUD string, or None if no active session found.
 
     If transcript_path is given (the statusLine protocol hands us the exact
@@ -156,49 +126,68 @@ def build_statusline_text(session_arg: str | None = None,
                 last_model = mm
 
     snap = mon.snapshot()
-    ctx_now = snap["context_now"]
-    win = context_window(snap.get("context_max") or ctx_now)  # sticky window
-    ctx_pct = min(99, int(ctx_now / win * 100)) if ctx_now else 0
+    return format_line(claude_hud_fields(snap, model or last_model, effort, plan_5h, plan_7d,
+                                         context_window_size))
 
-    parts = ["mr"]
 
-    # identity: which brain is running + how hard it's reasoning. model from the
-    # stdin payload (terminal) or the transcript (anywhere); effort from stdin only.
-    label = _model_label(model or last_model)
+_WINDOW_IN_NAME = re.compile(r"\s*\((\d+(?:\.\d+)?)([KkMm]) context\)")
+
+
+def claude_hud_fields(snap: dict, model, effort, plan_5h=None, plan_7d=None,
+                      context_window_size=None) -> HudFields:
+    """Fields for a Claude session from its live transcript snapshot (LiveMonitor),
+    plus whatever the statusLine stdin payload supplies (model, effort, window,
+    rate limits). On the Stop-hook and app paths there is no stdin payload, so
+    effort is UNKNOWN there and the window falls back to inference."""
+    f = HudFields()
+    label = _model_label(model)
     if label:
-        parts.append(f"{label}·{effort}" if effort else label)
+        # the name may carry "(1M context)"; strip it so it is not shown twice. It is NOT
+        # used as a window source: the window comes only from the measured value below.
+        label = _WINDOW_IN_NAME.sub("", label)
+        f.model = known(label, "statusLine model" if not isinstance(model, str) else "transcript model id")
+    else:
+        f.model = unknown("no model in the transcript yet")
+    f.effort = known(effort, "statusLine effort.level") if effort else unknown(
+        "effort is not recorded in the transcript")
 
-    if ctx_pct:
-        flag = " ⚠" if ctx_pct >= CONTEXT_WARN_PCT else ""
-        # lead-time trend: while still below the warn line but climbing toward it,
-        # show projected turns ('ctx 58% ↗~5t') so you can act before you hit it
-        ttw = snap.get("turns_to_warn")
-        trend = f" ↗~{ttw}t" if (ttw and ctx_pct < CONTEXT_WARN_PCT and ttw <= 12) else ""
-        parts.append(f"ctx {ctx_pct}%{flag}{trend}")
+    # The window must be MEASURED for this session, re-read every render (so a mid-session
+    # /model or window change follows): the harness-reported context_window_size. A window
+    # looked up from the model name or inferred from usage is a guess; it is kept only as a
+    # labelled estimate, and ctx % over an unmeasured window is not a measurement either.
+    ctx_now = snap["context_now"]
+    if context_window_size:
+        window = int(context_window_size)
+        f.context_window = known(window, "statusLine context_window_size (harness-reported, this render)")
+        if ctx_now:
+            f.ctx_pct = ctx_field(min(99, int(ctx_now / window * 100)), "latest call's input side / reported window")
+        else:
+            f.ctx_pct = unknown("no model call yet")
+    else:
+        guess = context_window(snap.get("context_max") or ctx_now) if ctx_now else None
+        f.context_window = unknown("window not reported on this surface", estimate=guess)
+        f.ctx_pct = unknown("window not reported, so ctx % has no measured denominator",
+                            estimate=min(99, int(ctx_now / guess * 100)) if guess else None)
+    ttw = snap.get("turns_to_warn")
+    f.ctx_turns_to_warn = known(ttw, "recent context growth") if ttw else not_applicable()
 
-    plan = _plan_segment(plan_5h)  # 5h subscription window (terminal/stdin only)
-    if plan:
-        parts.append(plan)
+    t = snap.get("cum_tokens") or {}
+    if snap.get("model_calls"):
+        f.total_tokens = known(sum(t.values()),
+                               "computed: fresh + cache read + cache write + output, once per API response")
+        input_side = t.get("input", 0) + t.get("cache_read", 0) + t.get("cache_write", 0)
+        f.cache_ratio = (known(t.get("cache_read", 0) / input_side, "cache read / (fresh + cache read + cache write)")
+                         if input_side else unknown("no input yet"))
+    else:
+        f.total_tokens = unknown("no model call yet")
+        f.cache_ratio = unknown("no model call yet")
 
-    week = _weekly_segment(plan_7d)  # weekly window — only when getting close
-    if week:
-        parts.append(week)
+    f.limiter = binding_limiter([(300, plan_5h), (10080, plan_7d)], "statusLine rate_limits")
+    f.profile = known(snap["profile"], "session profile") if snap.get("profile") else not_applicable()
 
-    if snap["profile"]:
-        parts.append(snap["profile"])
-
-    signals = snap["signals_fired"]
-    # "compact soon" is a live gauge of CURRENT fullness, not a historical event:
-    # suppress it if context is no longer high (e.g. a 1M session that passed
-    # through the 140–200k band, briefly looked like a full 200k window, and then
-    # revealed its real 1M window). retry/huge-output signals are real events, kept.
-    if ctx_pct < CONTEXT_WARN_PCT:
-        signals = [s for s in signals if s != "context"]
-    top = _top_signal(signals)
-    if top:
-        parts.append(f"⚠ {_SIGNAL_LABELS.get(top, top)}")
-
-    return " · ".join(parts)
+    # Recommendations come ONLY from direct readouts (hud.recommend): "compact soon" is
+    # context fullness NOW. The live monitor's retry/huge-output heuristics are not shown.
+    return recommend(f)
 
 
 def statusline_hud(session_arg: str | None = None) -> int:
@@ -214,6 +203,7 @@ def statusline_hud(session_arg: str | None = None) -> int:
     effort = None
     plan_5h = None
     plan_7d = None
+    context_window_size = None
     cwd = None
     try:
         raw = sys.stdin.read() if not sys.stdin.isatty() else ""
@@ -226,6 +216,7 @@ def statusline_hud(session_arg: str | None = None) -> int:
             rl = payload.get("rate_limits") or {}
             plan_5h = (rl.get("five_hour") or {}).get("used_percentage")
             plan_7d = (rl.get("seven_day") or {}).get("used_percentage")
+            context_window_size = (payload.get("context_window") or {}).get("context_window_size")
             cwd = (payload.get("cwd")
                    or (payload.get("workspace") or {}).get("current_dir"))
             if cwd and os.path.isdir(cwd):
@@ -233,12 +224,13 @@ def statusline_hud(session_arg: str | None = None) -> int:
     except Exception:
         pass
 
-    # Stage-1 cohort gate: no always-on statusline outside the allowlisted cohort
-    # (also skips the connect()-on-open write build_statusline_text would do).
+    # Stage-1 cohort gate: no always-on statusline outside the allowlisted cohort.
+    # (build_statusline_text opens no database: it reads only the transcript.)
     from mrtoken.cohort import in_cohort
     if not in_cohort(cwd):
         return 0
 
-    print(build_statusline_text(session_arg, transcript_path, model, effort, plan_5h, plan_7d)
+    print(build_statusline_text(session_arg, transcript_path, model, effort, plan_5h, plan_7d,
+                                context_window_size)
           or "mr · no session")
     return 0

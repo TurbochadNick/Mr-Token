@@ -776,10 +776,17 @@ class BackendTest(unittest.TestCase):
             self.assertIsNotNone(src)
             self.assertEqual(src[0], "codex")  # routed to the Codex adapter
             msg = json.loads(out.getvalue())["systemMessage"]
-            self.assertIn("codex gpt-5.5", msg)
-            self.assertIn("ctx 60%", msg)
-            self.assertIn("~2,350 tok", msg)
-            self.assertIn("cache 82%", msg)
+            # CHANGED EXPECTATION (fix/hud-parity), not weakened: "~2,350 tok" was the fresh
+            # input + output SUBTOTAL, i.e. the defect. This fixture has no total_token_usage
+            # (present on 93-100% of token_count events across all 50 Codex CLI versions in
+            # the local store, so this is the rare absence case, kept on purpose to cover it):
+            # the honest line shows the total and the cache hit rate as unknown, not a guess.
+            from mrtoken.hud import attribution
+            self.assertTrue(msg.startswith(attribution() + " · "))
+            self.assertIn("ctx 60% used of 10k", msg)
+            self.assertIn("tok ?", msg)
+            self.assertIn("cache hit ?", msg)
+            self.assertNotIn("$", msg)
 
     def test_codex_low_context_handoff_nudge_is_quiet(self):
         # Screenshot regression: a low-current-context Codex session can still be
@@ -3306,19 +3313,32 @@ class BackendTest(unittest.TestCase):
         self.assertIsNone(_model_label(None))
 
     def test_plan_segment_5h(self):
-        from mrtoken.statusline import _plan_segment
-        self.assertEqual(_plan_segment(5), "5h 5%")        # low -> no flag
-        self.assertEqual(_plan_segment(88), "5h 88%⚠")     # near limit -> flag
-        self.assertEqual(_plan_segment(0), "5h 0%")        # 0 is shown, not dropped
-        self.assertIsNone(_plan_segment(None))             # absent payload -> nothing
+        # CHANGED EXPECTATION (fix/hud-parity): the 5h window now renders through the
+        # shared limiter (mrtoken.hud.binding_limiter); its near-limit warning moved from an
+        # inline glyph to the warning slot. The intents are kept: low -> no alert, near the
+        # limit -> alert (85%), 0 is shown not dropped, absent payload -> nothing. It is
+        # labelled "% used", the one direction every budget percentage on the line runs.
+        from mrtoken import hud
+        seg = lambda pct: hud._limiter(hud.HudFields(limiter=hud.binding_limiter([(300, pct)], "p")), True)
+        self.assertEqual(seg(5), "5h 5% used")
+        self.assertFalse(hud.binding_limiter([(300, 5)], "p").alert)
+        self.assertTrue(hud.binding_limiter([(300, 88)], "p").alert)
+        self.assertEqual(seg(0), "5h 0% used")
+        self.assertEqual(hud.binding_limiter([(300, None)], "p").state, hud.NA)
 
     def test_weekly_segment_only_when_close(self):
-        from mrtoken.statusline import _weekly_segment
-        self.assertIsNone(_weekly_segment(19))             # low -> hidden (no clutter)
-        self.assertIsNone(_weekly_segment(79))             # just under -> hidden
-        self.assertEqual(_weekly_segment(80), "7d 80%⚠")   # at threshold -> alert
-        self.assertEqual(_weekly_segment(93), "7d 93%⚠")
-        self.assertIsNone(_weekly_segment(None))
+        # CHANGED EXPECTATION (fix/hud-parity), not a weakened test: the old rule hid the
+        # 7-day window below 80% "to keep the line clean". The decided rule shows the ONE
+        # window closest to binding, so a 7d window is shown whenever it is the most binding
+        # one, at any %, and hidden when another window is more binding. Its alert stays at 80%.
+        from mrtoken import hud
+        lim = lambda windows: hud.binding_limiter(windows, "p")
+        self.assertEqual(lim([(10080, 19)]).value["label"], "7d")                 # only window -> shown
+        self.assertEqual(lim([(300, 40), (10080, 19)]).value["label"], "5h")      # 5h more binding -> 7d hidden
+        self.assertEqual(lim([(300, 40), (10080, 79)]).value["label"], "7d")      # 7d more binding -> shown
+        self.assertFalse(lim([(10080, 79)]).alert)                                # just under -> no alert
+        self.assertTrue(lim([(10080, 80)]).alert)                                 # at threshold -> alert
+        self.assertEqual(lim([(10080, None)]).state, hud.NA)
 
     def test_cli_reports_version(self):
         import io, contextlib

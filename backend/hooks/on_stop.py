@@ -26,17 +26,7 @@ CODEX_DIRS = (os.path.expanduser("~/.codex/sessions"),
 CONTEXT_WARN_PCT = 70
 
 
-def _fmt_token_count(tokens) -> str:
-    n = int(tokens or 0)
-    if n >= 1_000_000:
-        v = n / 1_000_000
-        return f"{v:.1f}M".replace(".0M", "M")
-    if n >= 100_000:
-        return f"{round(n / 1_000):,}k"
-    if n >= 10_000:
-        v = n / 1_000
-        return f"{v:.1f}k".replace(".0k", "k")
-    return f"{n:,}"
+from mrtoken.hud import fmt_tokens as _fmt_token_count  # noqa: E402  (one formatter, shared)
 
 
 def _compact_rec_line(rule: str, message: str, ctx_pct=None) -> str:
@@ -208,41 +198,27 @@ def main():
                 totals["recs"]        += len(recs)
                 totals["high"]        += sum(1 for rc in recs if rc["severity"] == "high")
 
-        # Build the HUD line for the just-finished turn (context %, cost, profile,
-        # top signal). The Stop hook runs repeatedly within a live desktop session, so this is
-        # our live status surface there.
-        hud = None
-        if codex_path:
-            # Codex HUD from the rollout's own metrics (build_statusline_text is
-            # Claude-transcript-specific and would leak a Claude session's stats).
-            row = conn.execute("SELECT profile, total_tokens, est_cost_usd, cache_hit_ratio "
-                               "FROM session_summary WHERE session_id=?", (session_id,)).fetchone()
-            mdl = conn.execute(
-                "SELECT mc.model FROM model_call mc JOIN trace t ON t.id=mc.trace_id "
-                "WHERE t.session_id=? AND mc.model IS NOT NULL LIMIT 1", (session_id,)).fetchone()
-            if row:
-                profile, tot, cost, cache = row
-                model = (codex_usage or {}).get("model") or (mdl[0] if mdl else None)
-                identity = "codex" + (f" {model}" if model else "")
-                parts = ["mr", identity]
-                ctx_pct = (codex_usage or {}).get("ctx_pct")
-                if ctx_pct is not None:
-                    parts.append(f"ctx {int(ctx_pct)}%{' ⚠' if int(ctx_pct) >= CONTEXT_WARN_PCT else ''}")
-                if tot:
-                    parts.append(f"~{_fmt_token_count(tot)} tok")
-                if cache is not None:
-                    parts.append(f"cache {cache:.0%}")
-                if cost and cost >= 0.01:
-                    parts.append(f"~${cost:.2f}")
-                if profile:
-                    parts.append(profile)
-                hud = " · ".join(parts)
-        else:
+        # ONE READOUT PER PROVIDER. Claude's persistent statusLine is its readout, so on
+        # Claude this hook has already done its work (ingest + analyse above) and stays
+        # SILENT: re-rendering current state at every turn duplicated the status line with
+        # an inferior copy. The one exception is an update notice, which is an event, not
+        # current state. Codex has no statusLine, so its per-turn message IS the readout.
+        if not codex_path:
             try:
-                from mrtoken.statusline import build_statusline_text
-                hud = build_statusline_text(session_id)
+                from mrtoken.update_check import check_for_update
+                from mrtoken.hud import attribution
+                nudge = check_for_update()
+                if nudge:
+                    print(json.dumps({"systemMessage": f"{attribution()} · {nudge}"}))
             except Exception:
-                hud = None
+                pass
+            sys.exit(0)
+
+        # Codex: the SAME fields as the Claude statusLine (mrtoken.hud), from the rollout's
+        # own live record, in the Codex formatter (brief: this message enters the model
+        # conversation, and the Codex CLI line already shows model and effort).
+        from mrtoken.hud import codex_hud_fields, format_codex_stop
+        hud = format_codex_stop(codex_hud_fields(codex_usage))
 
         # Append the top high-priority recommendation, if any.
         rec_line = ""
@@ -272,7 +248,7 @@ def main():
         # actionable nudge, not just a passive signal.
         if codex_iv:
             rec_line = "  ·  " + codex_iv["message"]
-        message = (hud or f"mr · {totals['model_calls']} calls") + rec_line + assist_line
+        message = hud + rec_line + assist_line
         # passive "update available" nudge (throttled once/day, silent on failure)
         try:
             from mrtoken.update_check import check_for_update
@@ -281,8 +257,7 @@ def main():
                 message += "  ·  " + nudge
         except Exception:
             pass
-        # Emit as a structured systemMessage (renders in the terminal CLI; the
-        # desktop GUI app runs the hook for ingestion but does not surface this).
+        # Emit as a structured systemMessage (Codex renders it as "↳ Hook · ...").
         print(json.dumps({"systemMessage": message}))
 
     except Exception as e:
