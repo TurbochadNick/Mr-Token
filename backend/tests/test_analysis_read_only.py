@@ -209,6 +209,29 @@ class AnalysisReadOnlyTest(unittest.TestCase):
                     self.assertIn("DIRECTION-2026-09-23.md", out)
                     self.assertEqual(snapshot(path), before)
 
+    def test_report_module_entry_point_is_an_analysis_path(self):
+        # `python -m mrtoken.report` (report.main) opened the store with a RAW sqlite3.connect:
+        # a missing path was CREATED, then it crashed ("no such table: trace"). It must use the
+        # same analysis opener as the CLI: refuse a missing store, never write any store, and
+        # still render one that was never through ingest.
+        import subprocess
+        env = dict(os.environ, PYTHONPATH=os.path.dirname(HERE))
+        for fixture in FIXTURES:
+            with self.subTest(fixture=fixture):
+                path = self.store(fixture)
+                before = snapshot(path)
+                p = subprocess.run([sys.executable, "-m", "mrtoken.report", "--list", "--db", path],
+                                   capture_output=True, text=True, env=env)
+                self.assertEqual(snapshot(path), before)
+                if fixture == "missing":
+                    self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+                    self.assertIn("store unavailable", p.stdout)
+                    self.assertFalse(os.path.exists(path))
+                else:
+                    self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                    if fixture in WITH_SESSION:  # positive control: it renders real data
+                        self.assertIn("s-main", p.stdout)
+
     def test_store_too_large_to_copy_is_refused_unwritten(self):
         import mrtoken.ingest as ingest
         with mock.patch.object(ingest, "ANALYSIS_COPY_LIMIT_BYTES", 1):

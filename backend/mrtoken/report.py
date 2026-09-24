@@ -137,7 +137,10 @@ def main(argv=None):
     ap.add_argument("--db", default=None, help="default: the project-local .token-tithe db")
     a = ap.parse_args(argv)
     from mrtoken.ingest import default_db_path
-    conn = sqlite3.connect(a.db or default_db_path())  # was a stray 'mrtoken.db' in cwd
+    # the same analysis opener as every CLI analysis command: never writes or creates the
+    # store (a missing one exits 2), and still renders one never through ingest
+    from mrtoken.cli import _open_for_analysis
+    conn = _open_for_analysis(a.db or default_db_path())
     if a.list or not a.session:
         list_traces(conn)
     else:
