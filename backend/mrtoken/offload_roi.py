@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from mrtoken.ingest import SessionSelectionError
 from mrtoken.rules import HUGE_TOOL_CHARS
 
 
@@ -23,10 +24,12 @@ def _trace(conn: sqlite3.Connection, prefix: str) -> dict:
         (prefix + "%",),
     ).fetchall()
     if not rows:
-        raise ValueError(f"no session matches {prefix!r}")
+        raise SessionSelectionError(
+            f"mrtoken: session unavailable: no session matches {prefix!r} in selected store")
     if len(rows) > 1:
         matches = ", ".join(r["session_id"][:12] for r in rows[:5])
-        raise ValueError(f"session prefix {prefix!r} is ambiguous: {matches}")
+        raise SessionSelectionError(
+            f"mrtoken: session unavailable: session prefix {prefix!r} is ambiguous: {matches}")
     return dict(rows[0])
 
 

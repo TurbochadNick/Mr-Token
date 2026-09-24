@@ -238,16 +238,24 @@ def cmd_roi(args):
 
 
 def cmd_offload_roi(args):
+    from mrtoken.ingest import SessionSelectionError
     from mrtoken.offload_roi import compare_offload_pair, print_offload_pair, to_json
-    report = compare_offload_pair(
-        _open_for_analysis(args.db),
-        args.ignore_session,
-        args.follow_session,
-        threshold_chars=args.threshold_chars,
-        ignore_passed=args.ignore_passed,
-        follow_passed=args.follow_passed,
-        mode="prevention" if getattr(args, "prevention", False) else "post-anchor",
-    )
+    conn = _open_for_analysis(args.db)
+    try:
+        report = compare_offload_pair(
+            conn,
+            args.ignore_session,
+            args.follow_session,
+            threshold_chars=args.threshold_chars,
+            ignore_passed=args.ignore_passed,
+            follow_passed=args.follow_passed,
+            mode="prevention" if getattr(args, "prevention", False) else "post-anchor",
+        )
+    except SessionSelectionError as exc:
+        print(exc)
+        raise SystemExit(1)
+    finally:
+        conn.close()
     if getattr(args, "json", False):
         print(to_json(report))
     else:
