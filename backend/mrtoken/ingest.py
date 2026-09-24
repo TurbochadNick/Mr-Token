@@ -276,8 +276,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     with open(SCHEMA) as f:
         conn.executescript(f.read())   # tables + indexes
     _migrate(conn)                     # add columns to pre-existing tables
-    conn.executescript(_SESSION_SUMMARY_VIEW)  # view references migrated columns
-    conn.executescript(_SESSION_DETAIL_VIEW)   # per-model-call timeline (drill-down)
+    # Rebuild BOTH views in ONE explicit transaction. executescript runs statements in
+    # autocommit, so a bare "DROP VIEW; CREATE VIEW" script commits the DROP on its own and
+    # another connection can find NO view in between ("no such table: session_detail" on
+    # export --detail, or on the TS UI's session_summary read, racing a Stop-hook ingest).
+    # Inside BEGIN/COMMIT a reader sees the old pair or the new pair, never neither.
+    conn.executescript("BEGIN;\n" + _SESSION_SUMMARY_VIEW   # references migrated columns
+                       + _SESSION_DETAIL_VIEW + "\nCOMMIT;")  # per-model-call timeline
     conn.commit()
 
 
