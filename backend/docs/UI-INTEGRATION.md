@@ -82,9 +82,16 @@ Safe on any DB: if the backend tables don't exist yet it returns
 
 > **Rules engine off since 2026-09-23** (DIRECTION-2026-09-23.md). No new recommendation
 > rows are written; the columns and the export `recommendations` array are KEPT (schema
-> v1, no bump) and carry historical rows only. **The local UI still shows those historical
-> rows as "addressable waste" and high-recommendation counts until the TypeScript side
-> changes**; that change is deferred and owned separately.
+> v1, no bump) and carry historical rows only. **Until the TypeScript side changes (deferred
+> by Zach, 2026-09-23), the local UI still DISPLAYS historical rows in two places: the
+> "High Recs" card (`web/src/main.tsx:445`) and the Markdown export's "High-priority
+> recommendations" line (`src/local-ui/api.ts:453`).** The addressable-waste sum
+> (`addressableWasteTokens`, `api.ts:209`) is still computed from the historical rows and
+> ships in the UI data payload, but is not rendered.
+>
+> `offload-roi --json` still carries a per-arm `recommendations` mapping built from
+> historical rows. It is machine-readable output and is NOT under the
+> `session_summary.v1` contract.
 
 Per-session recommendations live in the `recommendation` table (or the
 `recommendations` array of the export JSON):

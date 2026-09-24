@@ -107,19 +107,26 @@ def report(conn: sqlite3.Connection, prefix: str):
 
 
 def list_traces(conn: sqlite3.Connection):
-    rows = conn.execute("""
+    # The HIGH column counts high-severity RULES output. While the rules engine is off it is
+    # dropped entirely (not shown as 0: a zero reads as "no problems"); it re-arms with the gate.
+    from mrtoken.rules import advice_on
+    show_high = advice_on()
+    highs_sql = ("(SELECT COUNT(*) FROM recommendation r WHERE r.trace_id=t.id AND r.severity='high')"
+                 if show_high else "0")
+    rows = conn.execute(f"""
         SELECT t.session_id, t.title, t.started_at,
             (SELECT SUM(input_tokens+output_tokens) FROM model_call m WHERE m.trace_id=t.id) tot,
-            (SELECT COUNT(*) FROM recommendation r WHERE r.trace_id=t.id AND r.severity='high') highs
+            {highs_sql} highs
         FROM trace t ORDER BY t.started_at DESC LIMIT 40
     """).fetchall()
-    print(f"\n  {'SESSION':8}  {'DATE':10}  {'TOKENS':>12}  {'HIGH':>4}  TITLE")
-    print(f"  {'─'*8}  {'─'*10}  {'─'*12}  {'─'*4}  {'─'*28}")
+    high_head, high_rule = (f"  {'HIGH':>4}", f"  {'─'*4}") if show_high else ("", "")
+    print(f"\n  {'SESSION':8}  {'DATE':10}  {'TOKENS':>12}{high_head}  TITLE")
+    print(f"  {'─'*8}  {'─'*10}  {'─'*12}{high_rule}  {'─'*28}")
     for sid, title, started, tot, highs in rows:
         date = (started or "")[:10]
-        h = str(highs or "") if highs else ""
+        h = f"  {str(highs) if highs else '':>4}" if show_high else ""
         label = sid[:8] if not sid.startswith("agent-") else sid[:14]
-        print(f"  {label:8}  {date:10}  {fmt(tot or 0):>12}  {h:>4}  {title or ''}")
+        print(f"  {label:8}  {date:10}  {fmt(tot or 0):>12}{h}  {title or ''}")
     print()
 
 

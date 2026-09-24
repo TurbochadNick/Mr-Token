@@ -90,6 +90,73 @@ COMMANDS = [["fleet"], ["list"], ["report"], ["report", "s-"], ["subagents"], ["
 # refusal is intended.
 EXERCISED_FLOOR = 170
 EXERCISED_FLOOR_RULES_ON = 204
+# The EXACT cells expected to refuse, so an unexpected refusal cannot silently replace an
+# expected one at the same count. With the rules engine on: the designed refusals (empty
+# store; Claude-only subagents on non-Claude data). With it off (the shipped default): those,
+# plus exactly validate / explain / explain s- wherever they had rendered.
+REFUSED_RULES_ON = {
+    'codex_only x subagents',
+    'codex_only x subagents s-',
+    'empty x explain',
+    'empty x explain s-',
+    'empty x handoff',
+    'empty x handoff s-',
+    'empty x report s-',
+    'empty x roi s-',
+    'empty x status s-',
+    'empty x subagents',
+    'empty x subagents s-',
+    'empty x why',
+    'empty x why s-',
+    'minimal x subagents',
+    'no_cache_reads x subagents',
+    'null_columns x subagents',
+    'null_recommendation_fields x subagents',
+    'null_tool_fields x subagents',
+    'orphan_subagent x subagents',
+    'orphan_subagent x subagents s-',
+    'single_call x subagents',
+    'subagent_only x subagents',
+    'subagent_only x subagents s-',
+    'zero_calls x subagents',
+}
+REFUSED_ADDED_BY_RULES_OFF = {
+    'codex_only x explain',
+    'codex_only x explain s-',
+    'codex_only x validate',
+    'empty x validate',
+    'minimal x explain',
+    'minimal x explain s-',
+    'minimal x validate',
+    'no_cache_reads x explain',
+    'no_cache_reads x explain s-',
+    'no_cache_reads x validate',
+    'null_columns x explain',
+    'null_columns x explain s-',
+    'null_columns x validate',
+    'null_recommendation_fields x explain',
+    'null_recommendation_fields x explain s-',
+    'null_recommendation_fields x validate',
+    'null_tool_fields x explain',
+    'null_tool_fields x explain s-',
+    'null_tool_fields x validate',
+    'orphan_subagent x explain',
+    'orphan_subagent x explain s-',
+    'orphan_subagent x validate',
+    'single_call x explain',
+    'single_call x explain s-',
+    'single_call x validate',
+    'subagent_only x explain',
+    'subagent_only x explain s-',
+    'subagent_only x validate',
+    'subagent_zero_calls x explain',
+    'subagent_zero_calls x explain s-',
+    'subagent_zero_calls x validate',
+    'zero_calls x explain',
+    'zero_calls x explain s-',
+    'zero_calls x validate',
+}
+
 _REFUSALS = ("unavailable", "no matching", "supports claude", "not found", "no session")
 
 
@@ -138,6 +205,7 @@ class ZeroDataStatesTest(unittest.TestCase):
         self.assertEqual(crashes, {})
         self.assertGreaterEqual(total - len(refused), EXERCISED_FLOOR,
                                 f"{len(refused)} cells refused before analysis: {refused}")
+        self.assertEqual(set(refused), REFUSED_RULES_ON | REFUSED_ADDED_BY_RULES_OFF)
 
     def test_no_command_crashes_with_the_rules_engine_on(self):
         import mrtoken.rules as rules
@@ -146,6 +214,7 @@ class ZeroDataStatesTest(unittest.TestCase):
         self.assertEqual(crashes, {})
         self.assertGreaterEqual(total - len(refused), EXERCISED_FLOOR_RULES_ON,
                                 f"{len(refused)} cells refused before analysis: {refused}")
+        self.assertEqual(set(refused), REFUSED_RULES_ON)
 
     def test_sweep_detects_an_injected_crash(self):
         def broken(conn):

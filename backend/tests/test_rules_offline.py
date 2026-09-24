@@ -94,6 +94,8 @@ class RulesOfflineTest(unittest.TestCase):
         doctors = {"files": 2, "ok": 2, "failures": 0, "failed_checks": {}, "warnings": 0, "warning_checks": {}}
         return {
             "report": lambda: main(["report", "s-hist", "--db", db]),
+            "list": lambda: main(["list", "--db", db]),
+            "report (no session)": lambda: main(["report", "--db", db]),  # also reaches list_traces
             "fleet": lambda: main(["fleet", "--db", db]),
             "handoff": lambda: main(["handoff", "s-hist", "--db", db]),
             "roi": lambda: main(["roi", "s-hist", "--db", db]),
@@ -108,7 +110,7 @@ class RulesOfflineTest(unittest.TestCase):
         }
 
     # what each surface prints ONLY when rules output is being shown
-    MARKERS = {"report": MSG, "fleet": "huge_tool_output", "handoff": MSG, "roi": "Tactical waste",
+    MARKERS = {"report": MSG, "list": "HIGH", "report (no session)": "HIGH", "fleet": "huge_tool_output", "handoff": MSG, "roi": "Tactical waste",
                "savings": "addressable", "status": "feedback:", "why": "avoidable drivers",
                "assist": "assist worth it", "beta evidence": "huge_tool_output", "corpus": "huge_tool_output"}
 
