@@ -30,10 +30,13 @@ no ground truth: the gap is in the INPUTS, not the harness.
 | | `validate` | Its stated purpose is tuning thresholds, so it goes with them. Its checkers mostly cannot fail: low_cache is a tautology (fires at calls >= 10, "strong" iff calls >= 10); retry_loop and repeated_context re-read the rule's own trigger fields; context_rot has no checker (138 Codex firings silently skipped) |
 | | Cost on subscription sessions | There is no cost to be accurate about. No provider record carries billing_mode (0 keys in 1.77M Codex and 191k Claude lines); the price table is 75 days old with 8 Codex models unpriced (6% of calls) |
 
-**Also switched off, carded separately:** the UserPromptSubmit proc-engine intervention
-(`mrtoken.intervene`). It fired at initiation and has no evidence of discriminating better
-than the rules engine. It is silenced (ede40af), not deleted, and needs its own evidence
-before anyone revives or removes it.
+**Also switched off, carded separately:** the proc-engine intervention (`mrtoken.intervene`),
+SILENCED ON BOTH PROVIDERS, not deleted. It has no evidence of discriminating better than the
+rules engine, and needs its own evidence before anyone revives or removes it.
+- Claude: the UserPromptSubmit hook, which fired at initiation, is silent (ede40af).
+- Codex: `on_stop.CODEX_INTERVENTION = False` (one line to revive). Its only Codex input is
+  `analyse()`'s rule names, so the rules gate already starves it; the switch keeps it off BY
+  DECISION if the rules engine is ever re-enabled.
 
 ## Design principles
 
@@ -101,7 +104,7 @@ new data plumbing.
 2. The offline commit: rules engine, thresholds, `validate`, the addressable half of savings,
    with RULE-CALIBRATION.md superseded, citing this record.
 3. Decide re-ingest vs flag for the six stale sessions.
-4. Carded: the UserPromptSubmit intervention engine; the TypeScript `openDatabase` write on
+4. Carded: the proc-engine intervention (silenced on both providers); the TypeScript `openDatabase` write on
    every open, including the local UI read path (taken to Command); the WAL read-only-dir
    crash at ingest.py:331; offload-roi ValueError on sessionless stores; report.py:129 raw
    connect; `explain` exit code; a non-editable install to end live-from-tree deploys.

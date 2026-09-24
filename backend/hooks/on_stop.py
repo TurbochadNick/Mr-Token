@@ -25,6 +25,13 @@ CODEX_DIRS = (os.path.expanduser("~/.codex/sessions"),
               os.path.expanduser("~/.codex/archived_sessions"))
 CONTEXT_WARN_PCT = 70
 
+# The Codex proc-engine intervention (mrtoken.intervene.decide) is SILENCED by decision
+# (Zach, 2026-09-23), as the Claude one was in ede40af: silenced, not deleted. Set True to
+# revive it. It is also starved while rules.RULES_ENABLED is False (its only Codex input is
+# analyse()'s rule names), but this switch keeps it off BY DECISION if the rules engine is
+# ever re-enabled. See backend/docs/DIRECTION-2026-09-23.md.
+CODEX_INTERVENTION = False
+
 
 from mrtoken.hud import fmt_tokens as _fmt_token_count  # noqa: E402  (one formatter, shared)
 
@@ -171,15 +178,17 @@ def main():
                     totals["recs"]        += len(recs)
                     totals["high"]        += sum(1 for rc in recs if rc["severity"] == "high")
                     session_id = r["session_id"]  # for the rec-line query below
-                    # proc engine for Codex: live ctx % from the rollout + fired signals
-                    try:
-                        from mrtoken.intervene import decide
-                        cpct = (codex_usage or {}).get("ctx_pct")
-                        if cpct is not None:
-                            codex_iv = decide(session_id, cpct, None,
-                                              [rc["rule"] for rc in recs])
-                    except Exception:
-                        codex_iv = None
+                    # proc engine for Codex: live ctx % from the rollout + fired signals.
+                    # Silenced by decision (CODEX_INTERVENTION above); not called while off.
+                    if CODEX_INTERVENTION:
+                        try:
+                            from mrtoken.intervene import decide
+                            cpct = (codex_usage or {}).get("ctx_pct")
+                            if cpct is not None:
+                                codex_iv = decide(session_id, cpct, None,
+                                                  [rc["rule"] for rc in recs])
+                        except Exception:
+                            codex_iv = None
         else:
             for path in paths:
                 parent = path.split(os.sep)[-3] if "subagents" in path else None
