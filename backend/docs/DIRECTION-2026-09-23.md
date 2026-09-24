@@ -21,7 +21,7 @@ no ground truth: the gap is in the INPUTS, not the harness.
 | **Works** | Ingestion (current dedup is correct) | Every ingest after dedup fix 2847a46 (2026-06-20) shows 0% duplicate rows |
 | | The HUD, both providers | ede40af: one field set, total expenditure, measured-or-absent window, no cost |
 | | Plain measurement (tokens, window, cache ratio, carry) | Provider totals, deduplicated per API response |
-| **Broken but sound** (fix, keep) | Analysis commands wrote the store | 9 read paths opened the writer; fix 5b2577e + e819b1b on fix/analysis-read-only-opener, pending re-review |
+| **Broken but sound** (fix, keep) | Analysis commands wrote the store | 9 read paths opened the writer; fixed by 5b2577e + e819b1b, LANDED as 06b53ef (2026-09-23) |
 | | Crashes on zero-data states | 82e9c58 (fleet, empty DB), 7acf493 (roi, any session without cache reads); guard 8a696d6 |
 | | Stale inflated history | Claude store: 6 sessions ingested 2026-06-15, before 2847a46, hold 1,469 rows for 736 API calls (~17% tokens, ~41% est. cost over). Re-ingest or flag: not yet decided |
 | | Label derivation | "total tokens" on a subtotal across 5 printers: ee64359, 62c9e44, 929a676 |
@@ -100,9 +100,10 @@ new data plumbing.
 
 ## Sequence from here
 
-1. Re-review and land the read-only opener (e819b1b). Its landing is also a live deploy.
-2. The offline commit: rules engine, thresholds, `validate`, the addressable half of savings,
-   with RULE-CALIBRATION.md superseded, citing this record.
+1. DONE: the read-only opener, reviewed and landed as 06b53ef.
+2. DONE: the offline commit. Rules engine, thresholds, `validate` and the addressable half of
+   savings are switched off behind `rules.RULES_ENABLED` (808a583, review fixes 7c4e800),
+   RULE-CALIBRATION.md is superseded, and the Codex intervention is silenced (23e680e).
 3. Decide re-ingest vs flag for the six stale sessions.
 4. Carded: the proc-engine intervention (silenced on both providers); the TypeScript `openDatabase` write on
    every open, including the local UI read path (taken to Command); the WAL read-only-dir
