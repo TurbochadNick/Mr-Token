@@ -14,18 +14,29 @@ Options shared by most commands:
 """
 import argparse, sys
 
-from mrtoken.ingest import ReadOnlyDatabaseError, connect, connect_readonly, default_db_path
+from mrtoken.ingest import (ReadOnlyDatabaseError, connect, connect_for_analysis, connect_readonly,
+                            default_db_path)
 
 DEFAULT_DB = default_db_path()
 
 
 def _open(db_path):
-    """Open a DB ensuring our tables, migrations, and views exist (idempotent).
+    """Open a DB for WRITING, ensuring our tables, migrations, and views exist.
 
-    Read commands use this so they never crash on a DB that hasn't been through
-    ingest — e.g. a pilot DB created by the TypeScript `init` (events table only).
+    Only writer commands use this: it creates a missing store and migrates schema and
+    views in place. Analysis commands use _open_for_analysis, which never writes.
     """
     return connect(db_path)
+
+
+def _open_for_analysis(db_path):
+    """Analysis open: never writes or creates the store; still renders a store that was
+    never through ingest (e.g. a TypeScript `init` pilot DB) from an in-memory copy."""
+    try:
+        return connect_for_analysis(db_path)
+    except ReadOnlyDatabaseError as exc:
+        print(exc)
+        raise SystemExit(2)
 
 
 def _open_readonly(db_path):
@@ -85,18 +96,18 @@ def cmd_report(args):
 
 def cmd_list(args):
     from mrtoken.report import list_traces
-    list_traces(_open(args.db))
+    list_traces(_open_for_analysis(args.db))
 
 
 def cmd_subagents(args):
     from mrtoken.subagents import subagent_report
     print(_store_notice(args))
-    subagent_report(_open(args.db), args.session)
+    subagent_report(_open_for_analysis(args.db), args.session)
 
 
 def cmd_fleet(args):
     from mrtoken.fleet import fleet_summary
-    fleet_summary(_open(args.db))
+    fleet_summary(_open_for_analysis(args.db))
 
 
 def cmd_export(args):
@@ -104,10 +115,10 @@ def cmd_export(args):
         if not args.session:
             print("mrtoken-transcript export --detail: give a session prefix"); sys.exit(1)
         from mrtoken.export import export_detail
-        print(export_detail(_open(args.db), args.session))
+        print(export_detail(_open_for_analysis(args.db), args.session))
         return
     from mrtoken.export import export_report
-    print(export_report(_open(args.db), args.session, redact=getattr(args, "redact", False),
+    print(export_report(_open_for_analysis(args.db), args.session, redact=getattr(args, "redact", False),
                         since=getattr(args, "since", None)))
 
 
@@ -213,16 +224,16 @@ def cmd_why(args):
 def cmd_roi(args):
     if getattr(args, "measure", False):
         from mrtoken.roi import print_roi_measure
-        print_roi_measure(_open(args.db))
+        print_roi_measure(_open_for_analysis(args.db))
     else:
         from mrtoken.roi import print_roi
-        print_roi(_open(args.db), args.session)
+        print_roi(_open_for_analysis(args.db), args.session)
 
 
 def cmd_offload_roi(args):
     from mrtoken.offload_roi import compare_offload_pair, print_offload_pair, to_json
     report = compare_offload_pair(
-        _open(args.db),
+        _open_for_analysis(args.db),
         args.ignore_session,
         args.follow_session,
         threshold_chars=args.threshold_chars,
@@ -293,7 +304,7 @@ def cmd_beta_summary(args):
 def cmd_validate(args):
     from mrtoken.validate import validate_db, print_report
     import json
-    report = validate_db(_open(args.db))
+    report = validate_db(_open_for_analysis(args.db))
     if getattr(args, "json", False):
         print(json.dumps(report, indent=2))
     else:
@@ -314,17 +325,17 @@ def cmd_explain(args):
     from mrtoken.feedback import print_explain
     print(_store_notice(args))
     kwargs = {"source": "codex"} if args.codex else {}
-    print_explain(_open(args.db), args.session, **kwargs)
+    print_explain(_open_for_analysis(args.db), args.session, **kwargs)
 
 
 def cmd_feedback(args):
     from mrtoken.feedback import record_feedback, print_feedback_summary
-    conn = _open(args.db)
     if getattr(args, "summary", False) or not args.session:
-        print_feedback_summary(conn); return
+        print_feedback_summary(_open_for_analysis(args.db)); return
     if not args.rule or not args.verdict:
         print("usage: mrtoken-transcript feedback <session> <rule> right|wrong|unsure [--note ...]\n"
               "   or: mrtoken-transcript feedback --summary"); sys.exit(1)
+    conn = _open(args.db)
     try:
         r = record_feedback(conn, args.session, args.rule, args.verdict, getattr(args, "note", None))
     except ValueError as e:
