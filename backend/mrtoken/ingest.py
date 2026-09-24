@@ -281,8 +281,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     # another connection can find NO view in between ("no such table: session_detail" on
     # export --detail, or on the TS UI's session_summary read, racing a Stop-hook ingest).
     # Inside BEGIN/COMMIT a reader sees the old pair or the new pair, never neither.
-    conn.executescript("BEGIN;\n" + _SESSION_SUMMARY_VIEW   # references migrated columns
-                       + _SESSION_DETAIL_VIEW + "\nCOMMIT;")  # per-model-call timeline
+    # If a statement fails, executescript raises with the transaction still OPEN (the DROPs
+    # applied, the view missing on this connection), and a later commit would make that
+    # loss durable: roll back first, then RE-RAISE. The error is never swallowed.
+    try:
+        conn.executescript("BEGIN;\n" + _SESSION_SUMMARY_VIEW   # references migrated columns
+                           + _SESSION_DETAIL_VIEW + "\nCOMMIT;")  # per-model-call timeline
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
     conn.commit()
 
 

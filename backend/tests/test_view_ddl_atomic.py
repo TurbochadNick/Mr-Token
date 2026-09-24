@@ -14,6 +14,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -51,6 +52,30 @@ class ViewDdlAtomicTest(unittest.TestCase):
                 self.assertEqual(seen, {v: 1 for v in VIEWS})       # and neither ever vanished
                 for v in VIEWS:                                     # and both exist afterwards
                     self.assertEqual(visible(reader, v), 1)
+                    reader.execute(f"SELECT * FROM {v} LIMIT 0")
+                writer.close(); reader.close()
+
+    def test_a_failing_rebuild_rolls_back_and_re_raises(self):
+        # the second CREATE fails (a syntax error, so it fails at CREATE time in every
+        # SQLite); the error must propagate, the transaction must not be left open, and the
+        # OLD views must survive on the writer and on another connection
+        import mrtoken.ingest as ingest
+        broken = "DROP VIEW IF EXISTS session_detail;\nCREATE VIEW session_detail AS SELEC 1;\n"
+        for journal in ("DELETE", "WAL"):
+            with self.subTest(journal=journal):
+                path = self.store(journal)
+                writer, reader = sqlite3.connect(path), sqlite3.connect(path)
+                with unittest.mock.patch.object(ingest, "_SESSION_DETAIL_VIEW", broken):
+                    with self.assertRaises(sqlite3.OperationalError):
+                        _ensure_schema(writer)
+                self.assertFalse(writer.in_transaction)
+                for conn in (writer, reader):
+                    for v in VIEWS:
+                        self.assertEqual(visible(conn, v), 1, (v, conn is writer))
+                writer.commit()                              # a later commit must not lose them
+                self.assertEqual({v: visible(reader, v) for v in VIEWS}, {v: 1 for v in VIEWS})
+                _ensure_schema(writer)                       # a subsequent valid rebuild works
+                for v in VIEWS:
                     reader.execute(f"SELECT * FROM {v} LIMIT 0")
                 writer.close(); reader.close()
 
