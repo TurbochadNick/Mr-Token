@@ -119,7 +119,8 @@ def print_diagnosis(conn: sqlite3.Connection, prefix: str | None, *,
         bar = "█" * round(pct * 24)
         amount = f"~${_fmt(val)}" if d["billing_mode"] == "api" else f"~{_fmt(val)} tok"
         print(f"    {name:24} {pct:5.0%}  {bar}  {amount}")
-    if d["drivers"]:
+    from mrtoken.rules import advice_on  # drivers use the rules' thresholds: off with the rules
+    if d["drivers"] and advice_on():
         print("\n  avoidable drivers:")
         for name, detail in d["drivers"]:
             print(f"    • {name}: {detail}")

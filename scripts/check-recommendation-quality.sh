@@ -28,6 +28,13 @@ sys.path.insert(0, os.path.join(root, "backend"))
 
 from mrtoken.datadir import codex_db_path
 from mrtoken.ingest import connect, default_db_path
+from mrtoken.rules import RULES_ENABLED, OFF_NOTICE
+if not RULES_ENABLED:
+    # Release step SUSPENDED while the rules engine is off (re-arms with the gate): with no
+    # new recommendations it would score only historical rows, certifying a calibration
+    # loop that is switched off. Refuse before opening any database.
+    print(f"check-recommendation-quality: {OFF_NOTICE}")
+    sys.exit(3)
 from mrtoken.validate import validate_db
 
 parser = argparse.ArgumentParser(

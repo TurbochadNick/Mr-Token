@@ -148,5 +148,7 @@ def print_savings(conn: sqlite3.Connection) -> None:
         print(f"    {tool:10} ~{d['tokens']:>12,} tok  ({d['uses']} use(s))")
     if not r["by_tool"]:
         print("    (none yet — savings log fills as offload/handoff get used)")
-    print(f"  addressable (estimated upper bound; recommendation estimates may overlap) ~{addr:>12,} tok  ⚠ not yet realized")
+    from mrtoken.rules import advice_on  # addressable = recommendation estimates: off with the rules
+    if advice_on():
+        print(f"  addressable (estimated upper bound; recommendation estimates may overlap) ~{addr:>12,} tok  ⚠ not yet realized")
     print(f"{'─'*56}\n")

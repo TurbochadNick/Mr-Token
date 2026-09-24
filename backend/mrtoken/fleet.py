@@ -59,8 +59,9 @@ def fleet_summary(conn: sqlite3.Connection):
     print(f"  est cost (API-eq) {'$'+f'{cost:,.2f}':>14}  ⚠ not a real bill")
     print(f"{'─'*54}")
 
-    # recommendation breakdown
-    rec_rows = conn.execute("""
+    # recommendation breakdown (switched off: see rules.RULES_ENABLED)
+    from mrtoken.rules import advice_on
+    rec_rows = [] if not advice_on() else conn.execute("""
         SELECT rule, severity, COUNT(*) n FROM recommendation
         GROUP BY rule, severity
         ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, rule
@@ -83,7 +84,7 @@ def fleet_summary(conn: sqlite3.Connection):
     """).fetchall()
     for sid, title, ts, total, highs in top:
         date = (ts or "")[:10]
-        h = f"  {highs}✗" if highs else ""
+        h = f"  {highs}✗" if (highs and advice_on()) else ""
         print(f"    {sid[:8]}  {date}  {fmt(total):>12}  {title or ''}{h}")
 
     # subagent summary

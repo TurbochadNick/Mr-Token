@@ -68,7 +68,11 @@ def report(conn: sqlite3.Connection, prefix: str):
             tag = "  ERROR" if err else ""
             print(f"    {fmt(oc//4):>8} tok est   {name}{tag}")
 
-    # recommendations from rule engine
+    # recommendations from rule engine (switched off: see rules.RULES_ENABLED)
+    from mrtoken.rules import advice_on
+    if not advice_on():
+        print(f"{'─'*58}\n")
+        return
     recs = conn.execute("""SELECT rule,severity,message,evidence_json,est_savings_tokens
         FROM recommendation WHERE trace_id=? ORDER BY
         CASE severity WHEN 'high' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, rule""",

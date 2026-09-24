@@ -37,6 +37,9 @@ def projected_savings(conn: sqlite3.Connection, tid: int) -> int:
 
 
 def assist_suggestion(conn: sqlite3.Connection, tid: int, enabled: bool | None = None) -> str | None:
+    from mrtoken.rules import advice_on  # sized from recommendation estimates: off with the rules
+    if not advice_on():
+        return None
     """Return a one-line assist suggestion, or None when the assist is disabled or
     the savings don't clear the gate. NEVER runs the assist — only suggests it."""
     if enabled is None:

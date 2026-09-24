@@ -13,6 +13,8 @@ Use this to collect evidence from the `0.5.8` beta loop. One row per tester.
 - Release gates: `./scripts/accept-codex-hud.sh`,
   `./scripts/accept-install-lifecycle.sh`, and
   `./scripts/check-recommendation-quality.sh --db <scratch-codex.db> --refresh-rules`
+  (SUSPENDED while the rules engine is off: it exits 3 and re-arms with the gate; see
+  backend/docs/DIRECTION-2026-09-23.md)
 
 ## Tester Rows
 

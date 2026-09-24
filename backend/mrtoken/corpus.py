@@ -107,7 +107,10 @@ def print_corpus_report(agg: dict) -> None:
     if agg["cache_hit_ratio"] is not None:
         print(f"  cache hit ratio   {agg['cache_hit_ratio']:>11.1%}")
     print(f"{'─'*60}")
-    if agg["rule_fires"]:
+    from mrtoken.rules import advice_on, OFF_NOTICE
+    if not advice_on():
+        print(f"  rule fires: {OFF_NOTICE}")
+    elif agg["rule_fires"]:
         print("  rule fires (NOT a precision proxy — run `validate` on the source DB):")
         order = {"high": 0, "warn": 1}
         for rule, sevs in sorted(agg["rule_fires"].items(),

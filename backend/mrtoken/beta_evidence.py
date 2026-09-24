@@ -88,7 +88,9 @@ def summarize_beta_evidence(paths: list[str]) -> dict:
         blockers.append("need at least two redacted exports")
     if exports["sessions"] < 1:
         blockers.append("need substantive tester sessions")
-    if not exports["rule_fires"]:
+    from mrtoken.rules import advice_on
+    # suspended while the rules engine is off (re-arms with it): no fires is then expected
+    if advice_on() and not exports["rule_fires"]:
         blockers.append("need at least one rule fire on tester data")
     if doctors["files"] < exports["files"]:
         blockers.append("need a doctor bundle for each tester export")
@@ -137,7 +139,10 @@ def print_beta_evidence(report: dict) -> None:
     if doctors["warnings"]:
         warned = ", ".join(f"{k} x{v}" for k, v in sorted(doctors["warning_checks"].items()))
         print(f"doctor warnings:  {warned}")
-    if exports["rule_fires"]:
+    from mrtoken.rules import advice_on, OFF_NOTICE
+    if not advice_on():
+        print(f"\nrule fires: {OFF_NOTICE}")
+    elif exports["rule_fires"]:
         print("\nrule fires:")
         order = {"high": 0, "warn": 1}
         for rule, sevs in sorted(exports["rule_fires"].items(),

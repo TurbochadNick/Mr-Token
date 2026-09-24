@@ -82,10 +82,14 @@ COMMANDS = [["fleet"], ["list"], ["report"], ["report", "s-"], ["subagents"], ["
             ["roi"], ["roi", "s-"], ["savings"], ["status", "s-"], ["why"], ["why", "s-"],
             ["explain"], ["explain", "s-"], ["export"], ["export", "s-"], ["validate"],
             ["handoff"], ["handoff", "s-"]]
-# Cells that reached analysis on 2026-09-23: 204 of 228. The other 24 are designed
-# refusals (empty store; Claude-only subagents on non-Claude data). Lower this only
-# after confirming a new refusal is intended.
-EXERCISED_FLOOR = 204
+# Cells that reached analysis on 2026-09-23: 204 of 228 with the rules engine on; the other
+# 24 are designed refusals (empty store; Claude-only subagents on non-Claude data). With the
+# rules engine switched off (the shipped default, rules.RULES_ENABLED), validate / explain /
+# explain s- also refuse by design: 34 more cells, verified to be exactly those three
+# commands, so 170. Both floors are asserted. Lower either only after confirming a new
+# refusal is intended.
+EXERCISED_FLOOR = 170
+EXERCISED_FLOOR_RULES_ON = 204
 _REFUSALS = ("unavailable", "no matching", "supports claude", "not found", "no session")
 
 
@@ -133,6 +137,14 @@ class ZeroDataStatesTest(unittest.TestCase):
         self.assertEqual(total, len(STATES) * len(COMMANDS))
         self.assertEqual(crashes, {})
         self.assertGreaterEqual(total - len(refused), EXERCISED_FLOOR,
+                                f"{len(refused)} cells refused before analysis: {refused}")
+
+    def test_no_command_crashes_with_the_rules_engine_on(self):
+        import mrtoken.rules as rules
+        with mock.patch.object(rules, "RULES_ENABLED", True):
+            crashes, refused, total = sweep(tempfile.mkdtemp(dir=self.tmp), STATES, COMMANDS)
+        self.assertEqual(crashes, {})
+        self.assertGreaterEqual(total - len(refused), EXERCISED_FLOOR_RULES_ON,
                                 f"{len(refused)} cells refused before analysis: {refused}")
 
     def test_sweep_detects_an_injected_crash(self):

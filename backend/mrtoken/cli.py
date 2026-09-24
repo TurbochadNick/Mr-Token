@@ -223,6 +223,12 @@ def cmd_why(args):
 
 def cmd_roi(args):
     if getattr(args, "measure", False):
+        # its cohort IS "sessions where fresh_handoff fired": off with the rules, and refused
+        # before the store is opened, like validate / explain / feedback
+        from mrtoken.rules import advice_on, OFF_NOTICE
+        if not advice_on():
+            print(f"mrtoken roi --measure: {OFF_NOTICE}")
+            raise SystemExit(3)
         from mrtoken.roi import print_roi_measure
         print_roi_measure(_open_for_analysis(args.db))
     else:
@@ -302,6 +308,10 @@ def cmd_beta_summary(args):
 
 
 def cmd_validate(args):
+    from mrtoken.rules import advice_on, OFF_NOTICE
+    if not advice_on():
+        print(f"mrtoken validate: {OFF_NOTICE}")
+        raise SystemExit(3)
     from mrtoken.validate import validate_db, print_report
     import json
     report = validate_db(_open_for_analysis(args.db))
@@ -322,6 +332,10 @@ def cmd_corpus(args):
 
 
 def cmd_explain(args):
+    from mrtoken.rules import advice_on, OFF_NOTICE
+    if not advice_on():
+        print(f"mrtoken explain: {OFF_NOTICE}")
+        raise SystemExit(3)
     from mrtoken.feedback import print_explain
     print(_store_notice(args))
     kwargs = {"source": "codex"} if args.codex else {}
@@ -329,6 +343,10 @@ def cmd_explain(args):
 
 
 def cmd_feedback(args):
+    from mrtoken.rules import advice_on, OFF_NOTICE
+    if not advice_on():
+        print(f"mrtoken feedback: {OFF_NOTICE}")
+        raise SystemExit(3)
     from mrtoken.feedback import record_feedback, print_feedback_summary
     if getattr(args, "summary", False) or not args.session:
         print_feedback_summary(_open_for_analysis(args.db)); return

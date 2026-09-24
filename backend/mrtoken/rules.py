@@ -418,8 +418,28 @@ def write_recommendations(conn: sqlite3.Connection, tid: int, recs: list[dict]):
     conn.commit()
 
 
+# SWITCHED OFF 2026-09-23 (backend/docs/DIRECTION-2026-09-23.md). Every rule compares against
+# a fixed constant, never the user's own distribution, and the base-rate controls show the
+# testable ones largely detect session size; validate cannot establish otherwise (no ground
+# truth). With the gate off, analyse() computes and writes NOTHING: historical rows are left
+# untouched, and no human-facing surface shows recommendation content. Re-enable only with
+# new evidence; this is a gate, not a deletion.
+RULES_ENABLED = False
+OFF_NOTICE = ("switched off: rule-based advice is off since 2026-09-23 — see "
+              "backend/docs/DIRECTION-2026-09-23.md")
+
+
+def advice_on() -> bool:
+    """Whether any surface may show rules-engine output (read at call time, so a test or a
+    future re-enable flips every surface at once). Historical rows stay in the store."""
+    return RULES_ENABLED
+
+
 def analyse(conn: sqlite3.Connection, tid: int) -> list[dict]:
-    """Run rules + persist. Returns recommendation dicts."""
+    """Run rules + persist. Returns recommendation dicts. Returns [] and writes nothing while
+    RULES_ENABLED is False."""
+    if not RULES_ENABLED:
+        return []
     recs = run_rules(conn, tid)
     write_recommendations(conn, tid, recs)
     return recs

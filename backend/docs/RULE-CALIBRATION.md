@@ -1,5 +1,13 @@
 # Rule calibration log
 
+> **SUPERSEDED 2026-09-23. Kept as history; do not use its conclusions.** The
+> "well-calibrated" verdicts and precision-proxy figures below come from `validate`, which
+> was later shown to be mostly unable to fail: one checker is a tautology, two re-read the
+> rule's own trigger fields, and the testable ones pass at near their base rate
+> ([ACCURACY-VALIDATION-2026-09-23.md](ACCURACY-VALIDATION-2026-09-23.md)). The rules engine,
+> its thresholds and `validate` are switched off (gate: `rules.RULES_ENABLED`), per
+> [DIRECTION-2026-09-23.md](DIRECTION-2026-09-23.md).
+
 Running record of `mrtoken-transcript validate` (precision PROXY, not labels) on a
 real corpus, plus any threshold changes and their rationale. See ROADMAP.md 2.2.
 

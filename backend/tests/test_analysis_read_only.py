@@ -91,6 +91,9 @@ SESSIONLESS = [["list"], ["subagents"], ["fleet"], ["export"], ["roi"], ["roi", 
                ["validate"], ["explain"], ["feedback", "--summary"]]
 SESSION = [["subagents", "s-"], ["export", "s-"], ["export", "--detail", "s-"], ["roi", "s-"],
            ["offload-roi", "s-", "s-"], ["explain", "s-"]]
+# Rules-engine commands: switched off (rules.RULES_ENABLED, 2026-09-23). They refuse with exit 3
+# BEFORE opening any store, so they still meet the never-writes invariant, but they render nothing.
+RULES_OFF = {"validate", "explain", "explain s-", "feedback --summary", "roi --measure"}
 
 
 def snapshot(path):
@@ -163,13 +166,17 @@ class AnalysisReadOnlyTest(unittest.TestCase):
                 path = self.store("missing")
                 code, out, crash = run(args, path)
                 self.assertIsNone(crash)
-                self.assertEqual(code, 2)
-                self.assertIn("store unavailable", out)
+                if " ".join(args) in RULES_OFF:  # refuses before touching the store
+                    self.assertEqual(code, 3)
+                    self.assertIn("switched off", out)
+                else:
+                    self.assertEqual(code, 2)
+                    self.assertIn("store unavailable", out)
                 self.assertFalse(os.path.exists(path))
 
     def test_store_never_through_ingest_still_renders(self):
         for fixture in ("ts_pilot", "bare", "old_schema", "healthy"):
-            for args in SESSIONLESS:
+            for args in [a for a in SESSIONLESS if " ".join(a) not in RULES_OFF]:
                 with self.subTest(fixture=fixture, command=" ".join(args)):
                     code, out, crash = run(args, self.store(fixture))
                     self.assertIsNone(crash)
@@ -180,7 +187,7 @@ class AnalysisReadOnlyTest(unittest.TestCase):
         # sessions exist only in old_schema/healthy; on the others "session unavailable"
         # is the correct answer, so they are covered by the invariant test only
         for fixture in WITH_SESSION:
-            for args in SESSION + [["list"], ["fleet"]]:
+            for args in [a for a in SESSION if " ".join(a) not in RULES_OFF] + [["list"], ["fleet"]]:
                 with self.subTest(fixture=fixture, command=" ".join(args)):
                     code, out, crash = run(args, self.store(fixture))
                     self.assertIsNone(crash)
@@ -189,6 +196,18 @@ class AnalysisReadOnlyTest(unittest.TestCase):
                         self.assertRegex(out, r"model calls\s+1\b")
                     else:
                         self.assertIn("s-main", out)
+
+    def test_rules_off_commands_refuse_and_write_nothing(self):
+        for fixture in FIXTURES:
+            for args in [a for a in SESSIONLESS + SESSION if " ".join(a) in RULES_OFF]:
+                with self.subTest(fixture=fixture, command=" ".join(args)):
+                    path = self.store(fixture)
+                    before = snapshot(path)
+                    code, out, crash = run(args, path)
+                    self.assertIsNone(crash)
+                    self.assertEqual(code, 3)
+                    self.assertIn("DIRECTION-2026-09-23.md", out)
+                    self.assertEqual(snapshot(path), before)
 
     def test_store_too_large_to_copy_is_refused_unwritten(self):
         import mrtoken.ingest as ingest

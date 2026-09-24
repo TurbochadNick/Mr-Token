@@ -42,7 +42,7 @@ Maintainer release check before sending a new build:
 ```bash
 ./scripts/accept-codex-hud.sh
 ./scripts/accept-install-lifecycle.sh
-./scripts/check-recommendation-quality.sh --db /path/to/scratch-codex.db --refresh-rules
+./scripts/check-recommendation-quality.sh --db /path/to/scratch-codex.db --refresh-rules  # SUSPENDED while the rules engine is off (exits 3); see backend/docs/DIRECTION-2026-09-23.md
 ```
 
 Use a scratch copy for the recommendation-quality gate if you want to refresh

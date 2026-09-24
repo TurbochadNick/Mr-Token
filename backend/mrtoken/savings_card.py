@@ -87,7 +87,8 @@ def build_savings_card(recommendations, *, routing: dict | None = None,
 
 def card_for_session(conn, tid: int, *, routing: dict | None = None) -> dict:
     """Read existing metadata and current suppression policy; never writes either."""
-    rows = conn.execute(
+    from mrtoken.rules import advice_on  # rule-derived card content is switched off
+    rows = [] if not advice_on() else conn.execute(
         "SELECT rule, severity, message, evidence_json FROM recommendation WHERE trace_id=?", (tid,)
     ).fetchall()
     recommendations = [

@@ -265,7 +265,12 @@ def print_roi(conn: sqlite3.Connection, prefix: str | None) -> None:
         print(f"    {r['deep_sessions']} session(s) ran ≥30 calls deep, where a mid-session reset")
         print(f"    (/mr-handoff) would have cut the carry. This is where most spend hides.")
 
-    # ── 2. TACTICAL: smaller rule-based waste ──
+    # ── 2. TACTICAL: smaller rule-based waste (switched off with the rules engine: its
+    # categories come from rule thresholds and recommendation estimates) ──
+    from mrtoken.rules import advice_on
+    if not advice_on():
+        print(f"\n  All figures are ESTIMATES of opportunity; true ROI needs a controlled trial.\n")
+        return
     print(f"\n  ② Tactical waste (smaller; conservative, categories may overlap):")
     for name, tok in r["categories"].items():
         pct = tok / r["total_tokens"] if r["total_tokens"] else 0

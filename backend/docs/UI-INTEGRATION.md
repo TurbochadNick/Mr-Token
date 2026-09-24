@@ -80,6 +80,12 @@ Safe on any DB: if the backend tables don't exist yet it returns
 | `recommendation_count` | int | rows in `recommendation` for this session |
 | `high_recommendations` | int | severity = high |
 
+> **Rules engine off since 2026-09-23** (DIRECTION-2026-09-23.md). No new recommendation
+> rows are written; the columns and the export `recommendations` array are KEPT (schema
+> v1, no bump) and carry historical rows only. **The local UI still shows those historical
+> rows as "addressable waste" and high-recommendation counts until the TypeScript side
+> changes**; that change is deferred and owned separately.
+
 Per-session recommendations live in the `recommendation` table (or the
 `recommendations` array of the export JSON):
 `rule, severity (high|warn|info), message, est_savings_tokens`.

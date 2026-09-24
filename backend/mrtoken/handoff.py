@@ -252,7 +252,8 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
         "SELECT model_calls, cumulative_expenditure_tokens, cumulative_expenditure_provenance, "
         "api_est_cost_usd, billing_mode FROM session_summary WHERE trace_id=?", (tid,)).fetchone()
     calls, total_tok, total_provenance, api_cost, billing_mode = summary or (None,)*5
-    recs = conn.execute(
+    from mrtoken.rules import advice_on  # rule-based "open signals" are switched off
+    recs = [] if not advice_on() else conn.execute(
         "SELECT rule, severity, message FROM recommendation WHERE trace_id=? "
         "ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END", (tid,)).fetchall()
 

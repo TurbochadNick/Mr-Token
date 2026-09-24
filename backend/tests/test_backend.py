@@ -15,6 +15,13 @@ from mrtoken.rules import rule_huge_tool_output, rule_retry_loop
 
 _OPEN_TEST_CONNS = []
 
+# The rules engine is switched off by default (rules.RULES_ENABLED, 2026-09-23). Tests of the
+# ENGINE-ON path force it back on with this decorator; their assertions are unchanged, so they
+# still test the engine and the surfaces it feeds, which remain one line from re-enabled.
+from unittest import mock as _mock
+import mrtoken.rules as _rules
+rules_on = _mock.patch.object(_rules, "RULES_ENABLED", True)
+
 
 def connect(*args, **kwargs):
     conn = _connect(*args, **kwargs)
@@ -337,6 +344,7 @@ class BackendTest(unittest.TestCase):
             subagent_report(conn, None)
         self.assertRegex(out.getvalue(), re.compile(r"^  zc-paren\s+1\s+0\s", re.M))
 
+    @rules_on
     def test_roi_session_without_cache_reads_renders(self):
         # _handoff_carry is None when a session re-read no cache (zero calls, or a
         # Codex / short session); roi <session> must render, not take the fleet branch.
@@ -356,6 +364,7 @@ class BackendTest(unittest.TestCase):
                 self.assertIn("no cache reads recorded for this session", out.getvalue())
                 self.assertIn("Tactical waste", out.getvalue())
 
+    @rules_on
     def test_roi_claims_context_carry_only_where_carry_exists(self):
         import contextlib
         from mrtoken.roi import print_roi
@@ -391,6 +400,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rule_repeated_context(conn, tid), [],
                          "cached re-sends should not fire repeated_context")
 
+    @rules_on
     def test_validate_huge_tool_output_reads_offenders(self):
         # regression (ROADMAP 2.2): corroboration must locate the offending tool
         # call via evidence offenders[], not a (nonexistent) top-level tool_use_id,
@@ -412,6 +422,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rep["strong"], 1)  # the fix located the offender
         self.assertEqual(rep["moot"], 0)
 
+    @rules_on
     def test_step_runaway_rule_and_validate(self):
         # ROADMAP 3.1: flag extreme step counts; silent on normal sessions; corroborated.
         from mrtoken.rules import rule_step_runaway, analyse
@@ -499,6 +510,7 @@ class BackendTest(unittest.TestCase):
         short.commit()
         self.assertEqual(rule_context_rot(short, stid), [])
 
+    @rules_on
     def test_assist_suggestion_gated_by_savings_and_optin(self):
         # ROADMAP 3.4: off by default (behavior unchanged); when on, a high-waste
         # session suggests, a low-waste one stays silent. Never auto-runs.
@@ -871,6 +883,7 @@ class BackendTest(unittest.TestCase):
                 raw.close()
             self.assertEqual(n, 1)  # and a trace landed in the cwd-resolved DB
 
+    @rules_on
     def test_explain_and_feedback_loop(self):
         # ROADMAP 5D.1 + 5D.2 — explain a fired signal's evidence; capture a verdict
         # and summarise labelled precision.
@@ -988,7 +1001,8 @@ class BackendTest(unittest.TestCase):
                 self.assertIn(f"mrtoken: store: Codex central store ({codex_db})", codex_why)
                 self.assertIn("why is codex-ce", codex_why)
                 self.assertIn("source: codex · implicit newest", codex_why)
-                _, codex_explain = run_cli(["explain", "--codex"])
+                with rules_on:  # explain's selection contract, on the engine-on path
+                    _, codex_explain = run_cli(["explain", "--codex"])
                 self.assertIn("selected: codex-ce · source: codex · implicit newest", codex_explain)
 
             with patch.dict(os.environ, {"XDG_DATA_HOME": os.path.join(tmp, "missing")}, clear=False):
@@ -2620,6 +2634,7 @@ class BackendTest(unittest.TestCase):
             finally:
                 dd.central_default = orig
 
+    @rules_on
     def test_addressable_labels_are_estimated_upper_bounds(self):
         import contextlib, io
         import mrtoken.datadir as dd
@@ -2834,6 +2849,7 @@ class BackendTest(unittest.TestCase):
         _, uerr = toolbox.call_tool("bogus", {})
         self.assertTrue(uerr)
 
+    @rules_on
     def test_golden_session_signals(self):
         # ROADMAP 5D.3 — golden regression: whole-session fixtures with their
         # EXPECTED fired-signal sets. Catches drift when a threshold changes.
@@ -2884,6 +2900,7 @@ class BackendTest(unittest.TestCase):
                     self.assertTrue(g["expect_contains"] <= fired,
                                     f"golden '{g['name']}' missing {g['expect_contains'] - fired}")
 
+    @rules_on
     def test_validate_harness_corroborates(self):
         from mrtoken.validate import validate_db
         conn, tid = make_trace()
@@ -3907,6 +3924,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(prevention["delta"]["session_total_tokens_saved"], 36_000)
         self.assertTrue(prevention["directional_win"])
 
+    @rules_on
     def test_roi_measure_projection_and_cohort(self):
         # fresh_handoff before/after (ROADMAP 2.1): a long, escalating session with
         # a fresh_handoff rec yields a non-negative projected saving and a cohort.
@@ -4570,6 +4588,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertFalse(any("__pycache__" in path or path.endswith(".pyc") for path in after))
 
+    @rules_on
     def test_why_prints_one_savings_decision_card(self):
         from mrtoken.why import print_diagnosis
         import contextlib, io
@@ -4650,6 +4669,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(rc, 3)
         self.assertIn("requires an explicit recorded session", out.getvalue())
 
+    @rules_on
     def test_status_prints_feedback_command_for_top_signal(self):
         from mrtoken.status import print_status
         from mrtoken.ingest import ingest_file
