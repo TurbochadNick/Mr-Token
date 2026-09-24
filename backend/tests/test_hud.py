@@ -240,5 +240,45 @@ class HudTest(unittest.TestCase):
         self.assertIn("gpt-5.6-sol 1M · med · ctx 30% used", after)
 
 
+
+class HudLabelsFromTokenAccountingTest(unittest.TestCase):
+    """Every HUD segment label comes from TOKEN-ACCOUNTING.md "HUD quantities": a doc-only
+    or a code-only rename fails; only a coordinated change passes."""
+
+    def rows(self):
+        import re
+        doc = open(os.path.join(BACKEND, "docs", "TOKEN-ACCOUNTING.md"), encoding="utf-8").read()
+        return dict((f, lbl) for lbl, f in re.findall(r"^\| ([^|]+?) \| `(hud\.[a-z_]+)` \|", doc, re.M))
+
+    def test_every_hud_row_is_the_segment_the_line_prints(self):
+        rows = self.rows()
+        self.assertEqual(sorted(rows), sorted([  # all 7, so a regex drift cannot skip rows
+            "hud.attribution", "hud.context_window", "hud.ctx_pct", "hud.total_tokens",
+            "hud.cache_ratio", "hud.limiter", "hud.recommendation"]))
+        import mrtoken
+        f = hud.recommend(hud.HudFields(
+            model=hud.known("Opus 5"), context_window=hud.known(1_000_000), effort=hud.known("high"),
+            ctx_pct=hud.ctx_field(75, "p"), total_tokens=hud.known(160_500), cache_ratio=hud.known(0.94),
+            limiter=hud.binding_limiter([(300, 45)], "p")))
+        fill = {"hud.attribution": {"<version>": mrtoken.__version__},
+                "hud.context_window": {"<model>": "Opus 5", "<size>": "1M"},
+                "hud.ctx_pct": {"N": "75"}, "hud.total_tokens": {"N": "160k"},
+                "hud.cache_ratio": {"N": "94"}, "hud.limiter": {"<duration>": "5h", "N": "45"},
+                "hud.recommendation": {}}
+        line = hud.format_line(f)
+        for field, label in rows.items():
+            seg = label
+            for k, v in fill[field].items():
+                seg = seg.replace(k, v)
+            with self.subTest(field=field, label=label):
+                self.assertIn(seg, line)
+        codex = hud.format_codex_stop(f)  # same labels on the Codex surface (identity is not shown there)
+        for field in ("hud.attribution", "hud.ctx_pct", "hud.total_tokens", "hud.cache_ratio", "hud.limiter"):
+            seg = rows[field]
+            for k, v in fill[field].items():
+                seg = seg.replace(k, v)
+            with self.subTest(surface="codex", field=field):
+                self.assertIn(seg, codex)
+
 if __name__ == "__main__":
     unittest.main()

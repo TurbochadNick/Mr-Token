@@ -49,8 +49,32 @@ It estimates the context carried by that latest call. The large-context warning
 uses the maximum observed input side to avoid threshold flapping; that maximum
 does not replace the displayed current-context value.
 
+## HUD quantities (Claude statusLine, Codex Stop message)
+
+Both surfaces render the same fields (`backend/mrtoken/hud.py`). The Display label
+column is the exact segment the terse line prints, with `N` for the number;
+`backend/tests/test_hud.py` derives each label from this table and checks the real
+rendered line, so this table and the line cannot drift apart. Every value is
+**per session**: one Claude transcript file, or one Codex rollout. None of them is an
+account or all-time total.
+
+| Display label | Field | Definition |
+|---|---|---|
+| mr <version> | `hud.attribution` | Which tool wrote the line and which code: the running package's `__version__` (not install metadata, which can lag an editable install). `mr ?` if unreadable. |
+| <model> <size> | `hud.context_window` | The context window, MEASURED only: Claude `context_window_size` from the statusLine payload; Codex `model_context_window` from the latest rollout `token_count`. Re-read on every render, so a mid-session model or window change follows. A window looked up from the model name or inferred from usage is NEVER shown. When unmeasured, the size is omitted and ctx is `ctx ?`. On Codex it appears as `of <size>` after ctx. |
+| ctx N% used | `hud.ctx_pct` | NOT cumulative: the LATEST API response's input side (fresh input + cache read + cache write) divided by the measured window, as % used. Not "left until auto-compact". `ctx ?` when the window is not measured: a percentage over a guessed denominator is not a measurement. |
+| ~N tok | `hud.total_tokens` | TOTAL expenditure for this session: fresh input + cache read + cache write + output. Claude: computed from the transcript, counting each API response ONCE by message id. Claude Code writes one response as several transcript lines that each repeat the same usage, so a naive line-sum is 1.87x to 2.45x too high (measured on the 8 largest local transcripts, 2026-09-23). Excludes subagent (Task) transcripts, which are separate files, and every other session. Codex: the provider's running `total_token_usage.total_tokens` for the rollout, shown only when it reconciles (total == input + output; Codex input already includes cached), else `tok ?`. `~` marks an estimate, rounded. It is NOT the fresh input + output subtotal above. |
+| cache hit N% | `hud.cache_ratio` | A hit RATE, not consumption: cache read / (fresh input + cache read + cache write) over the same session scope. Codex: cached input / input from the provider running total. `cache hit ?` when not derivable. |
+| <duration> N% used | `hud.limiter` | The provider-reported rate-limit window closest to its cap (highest % used), named by its real length (300 min is 5h, 10080 min is 7d), as % USED exactly as reported (Claude `used_percentage`, Codex `used_percent`). A rolling per-ACCOUNT window, not per-session. Omitted when none is reported (e.g. API accounts, or before the first response). |
+| ⚠ compact soon | `hud.recommendation` | The only warning slot, fed only by direct readouts: `compact soon` when ctx >= 70% used; `<duration> limit near` when a window is >= 85% used (under a day) or >= 80% (a day or more). Rules-engine advice is never shown here. |
+
+No dollar figure appears: no provider record carries `billing_mode`, and the price
+table is unverified against any bill (ACCURACY-VALIDATION-2026-09-23.md).
+
 ## Display map
 
+- The statusLine (Claude) and the Codex Stop message render the HUD quantities
+  above. Claude's Stop and UserPromptSubmit hooks emit no readout.
 - `why` labels its header subtotal **fresh input + output**, then labels the
   provenance-bearing cumulative total separately.
 - `status` prints **cumulative token total** and **context now** separately.
