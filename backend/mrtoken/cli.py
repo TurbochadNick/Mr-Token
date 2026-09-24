@@ -180,7 +180,8 @@ def cmd_handoff(args):
     rendered = build_handoff(args.db, args.session, source=source)
     print(rendered)
     if rendered.startswith("mrtoken:"):
-        raise SystemExit(1 if rendered.startswith("mrtoken: session unavailable:") else 2)
+        raise SystemExit(1 if rendered.startswith("mrtoken: session unavailable:")
+                         else 3 if rendered.startswith("mrtoken: handoff refused:") else 2)
 
 
 def cmd_manifest(args):
@@ -634,7 +635,7 @@ def main(argv=None):
 
     p_handoff = sub.add_parser("handoff",
         help="generate a compact handoff to continue a bloated session fresh")
-    p_handoff.add_argument("session", nargs="?", help="recorded session id (default: newest in selected store)")
+    p_handoff.add_argument("session", nargs="?", help="recorded session id (default: the caller's own session; refused if unknown)")
     p_handoff.add_argument("--db", dest="db_sub")
     p_handoff.add_argument("--codex", action="store_true", help="read a recorded session from the central Codex DB")
 

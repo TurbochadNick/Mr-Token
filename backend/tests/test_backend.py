@@ -4417,8 +4417,11 @@ class BackendTest(unittest.TestCase):
             self.assertIn("latest selected Codex request", md)
             self.assertNotIn("newer Claude trap", md)
             self.assertNotIn("est API usage $", md)
-            implicit = handoff.build_handoff(db, None, source="codex", codex_root=root)
-            self.assertIn("implicit newest", implicit)
+            # An omitted id is the CALLER's own session (exact), never the newest row.
+            with patch.dict(os.environ, {"MRTOKEN_SESSION": sid}):
+                implicit = handoff.build_handoff(db, None, source="codex", codex_root=root)
+            self.assertIn("Session codex-se", implicit)
+            self.assertIn("implicit caller session", implicit)
 
             frozen = os.path.join(tmp, "frozen.db")
             shutil.copy2(db, frozen)

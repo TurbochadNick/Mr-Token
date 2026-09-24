@@ -87,9 +87,11 @@ COMMANDS = [["fleet"], ["list"], ["report"], ["report", "s-"], ["subagents"], ["
 # rules engine switched off (the shipped default, rules.RULES_ENABLED), validate / explain /
 # explain s- also refuse by design: 34 more cells, verified to be exactly those three
 # commands, so 170. Both floors are asserted. Lower either only after confirming a new
-# refusal is intended.
-EXERCISED_FLOOR = 170
-EXERCISED_FLOOR_RULES_ON = 204
+# refusal is intended. 2026-09-24: an omitted-id `handoff` selects the caller's own session
+# (pinned to s-main in setUp), so the two states with no s-main row now refuse it by
+# design ('orphan_subagent x handoff', 'subagent_only x handoff'): 170 -> 168, 204 -> 202.
+EXERCISED_FLOOR = 168
+EXERCISED_FLOOR_RULES_ON = 202
 # The EXACT cells expected to refuse, so an unexpected refusal cannot silently replace an
 # expected one at the same count. With the rules engine on: the designed refusals (empty
 # store; Claude-only subagents on non-Claude data). With it off (the shipped default): those,
@@ -113,9 +115,11 @@ REFUSED_RULES_ON = {
     'null_columns x subagents',
     'null_recommendation_fields x subagents',
     'null_tool_fields x subagents',
+    'orphan_subagent x handoff',
     'orphan_subagent x subagents',
     'orphan_subagent x subagents s-',
     'single_call x subagents',
+    'subagent_only x handoff',
     'subagent_only x subagents',
     'subagent_only x subagents s-',
     'zero_calls x subagents',
@@ -193,8 +197,13 @@ class ZeroDataStatesTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         env = {k: v for k, v in os.environ.items()
-               if k not in ("XDG_DATA_HOME", "TOKEN_TITHE_DB", "MRTOKEN_DB", "MRTOKEN_DATA_DIR")}
+               if k not in ("XDG_DATA_HOME", "TOKEN_TITHE_DB", "MRTOKEN_DB", "MRTOKEN_DATA_DIR",
+                            "MRTOKEN_SESSION", "CLAUDE_CODE_SESSION_ID")}
         env["HOME"] = self.tmp
+        # An omitted-id `handoff` selects the CALLER's own session (SESSION-SELECTION.md).
+        # Pin the caller to each fixture's main session, so the bare cell still reaches
+        # analysis and never depends on the host's session id.
+        env["MRTOKEN_SESSION"] = "s-main"
         patcher = mock.patch.dict(os.environ, env, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)

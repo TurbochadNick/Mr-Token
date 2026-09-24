@@ -356,12 +356,14 @@ class SessionSelectionError(RuntimeError):
 
 
 def select_session(conn: sqlite3.Connection, prefix: str | None = None,
-                   *, source: str | None = None) -> tuple:
-    """Select one explicit or newest session in the already-selected store."""
+                   *, source: str | None = None, exact: bool = False) -> tuple:
+    """Select one explicit or newest session in the already-selected store.
+
+    `exact=True` matches the id itself, not as a prefix (a caller's own full id)."""
     clauses, params = [], []
     if prefix is not None:
-        clauses.append("session_id LIKE ?")
-        params.append(prefix + "%")
+        clauses.append("session_id = ?" if exact else "session_id LIKE ?")
+        params.append(prefix if exact else prefix + "%")
     if source is not None:
         clauses.append("source=?")
         params.append(source)

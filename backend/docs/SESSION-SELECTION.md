@@ -13,8 +13,8 @@ be inferred from a successful-looking report.
 
 The session-selecting CLI commands print `mrtoken: store: ...` on stdout before
 their result. Failure to open it is `mrtoken: store unavailable: ...` and exits
-2; a present store without the requested session exits 1; and `status` refusing
-an omitted session exits 3. The distinct codes are part of the contract so
+2; a present store without the requested session exits 1; and `status` or
+`handoff` refusing an omitted session exits 3. The distinct codes are part of the contract so
 callers can distinguish store, session, and caller-refusal failures.
 
 ## Session
@@ -38,9 +38,17 @@ Omitted-session behaviour is deliberately command-specific:
   a Codex-only request names the unsupported provider rather than looking empty.
 - `handoff` selects an already-recorded session, then reads only that session's
   matching transcript for paste-ready detail. `handoff --codex` restricts the
-  selected row to Codex and never ingests or updates the selected store. Without
-  `--codex`, an omitted id selects the newest permitted row and the handoff
-  header names that selected session, provider, and implicit choice.
+  selected row to Codex and never ingests or updates the selected store. An
+  omitted id means the CALLER's own session: `MRTOKEN_SESSION`, else
+  `CLAUDE_CODE_SESSION_ID`, matched exactly (not as a prefix) within the
+  permitted provider. It never falls back to the newest row: one project store
+  is shared by every seat under that project root, so the newest row can belong
+  to another seat, and handoff would then read that seat's transcript. With no
+  caller identity, handoff refuses with a named reason (`mrtoken: handoff
+  refused: ...`, exit 3); a caller id absent from the store is `session
+  unavailable` (exit 1). The header names the selected session, provider, and
+  `implicit caller session`. An explicit id remains a deliberate choice and may
+  select any recorded session.
 
 `report`, `list`, `fleet`, `export`, `savings`, `roi`, the UI, and MCP tools are
 aggregate or separately scoped surfaces in this revision; they do not silently
