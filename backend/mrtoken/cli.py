@@ -12,7 +12,7 @@ Options shared by most commands:
   --db PATH    SQLite database path (default: .token-tithe/token-tithe.db)
   --rules      also run rule engine after ingest
 """
-import argparse, sys
+import argparse, sqlite3, sys
 
 from mrtoken.ingest import (ReadOnlyDatabaseError, connect, connect_for_analysis, connect_readonly,
                             default_db_path)
@@ -504,6 +504,9 @@ def cmd_demo(args):
     sys.exit(main())
 
 
+_STORE_CORRUPT_CODES = {11, 26}   # SQLITE_CORRUPT, SQLITE_NOTADB (primary result codes)
+
+
 def main(argv=None):
     from mrtoken import __version__
     ap = argparse.ArgumentParser(prog="mrtoken-transcript",
@@ -769,7 +772,17 @@ def main(argv=None):
                 "doctor": cmd_doctor, "beta-note": cmd_beta_note,
                 "beta-summary": cmd_beta_summary,
                 "statusline": cmd_statusline, "demo": cmd_demo, "update": cmd_update}
-    dispatch[a.cmd](a)
+    try:
+        dispatch[a.cmd](a)
+    except sqlite3.DatabaseError as exc:
+        # A corrupt store can pass the opener (it reads only schema pages) and fail
+        # mid-query in any command. Map ONLY corruption / not-a-database, by SQLite's
+        # primary result code, to store unavailable; every other error, including a bad
+        # query (SQLITE_ERROR), keeps its traceback.
+        if (getattr(exc, "sqlite_errorcode", None) or 0) & 0xFF not in _STORE_CORRUPT_CODES:
+            raise
+        print(f"mrtoken: store unavailable: the store is corrupt or not a database ({exc})")
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
