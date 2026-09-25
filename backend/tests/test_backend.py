@@ -2825,15 +2825,16 @@ class BackendTest(unittest.TestCase):
                          {"offload", "handoff", "compact", "confirm_disposable"})
 
         orig_h = toolbox.build_handoff
-        toolbox.build_handoff = lambda db, s: "# Handoff (stub)"
+        toolbox.build_handoff = lambda db, s, **kw: "# Handoff (stub)"
         try:
-            # No `session` key -> the tool now resolves the CALLER-PROJECT default itself,
-            # BEFORE dispatch (passing None would drop into the trusted global resolver and
-            # could bind another project). This fixture has no transcript for this project,
-            # so the correct behaviour is an explicit refusal, not a dispatch.
-            txt, err = toolbox.call_tool("handoff", {})
+            # No `session` key -> the tool resolves the CALLER's own session itself, BEFORE
+            # dispatch. With no caller identity it refuses; there is no newest fallback.
+            with _mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("MRTOKEN_SESSION", None)
+                os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+                txt, err = toolbox.call_tool("handoff", {})
             self.assertFalse(err)
-            self.assertIn("no transcript found for THIS project", txt)
+            self.assertIn("caller's own session cannot be determined", txt)
             self.assertNotIn("Handoff", txt)
             # ...and the rejection itself is asserted here rather than lost:
             bad, berr = toolbox.call_tool("handoff", {"session": "no-such-session-id"})

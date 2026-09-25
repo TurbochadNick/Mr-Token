@@ -176,28 +176,6 @@ def resolve_session_local(sid, cwd: str | None = None) -> str | None:
     return _one_transcript(glob.escape(bucket), sid)
 
 
-def resolve_local_default(cwd: str | None = None) -> str | None:
-    """The caller-project default transcript for an UNTRUSTED caller that supplied no id.
-
-    Absent-key was treated as the safe default everywhere, but it was the one tool-reachable
-    route into the TRUSTED resolver: `build_handoff(None, None)` -> `resolve_path(None)` ->
-    `latest_transcript()`, which consults MRTOKEN_SESSION / CLAUDE_CODE_SESSION_ID through the
-    GLOBAL `resolve_session` and so could bind another project's transcript. An untrusted
-    caller must never reach that path.
-
-    An environment id is constrained to THIS project; with none, the newest transcript in
-    this project's bucket, preserving the previous local-newest semantics.
-    """
-    sid = os.environ.get("MRTOKEN_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
-    if sid:
-        return resolve_session_local(sid, cwd)
-    bucket = project_bucket(cwd)
-    if not bucket:
-        return None
-    hits = glob.glob(os.path.join(PROJECTS, glob.escape(bucket), "*.jsonl"))
-    return max(hits, key=os.path.getmtime) if hits else None
-
-
 def latest_transcript(cwd: str | None = None) -> str | None:
     # The CURRENT session wins, even if another agent's transcript was written
     # more recently. This is the multi-agent / K2 case: newest-mtime-across-all

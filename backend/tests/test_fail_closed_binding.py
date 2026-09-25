@@ -82,11 +82,14 @@ class FailClosedBinding(unittest.TestCase):
         """
         from mrtoken import toolbox
         orig = toolbox.build_handoff
-        toolbox.build_handoff = lambda db, s: "BOUND:" + repr(s)
+        # build_handoff receives the session id plus the already-verified transcript_path;
+        # the path is what it READS, so that is the binding under test.
+        toolbox.build_handoff = lambda db, s, **kw: "BOUND:" + repr(kw.get("transcript_path"))
         try:
-            txt, _ = toolbox.call_tool("handoff", args)
+            txt, err = toolbox.call_tool("handoff", args)
         finally:
             toolbox.build_handoff = orig
+        self.assertFalse(err, txt)           # a crashing stub is not a rejection
         if not txt.startswith("BOUND:"):
             return None                      # rejected before dispatch
         val = eval(txt[len("BOUND:"):])      # the exact object build_handoff received
@@ -505,11 +508,12 @@ class OmittedKeyEnvSeam(unittest.TestCase):
         Re-running a resolution myself would test my call, not the tool's."""
         from mrtoken import toolbox
         orig = toolbox.build_handoff
-        toolbox.build_handoff = lambda db, s: "BOUND:" + repr(s)
+        toolbox.build_handoff = lambda db, s, **kw: "BOUND:" + repr(kw.get("transcript_path"))
         try:
-            txt, _ = toolbox.call_tool("handoff", args)
+            txt, err = toolbox.call_tool("handoff", args)
         finally:
             toolbox.build_handoff = orig
+        self.assertFalse(err, txt)           # a crashing stub is not a rejection
         return eval(txt[len("BOUND:"):]) if txt.startswith("BOUND:") else None
 
     def test_omitted_key_never_binds_foreign_env_session(self):
@@ -523,11 +527,18 @@ class OmittedKeyEnvSeam(unittest.TestCase):
             if bound is not None:
                 self.assertEqual(os.path.realpath(bound), os.path.realpath(self.local))
 
-    def test_omitted_key_with_no_env_binds_local_newest(self):
-        """CONTROL: local-newest semantics preserved when no env id is present."""
+    def test_omitted_key_with_no_env_refuses_not_local_newest(self):
+        """No caller identity: REFUSE. The old local-newest default could bind another
+        seat's transcript on a shared project (SESSION-SELECTION.md caller-session rule)."""
         os.environ.pop("MRTOKEN_SESSION", None)
+        os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        self.assertIsNone(self._bound_arg({}))
+
+    def test_omitted_key_with_local_env_binds_that_session(self):
+        """CONTROL: the caller's own env session, in this project, still binds."""
+        os.environ["MRTOKEN_SESSION"] = "local-session"
         bound = self._bound_arg({})
-        self.assertIsNotNone(bound, "the local default stopped working")
+        self.assertIsNotNone(bound, "the caller-session default stopped working")
         self.assertEqual(os.path.realpath(bound), os.path.realpath(self.local))
 
     def test_explicit_valid_local_id_still_works(self):

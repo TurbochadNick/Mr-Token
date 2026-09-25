@@ -40,7 +40,9 @@ HANDOFF_TOOL = {
         "the remaining work; resetting context you will re-read costs more than continuing "
         "(measured +20% on load-bearing context)."),
     "inputSchema": {"type": "object", "properties": {
-        "session": {"type": "string", "description": "session id/prefix (default: current/newest)"}}},
+        "session": {"type": "string", "description": (
+            "session id (default: the caller's own session from MRTOKEN_SESSION / "
+            "CLAUDE_CODE_SESSION_ID; refused if unknown)")}}},
 }
 
 
@@ -49,25 +51,33 @@ def _handoff_call(args: dict) -> str:
     passed the raw string to build_handoff, which passes it to resolve_path, which returns
     any real file. A caller could therefore hand over a filesystem path despite the
     schema's contract and get its CONTENT back. Resolve it through the UNTRUSTED,
-    project-local resolver and pass the ALREADY-RESOLVED PATH inward.
+    project-local resolver, then hand build_handoff that transcript's session id (matched
+    exactly against the store) together with the ALREADY-VERIFIED path.
+
+    An omitted `session` is the caller's own session from the environment, resolved
+    project-locally. There is no newest-transcript fallback: on a shared project the
+    newest transcript can be another seat's.
     """
-    from mrtoken.watch import resolve_session_local, resolve_local_default
+    from mrtoken.watch import resolve_session_local
     args = args if isinstance(args, dict) else {}
     if "session" not in args:                       # presence, not truthiness
-        # Resolve the default HERE, project-locally, and hand build_handoff a PATH. Passing
-        # None would drop into resolve_path -> latest_transcript, which honours a global
-        # env session id and can bind another project's transcript.
-        path = resolve_local_default()
+        caller = os.environ.get("MRTOKEN_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+        if not caller:
+            return ("mrtoken handoff: the caller's own session cannot be determined (no "
+                    "MRTOKEN_SESSION or CLAUDE_CODE_SESSION_ID). Pass `session: <your session "
+                    "id>` (Bash: `echo $CLAUDE_CODE_SESSION_ID`).")
+        path = resolve_session_local(caller)
         if not path:
-            return ("mrtoken handoff: no transcript found for THIS project. Pass "
-                    "`session: <your session id>` for a session in this project.")
-        return build_handoff(None, path)
-    path = resolve_session_local(args["session"])
-    if not path:
-        return ("mrtoken handoff: no transcript in THIS project matches that session id. "
-                "Pass the session id of a session in this project "
-                "(Bash: `echo $CLAUDE_CODE_SESSION_ID`); a path is not accepted.")
-    return build_handoff(None, path)
+            return ("mrtoken handoff: no transcript in THIS project matches the caller's "
+                    "session. Pass `session: <your session id>` for a session in this project.")
+    else:
+        path = resolve_session_local(args["session"])
+        if not path:
+            return ("mrtoken handoff: no transcript in THIS project matches that session id. "
+                    "Pass the session id of a session in this project "
+                    "(Bash: `echo $CLAUDE_CODE_SESSION_ID`); a path is not accepted.")
+    sid = os.path.basename(path)[:-len(".jsonl")]
+    return build_handoff(None, sid, exact=True, transcript_path=path)
 
 
 # Context OCCUPANCY at or above this share of the window reads as HEAVY. Named so the

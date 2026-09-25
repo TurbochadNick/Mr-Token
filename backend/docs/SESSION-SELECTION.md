@@ -54,6 +54,12 @@ Omitted-session behaviour is deliberately command-specific:
   `implicit caller session`. An explicit id remains a deliberate choice and may
   select any recorded session.
 
-`report`, `list`, `fleet`, `export`, `savings`, `roi`, the UI, and MCP tools are
+The MCP `handoff` tool is an UNTRUSTED entry point: its `session` is an id resolved only
+within the caller's project bucket (never a path), and an omitted `session` is the
+caller's own env session resolved the same way. It hands `build_handoff` that transcript's
+session id, matched exactly, plus the verified transcript path. With no caller identity it
+refuses; it never falls back to the newest transcript.
+
+`report`, `list`, `fleet`, `export`, `savings`, `roi`, the UI, and the other MCP tools are
 aggregate or separately scoped surfaces in this revision; they do not silently
 resolve a single default trace.

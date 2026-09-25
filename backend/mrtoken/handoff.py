@@ -23,7 +23,8 @@ from __future__ import annotations
 import json, os
 
 from mrtoken.ingest import (CallerSessionRefused, ReadOnlyDatabaseError, SessionSelectionError,
-                            connect_readonly, default_db_path, select_requested_session)
+                            connect_readonly, default_db_path, select_requested_session,
+                            select_session)
 from mrtoken.watch import resolve_path
 
 EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
@@ -220,8 +221,13 @@ def goal_from_scan(s: dict) -> str:
 
 
 def build_handoff(db_path: str | None, session_arg: str | None, *,
-                  source: str | None = None, codex_root: str | None = None) -> str:
-    """Render one already-recorded session without ingesting or changing its store."""
+                  source: str | None = None, codex_root: str | None = None,
+                  exact: bool = False, transcript_path: str | None = None) -> str:
+    """Render one already-recorded session without ingesting or changing its store.
+
+    `exact` matches `session_arg` as a whole id, not a prefix. `transcript_path` is a
+    transcript the caller has ALREADY verified for that id (the MCP tool resolves it
+    project-locally); it is read instead of resolving the id again."""
     db_path = db_path or default_db_path()
     try:
         conn = connect_readonly(db_path)
@@ -230,8 +236,10 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
     # An omitted id means the CALLER's own session: the newest row can be another seat's,
     # and its transcript would then be read into this seat's context.
     try:
-        tid, sid, selected_source, profile = select_requested_session(
-            conn, session_arg, source=source, command="handoff")
+        tid, sid, selected_source, profile = (
+            select_session(conn, session_arg, source=source, exact=True)
+            if exact and session_arg is not None else
+            select_requested_session(conn, session_arg, source=source, command="handoff"))
     except (CallerSessionRefused, SessionSelectionError) as exc:
         conn.close()
         return str(exc)
@@ -245,7 +253,7 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
             "first_prompt": None, "last_prompt": None,
             "changed_files": [], "commands": []}
     else:
-        path = resolve_path(sid)
+        path = transcript_path or resolve_path(sid)
         s = _scan_transcript(path) if path else {
             "title": None, "custom_title": None, "ai_title": None,
             "first_prompt": None, "last_prompt": None,
