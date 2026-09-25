@@ -381,6 +381,28 @@ def select_session(conn: sqlite3.Connection, prefix: str | None = None,
     return row
 
 
+class CallerSessionRefused(RuntimeError):
+    """An omitted session id, and the caller's own session cannot be determined."""
+
+
+def select_requested_session(conn: sqlite3.Connection, prefix: str | None, *,
+                             source: str | None = None, command: str) -> tuple:
+    """Select an explicit id/prefix, or for an omitted id the CALLER's own session.
+
+    One project store is shared by every seat under that project root, so the newest
+    row can be another seat's. An omitted id is MRTOKEN_SESSION, else
+    CLAUDE_CODE_SESSION_ID, matched exactly; with neither, refuse (exit 3)."""
+    if prefix is not None:
+        return select_session(conn, prefix, source=source)
+    caller = os.environ.get("MRTOKEN_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not caller:
+        raise CallerSessionRefused(
+            f"mrtoken: {command} refused: the caller's own session cannot be determined "
+            "(no MRTOKEN_SESSION or CLAUDE_CODE_SESSION_ID); pass an explicit recorded "
+            "session id")
+    return select_session(conn, caller, source=source, exact=True)
+
+
 def connect_readonly(db_path: str, *, immutable: bool = False) -> sqlite3.Connection:
     """Open base tables read-only and derive the current summary only in memory."""
     try:

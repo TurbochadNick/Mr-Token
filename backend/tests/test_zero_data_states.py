@@ -90,8 +90,11 @@ COMMANDS = [["fleet"], ["list"], ["report"], ["report", "s-"], ["subagents"], ["
 # refusal is intended. 2026-09-24: an omitted-id `handoff` selects the caller's own session
 # (pinned to s-main in setUp), so the two states with no s-main row now refuse it by
 # design ('orphan_subagent x handoff', 'subagent_only x handoff'): 170 -> 168, 204 -> 202.
-EXERCISED_FLOOR = 168
-EXERCISED_FLOOR_RULES_ON = 202
+# 2026-09-25: `why` and `explain` follow the same caller-session rule, so those two states
+# also refuse 'why' (both floors) and 'explain' (engine on; with it off explain already
+# refused): 168 -> 166, 202 -> 198.
+EXERCISED_FLOOR = 166
+EXERCISED_FLOOR_RULES_ON = 198
 # The EXACT cells expected to refuse, so an unexpected refusal cannot silently replace an
 # expected one at the same count. With the rules engine on: the designed refusals (empty
 # store; Claude-only subagents on non-Claude data). With it off (the shipped default): those,
@@ -115,13 +118,17 @@ REFUSED_RULES_ON = {
     'null_columns x subagents',
     'null_recommendation_fields x subagents',
     'null_tool_fields x subagents',
+    'orphan_subagent x explain',
     'orphan_subagent x handoff',
     'orphan_subagent x subagents',
     'orphan_subagent x subagents s-',
+    'orphan_subagent x why',
     'single_call x subagents',
+    'subagent_only x explain',
     'subagent_only x handoff',
     'subagent_only x subagents',
     'subagent_only x subagents s-',
+    'subagent_only x why',
     'zero_calls x subagents',
 }
 REFUSED_ADDED_BY_RULES_OFF = {
@@ -144,13 +151,11 @@ REFUSED_ADDED_BY_RULES_OFF = {
     'null_tool_fields x explain',
     'null_tool_fields x explain s-',
     'null_tool_fields x validate',
-    'orphan_subagent x explain',
     'orphan_subagent x explain s-',
     'orphan_subagent x validate',
     'single_call x explain',
     'single_call x explain s-',
     'single_call x validate',
-    'subagent_only x explain',
     'subagent_only x explain s-',
     'subagent_only x validate',
     'subagent_zero_calls x explain',

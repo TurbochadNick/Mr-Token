@@ -9,7 +9,8 @@ outputs, retries, subagents, uncached repeats), and names the single biggest
 from __future__ import annotations
 import sqlite3
 
-from mrtoken.ingest import SessionSelectionError, load_prices, price_for, select_session
+from mrtoken.ingest import (SessionSelectionError, load_prices, price_for,
+                            select_requested_session)
 from mrtoken.savings_card import card_for_session, render_savings_card
 
 
@@ -99,14 +100,16 @@ def diagnose(conn: sqlite3.Connection, tid: int) -> dict:
 
 def print_diagnosis(conn: sqlite3.Connection, prefix: str | None, *,
                     source: str | None = None, routing: dict | None = None) -> bool:
+    """False when the session is unavailable; CallerSessionRefused propagates (exit 3)."""
     try:
-        tid, sid, selected_source, profile = select_session(conn, prefix, source=source)
+        tid, sid, selected_source, profile = select_requested_session(
+            conn, prefix, source=source, command="why")
     except SessionSelectionError as exc:
         print(exc)
         return False
     d = diagnose(conn, tid)
     cost = f" · est API usage ${_fmt(d['cost'])}" if d["cost"] is not None else ""
-    chosen = "implicit newest" if prefix is None else "explicit"
+    chosen = "implicit caller session" if prefix is None else "explicit"
     print(f"\n  why is {sid[:8]} expensive?  (source: {selected_source} · {chosen} · profile: {profile or '?'} · "
           f"{d['calls']} calls · fresh input + output ~{_fmt(d['tokens'])} tok · usage type {d['billing_mode']}{cost})")
     total = (f"~{_fmt(d['cumulative_total'])} tok ({d['total_provenance']})"

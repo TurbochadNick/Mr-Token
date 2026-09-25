@@ -13,8 +13,8 @@ be inferred from a successful-looking report.
 
 The session-selecting CLI commands print `mrtoken: store: ...` on stdout before
 their result. Failure to open it is `mrtoken: store unavailable: ...` and exits
-2; a present store without the requested session exits 1; and `status` or
-`handoff` refusing an omitted session exits 3. The distinct codes are part of the contract so
+2; a present store without the requested session exits 1; and `status`,
+`handoff`, `why` or `explain` refusing an omitted session exits 3. The distinct codes are part of the contract so
 callers can distinguish store, session, and caller-refusal failures.
 
 ## Session
@@ -29,8 +29,12 @@ providers in the selected store.
 
 Omitted-session behaviour is deliberately command-specific:
 
-- `why` and `explain` select the newest permitted row and print the selected
-  session id, provider, and that the choice was implicit.
+- `why` and `explain` follow the same caller-session rule as `handoff` (below):
+  an omitted id is the caller's own session, matched exactly within the
+  permitted provider, never the newest row (which could expose another seat's
+  session id, tokens, cost and tool names). With no caller identity they refuse
+  with `mrtoken: <command> refused: ...` (exit 3). They print the selected
+  session id, provider, and `implicit caller session`.
 - `status` refuses an omitted session with a named reason; it must not regain a
   convenience default without an explicit contract change.
 - `subagents` with no id is a Claude-parent fleet view, not a single-session

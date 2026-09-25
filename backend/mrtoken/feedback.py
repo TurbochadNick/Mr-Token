@@ -13,7 +13,8 @@ Two halves of the same loop, both metadata-only:
 from __future__ import annotations
 import json, sqlite3
 
-from mrtoken.ingest import SessionSelectionError, now_iso, select_session
+from mrtoken.ingest import (SessionSelectionError, now_iso, select_requested_session,
+                            select_session)
 
 VERDICTS = ("right", "wrong", "unsure")
 
@@ -62,7 +63,8 @@ def explain_session(conn: sqlite3.Connection, prefix: str | None,
 
 def print_explain(conn: sqlite3.Connection, prefix: str | None, *, source: str | None = None) -> None:
     try:
-        _, sid, selected_source, _ = select_session(conn, prefix, source=source)
+        _, sid, selected_source, _ = select_requested_session(
+            conn, prefix, source=source, command="explain")
     except SessionSelectionError as exc:
         print(exc)
         return
@@ -70,7 +72,7 @@ def print_explain(conn: sqlite3.Connection, prefix: str | None, *, source: str |
     print(f"\n{'─'*64}")
     print("  MR Token — explain: why each signal fired")
     print(f"{'─'*64}")
-    chosen = "implicit newest" if prefix is None else "explicit"
+    chosen = "implicit caller session" if prefix is None else "explicit"
     print(f"  selected: {sid[:8]} · source: {selected_source} · {chosen}")
     if not rows:
         print("  no recommendations fired.\n"); return

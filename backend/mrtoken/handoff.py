@@ -22,8 +22,8 @@ natural paid enhancement; the seam is marked below but not implemented in v1.)
 from __future__ import annotations
 import json, os
 
-from mrtoken.ingest import (ReadOnlyDatabaseError, SessionSelectionError,
-                            connect_readonly, default_db_path, select_session)
+from mrtoken.ingest import (CallerSessionRefused, ReadOnlyDatabaseError, SessionSelectionError,
+                            connect_readonly, default_db_path, select_requested_session)
 from mrtoken.watch import resolve_path
 
 EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
@@ -227,21 +227,12 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
         conn = connect_readonly(db_path)
     except ReadOnlyDatabaseError as exc:
         return str(exc)
-    # An omitted id means the CALLER's own session. One project store is shared by every
-    # seat under that project root, so the newest row can be another seat's, and its
-    # transcript would then be read into this seat's context.
-    caller = None
-    if session_arg is None:
-        caller = os.environ.get("MRTOKEN_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
-        if not caller:
-            conn.close()
-            return ("mrtoken: handoff refused: the caller's own session cannot be determined "
-                    "(no MRTOKEN_SESSION or CLAUDE_CODE_SESSION_ID); pass an explicit recorded "
-                    "session id")
+    # An omitted id means the CALLER's own session: the newest row can be another seat's,
+    # and its transcript would then be read into this seat's context.
     try:
-        tid, sid, selected_source, profile = select_session(
-            conn, caller or session_arg, source=source, exact=caller is not None)
-    except SessionSelectionError as exc:
+        tid, sid, selected_source, profile = select_requested_session(
+            conn, session_arg, source=source, command="handoff")
+    except (CallerSessionRefused, SessionSelectionError) as exc:
         conn.close()
         return str(exc)
 

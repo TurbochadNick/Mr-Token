@@ -957,13 +957,15 @@ class BackendTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             project_db = os.path.join(tmp, "project.db")
-            # Same-store control: newer Claude wins unscoped; Codex is scoped.
+            # Same-store control: an omitted id is the CALLER's own session (exact), not
+            # the newest row; Codex is scoped.
             seed(project_db, "codex-shared", "codex", "2026-06-01T00:00:00Z", "Codex")
             seed(project_db, "claude-shared", "claude_code", "2026-06-02T00:00:00Z", "Claude")
-            _, why = run_cli(["why", "--db", project_db])
+            with patch.dict(os.environ, {"MRTOKEN_SESSION": "claude-shared"}):
+                _, why = run_cli(["why", "--db", project_db])
             self.assertIn("mrtoken: store: explicit store", why)
             self.assertIn("why is claude-s", why)
-            self.assertIn("source: claude_code · implicit newest", why)
+            self.assertIn("source: claude_code · implicit caller session", why)
             status_code, status = run_cli(["status", "--db", project_db])
             self.assertEqual(status_code, 3)
             self.assertIn("requires an explicit recorded session", status)
@@ -996,14 +998,24 @@ class BackendTest(unittest.TestCase):
             codex_db = os.path.join(xdg, "token-tithe", "codex.db")
             seed(codex_db, "codex-central", "codex", "2026-06-05T00:00:00Z", "Codex central")
             seed(codex_db, "claude-central", "claude_code", "2026-06-06T00:00:00Z", "Claude central")
-            with patch.dict(os.environ, {"XDG_DATA_HOME": xdg}, clear=False):
+            with patch.dict(os.environ, {"XDG_DATA_HOME": xdg,
+                                         "MRTOKEN_SESSION": "codex-central"}, clear=False):
                 _, codex_why = run_cli(["why", "--codex"])
                 self.assertIn(f"mrtoken: store: Codex central store ({codex_db})", codex_why)
                 self.assertIn("why is codex-ce", codex_why)
-                self.assertIn("source: codex · implicit newest", codex_why)
+                self.assertIn("source: codex · implicit caller session", codex_why)
                 with rules_on:  # explain's selection contract, on the engine-on path
                     _, codex_explain = run_cli(["explain", "--codex"])
-                self.assertIn("selected: codex-ce · source: codex · implicit newest", codex_explain)
+                self.assertIn("selected: codex-ce · source: codex · implicit caller session",
+                              codex_explain)
+            # --codex still restricts the caller's id to a Codex row: a Claude caller id
+            # in the Codex store is unavailable, never the Claude row.
+            with patch.dict(os.environ, {"XDG_DATA_HOME": xdg,
+                                         "MRTOKEN_SESSION": "claude-central"}, clear=False):
+                restricted_code, restricted_why = run_cli(["why", "--codex"])
+            self.assertEqual(restricted_code, 1)
+            self.assertIn("mrtoken: session unavailable", restricted_why)
+            self.assertNotIn("why is claude-c", restricted_why)
 
             with patch.dict(os.environ, {"XDG_DATA_HOME": os.path.join(tmp, "missing")}, clear=False):
                 missing_code, missing = run_cli(["why", "--codex"])

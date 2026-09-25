@@ -209,6 +209,7 @@ def cmd_migrate(args):
 
 
 def cmd_why(args):
+    from mrtoken.ingest import CallerSessionRefused
     from mrtoken.why import print_diagnosis
     print(_store_notice(args))
     conn = _open_readonly(args.db)
@@ -218,6 +219,9 @@ def cmd_why(args):
             kwargs["source"] = "codex"
         if not print_diagnosis(conn, args.session, **kwargs):
             raise SystemExit(1)
+    except CallerSessionRefused as exc:
+        print(exc)
+        raise SystemExit(3)
     finally:
         conn.close()
 
@@ -348,7 +352,12 @@ def cmd_explain(args):
     from mrtoken.feedback import print_explain
     print(_store_notice(args))
     kwargs = {"source": "codex"} if args.codex else {}
-    print_explain(_open_for_analysis(args.db), args.session, **kwargs)
+    from mrtoken.ingest import CallerSessionRefused
+    try:
+        print_explain(_open_for_analysis(args.db), args.session, **kwargs)
+    except CallerSessionRefused as exc:
+        print(exc)
+        raise SystemExit(3)
 
 
 def cmd_feedback(args):
@@ -553,7 +562,7 @@ def main(argv=None):
 
     p_explain = sub.add_parser("explain",
         help="decode why each signal fired for a session (evidence behind the HUD)")
-    p_explain.add_argument("session", nargs="?", help="session id or prefix (default: newest)")
+    p_explain.add_argument("session", nargs="?", help="session id or prefix (default: the caller's own session)")
     p_explain.add_argument("--db", dest="db_sub")
     p_explain.add_argument("--codex", action="store_true", help="read the central Codex DB")
 
@@ -662,7 +671,7 @@ def main(argv=None):
         help="actually relocate (default: dry-run report)")
 
     p_why = sub.add_parser("why", help="diagnose where a session's cost went + the main fuel leak")
-    p_why.add_argument("session", nargs="?", help="session ID prefix (default: newest)")
+    p_why.add_argument("session", nargs="?", help="session ID prefix (default: the caller's own session)")
     p_why.add_argument("--db", dest="db_sub")
     p_why.add_argument("--codex", action="store_true", help="read the central Codex DB")
     for field, help_text in (("baseline", "pinned baseline model/agent"),
