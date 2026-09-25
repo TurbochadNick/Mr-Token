@@ -27,6 +27,25 @@ from mrtoken.ingest import (CallerSessionRefused, ReadOnlyDatabaseError, Session
                             select_session)
 from mrtoken.watch import resolve_path
 
+
+def _attested_transcript(path: str, sid: str) -> str | None:
+    """`path` only if it IS `sid`'s transcript in this project, else None.
+
+    A caller-supplied path is not trusted to match the selected row: its name and its
+    symlink-resolved file must both be `<sid>.jsonl`, and the resolved file must lie
+    directly in this project's transcript directory."""
+    from mrtoken import watch
+    bucket = watch.project_bucket()
+    if not bucket:
+        return None
+    expected_dir = os.path.realpath(os.path.join(watch.PROJECTS, bucket))
+    real = os.path.realpath(path)
+    name = f"{sid}.jsonl"
+    if (os.path.basename(path) != name or os.path.basename(real) != name
+            or os.path.dirname(real) != expected_dir or not os.path.isfile(real)):
+        return None
+    return real
+
 EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
 MAX_FILES = 15
 MAX_COMMANDS = 6
@@ -253,7 +272,14 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
             "first_prompt": None, "last_prompt": None,
             "changed_files": [], "commands": []}
     else:
-        path = transcript_path or resolve_path(sid)
+        if transcript_path is not None:
+            path = _attested_transcript(transcript_path, sid)
+            if path is None:
+                conn.close()
+                return (f"mrtoken: session unavailable: the supplied transcript does not "
+                        f"attest to session {sid[:8]} in this project")
+        else:
+            path = resolve_path(sid)
         s = _scan_transcript(path) if path else {
             "title": None, "custom_title": None, "ai_title": None,
             "first_prompt": None, "last_prompt": None,
