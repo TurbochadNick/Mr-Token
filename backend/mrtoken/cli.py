@@ -354,7 +354,8 @@ def cmd_explain(args):
     kwargs = {"source": "codex"} if args.codex else {}
     from mrtoken.ingest import CallerSessionRefused
     try:
-        print_explain(_open_for_analysis(args.db), args.session, **kwargs)
+        if not print_explain(_open_for_analysis(args.db), args.session, **kwargs):
+            raise SystemExit(1)
     except CallerSessionRefused as exc:
         print(exc)
         raise SystemExit(3)

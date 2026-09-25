@@ -61,13 +61,14 @@ def explain_session(conn: sqlite3.Connection, prefix: str | None,
     return out
 
 
-def print_explain(conn: sqlite3.Connection, prefix: str | None, *, source: str | None = None) -> None:
+def print_explain(conn: sqlite3.Connection, prefix: str | None, *, source: str | None = None) -> bool:
+    """False when the session is unavailable (the caller exits 1)."""
     try:
         _, sid, selected_source, _ = select_requested_session(
             conn, prefix, source=source, command="explain")
     except SessionSelectionError as exc:
         print(exc)
-        return
+        return False
     rows = explain_session(conn, sid, source=source)
     print(f"\n{'─'*64}")
     print("  MR Token — explain: why each signal fired")
@@ -75,7 +76,7 @@ def print_explain(conn: sqlite3.Connection, prefix: str | None, *, source: str |
     chosen = "implicit caller session" if prefix is None else "explicit"
     print(f"  selected: {sid[:8]} · source: {selected_source} · {chosen}")
     if not rows:
-        print("  no recommendations fired.\n"); return
+        print("  no recommendations fired.\n"); return True
     pref = {"high": "[!]", "warn": "[~]"}
     for r in rows:
         save = f"  · ~{r['est_savings_tokens']:,} tok addressable" if r["est_savings_tokens"] else ""
@@ -85,6 +86,7 @@ def print_explain(conn: sqlite3.Connection, prefix: str | None, *, source: str |
     print(f"\n  Mark a verdict:  mrtoken-transcript feedback {rows[0]['session_id'][:8]} "
           f"<rule> right|wrong [--note ...]")
     print(f"{'─'*64}\n")
+    return True
 
 
 def record_feedback(conn: sqlite3.Connection, prefix: str, rule: str,
