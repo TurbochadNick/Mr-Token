@@ -250,7 +250,7 @@ def declare_manifest(session_id: str, fields: dict, cwd: str | None = None,
 # ---- verification ---------------------------------------------------------------------
 
 def verify_manifest(m: dict, session_id: str, transcript_path: str | None = None,
-                    cwd: str | None = None) -> dict:
+                    cwd: str | None = None, transcript_mtime: float | None = None) -> dict:
     """Check a manifest against what can be observed. Returns
     {"bound": bool, "problems": [str], "invalid": {path: reason},
      "artifacts": [...], "custody": {...}}.
@@ -295,8 +295,11 @@ def verify_manifest(m: dict, session_id: str, transcript_path: str | None = None
             upd_ts = None
     if upd_ts is None:
         problems.append("GAP updated_at: not declared or unparseable")
-    elif transcript_path and os.path.isfile(transcript_path):
-        lag = os.path.getmtime(transcript_path) - upd_ts
+    elif transcript_mtime is not None or (transcript_path and os.path.isfile(transcript_path)):
+        # an mtime taken from an already-opened file wins: re-stat'ing the NAME could see a
+        # different file swapped in since, and hide a required STALE warning
+        written = transcript_mtime if transcript_mtime is not None else os.path.getmtime(transcript_path)
+        lag = written - upd_ts
         if lag > STALE_AFTER_S:
             problems.append(f"STALE manifest: declared at {upd}, transcript last written "
                             f"{int(lag // 60)} min later — re-declare before trusting")

@@ -131,6 +131,103 @@ class TranscriptAttestTest(unittest.TestCase):
             self.assertIn("request from seat A", out)
             self.assertEqual(self.reads, [a_inode])
 
+    # ---- review of 858245e: staleness from the OPENED inode; OSError at read or close is
+    # ---- session unavailable; file, dir fd and DB connection closed on every refusal.
+
+    def _swap_hook(self):
+        return ("_open_attested_transcript" if hasattr(handoff, "_open_attested_transcript")
+                else "_attested_transcript")
+
+    def test_stale_warning_comes_from_the_opened_inode_not_the_swapped_name(self):
+        import time
+        from mrtoken.manifest import declare_manifest
+        declare_manifest(A, {"objective": "declared objective"})
+        now = time.time()
+        os.utime(self.a, (now + 7200, now + 7200))   # A written 2h AFTER the declaration
+        os.utime(self.b, (now - 7200, now - 7200))   # B's name-level mtime would hide it
+        real = getattr(handoff, self._swap_hook())
+
+        def open_then_swap(*a, **k):
+            result = real(*a, **k)
+            os.replace(self.b, self.a)
+            return result
+        with mock.patch.object(handoff, self._swap_hook(), side_effect=open_then_swap):
+            out = self.build(A, self.a)
+        self.assertIn("request from seat A", out)
+        self.assertNotIn("seat B", out)
+        self.assertIn("STALE manifest", out)
+
+    def test_positive_control_fresh_manifest_is_not_stale(self):
+        from mrtoken.manifest import declare_manifest
+        declare_manifest(A, {"objective": "declared objective"})
+        out = self.build(A, self.a)
+        self.assertIn("request from seat A", out)
+        self.assertNotIn("STALE manifest", out)
+
+    def _open_fds(self):
+        return set(os.listdir("/dev/fd"))
+
+    def _refusal_with_resources_closed(self, **patches):
+        conns = []
+        real_connect = handoff.connect_readonly
+
+        def recording_connect(*a, **k):
+            c = real_connect(*a, **k)
+            conns.append(c)
+            return c
+        before = self._open_fds()
+        with mock.patch.object(handoff, "connect_readonly", side_effect=recording_connect):
+            ctx = [mock.patch(t, **kw) for t, kw in patches.items()]
+            for c in ctx:
+                c.start()
+            try:
+                out = self.build(A, self.a)
+            finally:
+                for c in ctx:
+                    c.stop()
+        self.assertTrue(out.startswith("mrtoken: session unavailable"), out)
+        self.assertNotIn("# Handoff", out)
+        self.assertEqual(self._open_fds() - before, set(), "a file or dir fd was left open")
+        self.assertEqual(len(conns), 1)
+        with self.assertRaises(Exception):          # a closed sqlite3 connection refuses use
+            conns[0].execute("SELECT 1")
+        return out
+
+    def test_oserror_while_reading_is_session_unavailable(self):
+        def failing_scan(src):
+            raise OSError(5, "Input/output error")
+        self._refusal_with_resources_closed(
+            **{"mrtoken.handoff._scan_transcript": {"side_effect": failing_scan}})
+
+    def test_oserror_on_close_is_session_unavailable(self):
+        real_close = os.close
+        calls = []
+
+        def failing_close(fd):
+            calls.append(fd)
+            real_close(fd)                          # really close it, then report failure
+            raise OSError(9, "Bad file descriptor")
+        self._refusal_with_resources_closed(**{"os.close": {"side_effect": failing_close}})
+        self.assertTrue(calls, "os.close was never called on the attested path")
+
+    def test_every_attestation_refusal_closes_the_db(self):
+        link = os.path.join(self.bucket, f"{C}.jsonl")
+        os.symlink(self.b, link)
+        for sid, path in ((A, self.b), (C, link),
+                          (A, os.path.join(self.tmp, "elsewhere", f"{A}.jsonl"))):
+            with self.subTest(sid=sid, path=path):
+                conns = []
+                real_connect = handoff.connect_readonly
+                before = self._open_fds()
+                with mock.patch.object(handoff, "connect_readonly",
+                                       side_effect=lambda *a, **k: conns.append(
+                                           real_connect(*a, **k)) or conns[-1]):
+                    out = self.build(sid, path)
+                self.assertTrue(out.startswith("mrtoken: session unavailable"), out)
+                self.assertEqual(self._open_fds() - before, set())
+                with self.assertRaises(Exception):
+                    conns[0].execute("SELECT 1")
+
 
 if __name__ == "__main__":
     unittest.main()

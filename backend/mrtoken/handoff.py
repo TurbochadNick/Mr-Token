@@ -28,15 +28,14 @@ from mrtoken.ingest import (CallerSessionRefused, ReadOnlyDatabaseError, Session
 from mrtoken.watch import resolve_path
 
 
-def _open_attested_transcript(path: str, sid: str):
-    """Open `sid`'s transcript in this project, attested by the OPEN FILE itself, or None.
+def _open_attested_transcript(path: str, sid: str) -> tuple[int, int] | None:
+    """Open `sid`'s transcript in this project; (file fd, dir fd), or None.
 
     A caller-supplied path is only the NAME to attest, never re-resolved for the read: its
     basename must be `<sid>.jsonl` and its directory this project's transcript directory.
-    The file is then opened relative to that directory's fd with O_NOFOLLOW, so the name is
+    The file is opened relative to that directory's fd with O_NOFOLLOW, so the name is
     fixed, a symlink refuses, and it stays inside the directory by construction; fstat must
-    show a regular file. The caller reads and closes the returned file, so validation and
-    read are the same open file and nothing can be swapped in between."""
+    show a regular file. The caller owns both fds (see _read_attested_transcript)."""
     import stat
     from mrtoken import watch
     bucket = watch.project_bucket()
@@ -51,18 +50,47 @@ def _open_attested_transcript(path: str, sid: str):
     try:
         dir_fd = os.open(expected_dir, os.O_RDONLY | os.O_DIRECTORY)
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return None
-        fh = os.fdopen(fd, encoding="utf-8")
-        fd = None                                  # now owned by fh
-        return fh
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            return fd, dir_fd
     except OSError:
-        return None
-    finally:
+        pass
+    _close_all(fd, dir_fd)
+    return None
+
+
+def _close_all(*fds) -> bool:
+    """Close every fd given; True only if all closed cleanly (each is attempted)."""
+    ok = True
+    for fd in fds:
         if fd is not None:
-            os.close(fd)
-        if dir_fd is not None:
-            os.close(dir_fd)
+            try:
+                os.close(fd)
+            except OSError:
+                ok = False
+    return ok
+
+
+def _read_attested_transcript(path: str, sid: str) -> tuple[dict, float] | None:
+    """(scan, mtime) read from the SAME open file that was attested, or None.
+
+    The mtime is fstat of that opened inode, so the staleness check can never see a file
+    swapped in under the name afterwards. An OSError while reading, or while closing
+    either fd, is a refusal: nothing is rendered from a read that did not finish cleanly."""
+    opened = _open_attested_transcript(path, sid)
+    if opened is None:
+        return None
+    fd, dir_fd = opened
+    result = None
+    try:
+        with os.fdopen(fd, encoding="utf-8", closefd=False) as fh:
+            scan = _scan_transcript(fh)
+        result = (scan, os.fstat(fd).st_mtime)
+    except OSError:
+        result = None
+    finally:
+        if not _close_all(fd, dir_fd):
+            result = None
+    return result
 
 
 EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
@@ -287,6 +315,7 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
 
     # Database selection is authoritative. A transcript is read only afterwards,
     # for on-demand handoff detail, and must attest to that already-selected id.
+    transcript_mtime = None
     if selected_source == "codex":
         path = _find_codex_rollout(sid, codex_root)
         s = _scan_codex_rollout(path) if path else {
@@ -295,16 +324,13 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
             "changed_files": [], "commands": []}
     else:
         if transcript_path is not None:
-            fh = _open_attested_transcript(transcript_path, sid)
-            if fh is None:
+            read = _read_attested_transcript(transcript_path, sid)
+            if read is None:
                 conn.close()
                 return (f"mrtoken: session unavailable: the supplied transcript does not "
-                        f"attest to session {sid[:8]} in this project")
-            try:
-                s = _scan_transcript(fh)             # the SAME open file that was attested
-            finally:
-                fh.close()
-            path = transcript_path
+                        f"attest to session {sid[:8]} in this project, or could not be read")
+            s, transcript_mtime = read               # both from the SAME opened inode
+            path = None                              # never stat the name again
         else:
             path = resolve_path(sid)
             s = _scan_transcript(path) if path else {
@@ -380,7 +406,8 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
     # and renders every undeclared field as a NAMED GAP (see mrtoken/manifest.py).
     from mrtoken.manifest import load_manifest, verify_manifest, render_section
     m, load_err = load_manifest(sid)
-    v = verify_manifest(m, sid, transcript_path=path) if m is not None else None
+    v = (verify_manifest(m, sid, transcript_path=path, transcript_mtime=transcript_mtime)
+         if m is not None else None)
     out.extend(render_section(m, v, load_error=load_err))
 
     out.append("## Carry into the new session")
