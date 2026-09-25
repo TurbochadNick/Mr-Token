@@ -59,10 +59,16 @@ class TranscriptAttestTest(unittest.TestCase):
                   mock.patch("mrtoken.handoff.default_db_path", return_value=self.db)):
             p.start()
             self.addCleanup(p.stop)
+        # Record the INODE of every transcript actually read: the read may be from an open
+        # file rather than a path, and an inode is what identifies the content read.
         self.reads = []
         real_scan = handoff._scan_transcript
-        s = mock.patch.object(handoff, "_scan_transcript",
-                              side_effect=lambda path: (self.reads.append(path), real_scan(path))[1])
+
+        def recording_scan(src):
+            self.reads.append(os.stat(src).st_ino if isinstance(src, str)
+                              else os.fstat(src.fileno()).st_ino)
+            return real_scan(src)
+        s = mock.patch.object(handoff, "_scan_transcript", side_effect=recording_scan)
         s.start()
         self.addCleanup(s.stop)
 
@@ -99,10 +105,31 @@ class TranscriptAttestTest(unittest.TestCase):
         out = self.build(A, self.a)
         self.assertIn("# Handoff", out)
         self.assertIn("request from seat A", out)
-        self.assertEqual([os.path.realpath(p) for p in self.reads], [os.path.realpath(self.a)])
+        self.assertEqual(self.reads, [os.stat(self.a).st_ino])
         txt, err = toolbox.call_tool("handoff", {"session": A})
         self.assertFalse(err, txt)
         self.assertIn("request from seat A", txt)
+
+    def test_file_swapped_between_validation_and_read_is_not_read(self):
+        """Deterministic race: right after the transcript is attested, B's file is renamed
+        over A's name. The read must be of what was attested (A), never of B."""
+        a_inode = os.stat(self.a).st_ino
+        hook = ("_open_attested_transcript" if hasattr(handoff, "_open_attested_transcript")
+                else "_attested_transcript")
+        real = getattr(handoff, hook)
+
+        def attest_then_swap(path, sid):
+            result = real(path, sid)
+            os.replace(self.b, self.a)                # B's content now sits at A's name
+            return result
+        with mock.patch.object(handoff, hook, side_effect=attest_then_swap):
+            out = self.build(A, self.a)
+        self.assertNotIn("seat B", out)
+        if out.startswith("mrtoken: session unavailable"):
+            self.assertEqual(self.reads, [])
+        else:
+            self.assertIn("request from seat A", out)
+            self.assertEqual(self.reads, [a_inode])
 
 
 if __name__ == "__main__":

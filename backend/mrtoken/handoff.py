@@ -20,7 +20,7 @@ ledger stays metadata-only.
 natural paid enhancement; the seam is marked below but not implemented in v1.)
 """
 from __future__ import annotations
-import json, os
+import contextlib, json, os
 
 from mrtoken.ingest import (CallerSessionRefused, ReadOnlyDatabaseError, SessionSelectionError,
                             connect_readonly, default_db_path, select_requested_session,
@@ -28,23 +28,42 @@ from mrtoken.ingest import (CallerSessionRefused, ReadOnlyDatabaseError, Session
 from mrtoken.watch import resolve_path
 
 
-def _attested_transcript(path: str, sid: str) -> str | None:
-    """`path` only if it IS `sid`'s transcript in this project, else None.
+def _open_attested_transcript(path: str, sid: str):
+    """Open `sid`'s transcript in this project, attested by the OPEN FILE itself, or None.
 
-    A caller-supplied path is not trusted to match the selected row: its name and its
-    symlink-resolved file must both be `<sid>.jsonl`, and the resolved file must lie
-    directly in this project's transcript directory."""
+    A caller-supplied path is only the NAME to attest, never re-resolved for the read: its
+    basename must be `<sid>.jsonl` and its directory this project's transcript directory.
+    The file is then opened relative to that directory's fd with O_NOFOLLOW, so the name is
+    fixed, a symlink refuses, and it stays inside the directory by construction; fstat must
+    show a regular file. The caller reads and closes the returned file, so validation and
+    read are the same open file and nothing can be swapped in between."""
+    import stat
     from mrtoken import watch
     bucket = watch.project_bucket()
     if not bucket:
         return None
     expected_dir = os.path.realpath(os.path.join(watch.PROJECTS, bucket))
-    real = os.path.realpath(path)
     name = f"{sid}.jsonl"
-    if (os.path.basename(path) != name or os.path.basename(real) != name
-            or os.path.dirname(real) != expected_dir or not os.path.isfile(real)):
+    if (os.path.basename(path) != name
+            or os.path.realpath(os.path.dirname(os.path.abspath(path))) != expected_dir):
         return None
-    return real
+    dir_fd = fd = None
+    try:
+        dir_fd = os.open(expected_dir, os.O_RDONLY | os.O_DIRECTORY)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        fh = os.fdopen(fd, encoding="utf-8")
+        fd = None                                  # now owned by fh
+        return fh
+    except OSError:
+        return None
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if dir_fd is not None:
+            os.close(dir_fd)
+
 
 EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
 MAX_FILES = 15
@@ -88,14 +107,17 @@ def _is_substantive(txt: str) -> bool:
     return True
 
 
-def _scan_transcript(path: str) -> dict:
-    """Pull the human-meaningful detail a handoff needs (content, on demand)."""
+def _scan_transcript(src) -> dict:
+    """Pull the human-meaningful detail a handoff needs (content, on demand).
+
+    `src` is a path, or an already-open text file (read, not closed, here)."""
     custom_title = ai_title = first_prompt = last_prompt = None
     last_touch: dict[str, int] = {}   # file_path -> last edit index (recency order)
     commands: list[str] = []
     idx = 0
 
-    with open(path, encoding="utf-8") as fh:
+    with (open(src, encoding="utf-8") if isinstance(src, str)
+          else contextlib.nullcontext(src)) as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -273,17 +295,22 @@ def build_handoff(db_path: str | None, session_arg: str | None, *,
             "changed_files": [], "commands": []}
     else:
         if transcript_path is not None:
-            path = _attested_transcript(transcript_path, sid)
-            if path is None:
+            fh = _open_attested_transcript(transcript_path, sid)
+            if fh is None:
                 conn.close()
                 return (f"mrtoken: session unavailable: the supplied transcript does not "
                         f"attest to session {sid[:8]} in this project")
+            try:
+                s = _scan_transcript(fh)             # the SAME open file that was attested
+            finally:
+                fh.close()
+            path = transcript_path
         else:
             path = resolve_path(sid)
-        s = _scan_transcript(path) if path else {
-            "title": None, "custom_title": None, "ai_title": None,
-            "first_prompt": None, "last_prompt": None,
-            "changed_files": [], "commands": []}
+            s = _scan_transcript(path) if path else {
+                "title": None, "custom_title": None, "ai_title": None,
+                "first_prompt": None, "last_prompt": None,
+                "changed_files": [], "commands": []}
 
     summary = conn.execute(
         "SELECT model_calls, cumulative_expenditure_tokens, cumulative_expenditure_provenance, "
