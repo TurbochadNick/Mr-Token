@@ -417,11 +417,12 @@ def connect_readonly(db_path: str, *, immutable: bool = False) -> sqlite3.Connec
         # connect() is lazy: the store is first touched here. A WAL-mode reader must
         # create the -shm index beside the store, so a non-writable directory fails now.
         # Refuse rather than retry with immutable=1, which would silently ignore
-        # uncheckpointed WAL content and report wrong numbers.
+        # uncheckpointed WAL content and report wrong numbers. A file that is not a
+        # database also first fails here, as DatabaseError (OperationalError's parent).
         present = {row[0] for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
         )}
-    except sqlite3.OperationalError as exc:
+    except sqlite3.DatabaseError as exc:
         conn.close()
         hint = ("; a WAL-mode store needs write access to its directory for its "
                 "shared-memory index, even to read") if "readonly" in str(exc) else ""
